@@ -1,0 +1,175 @@
+use std::fmt;
+
+/// Mirrors Swift's `CloudDeckError`: a small, closed set of classification
+/// buckets used to turn arbitrary service errors into user-facing messages.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CloudDeckError {
+    Auth,
+    Network,
+    Timeout,
+    Permission,
+    Throttled,
+    NotFound,
+    Unknown(String),
+}
+
+impl CloudDeckError {
+    pub const THROTTLED_RETRY_MESSAGE: &'static str =
+        "The service throttled this request. Retry the load after a short delay.";
+
+    pub fn user_message(&self) -> String {
+        match self {
+            CloudDeckError::Auth => {
+                "Credentials are invalid or expired. Switch to a valid AWS profile.".to_string()
+            }
+            CloudDeckError::Network => {
+                "Network request failed. Check connectivity and try again.".to_string()
+            }
+            CloudDeckError::Timeout => {
+                "The request timed out. Try again or reduce the scope of the load.".to_string()
+            }
+            CloudDeckError::Permission => {
+                "You do not have permission for this action. Verify IAM permissions.".to_string()
+            }
+            CloudDeckError::Throttled => Self::THROTTLED_RETRY_MESSAGE.to_string(),
+            CloudDeckError::NotFound => "The requested resource was not found.".to_string(),
+            CloudDeckError::Unknown(message) => message.clone(),
+        }
+    }
+
+    /// Prefixes the user message with "Could not {operation}: ", unless it
+    /// already carries that prefix (matches Swift's idempotent `message(for:)`).
+    pub fn message_for(&self, operation: &str) -> String {
+        let prefix = format!("Could not {operation}:");
+        let user_message = self.user_message();
+        if user_message.starts_with(&prefix) {
+            user_message
+        } else {
+            format!("{prefix} {user_message}")
+        }
+    }
+
+    /// Classifies an arbitrary error by lowercased substring match on its
+    /// `Display` output, matching Swift's `fromServiceError` heuristic order:
+    /// auth, timeout, network, throttled, permission, not-found, else unknown.
+    pub fn from_service_error(error: &(dyn std::error::Error + 'static)) -> CloudDeckError {
+        let description = error.to_string();
+        let normalized = description.to_lowercase();
+
+        if normalized.contains("credential") || normalized.contains("token") || normalized.contains("auth") {
+            return CloudDeckError::Auth;
+        }
+
+        if normalized.contains("timed out") || normalized.contains("timeout") {
+            return CloudDeckError::Timeout;
+        }
+
+        if normalized.contains("network") || normalized.contains("connection") || normalized.contains("offline") {
+            return CloudDeckError::Network;
+        }
+
+        if normalized.contains("throttl")
+            || normalized.contains("requestlimitexceeded")
+            || normalized.contains("toomanyrequests")
+            || normalized.contains("rate exceeded")
+            || normalized.contains("too many requests")
+        {
+            return CloudDeckError::Throttled;
+        }
+
+        if normalized.contains("forbidden")
+            || normalized.contains("access denied")
+            || normalized.contains("not authorized")
+            || normalized.contains("permission")
+        {
+            return CloudDeckError::Permission;
+        }
+
+        if normalized.contains("not found") || normalized.contains("no such") || normalized.contains("does not exist") {
+            return CloudDeckError::NotFound;
+        }
+
+        CloudDeckError::Unknown(description)
+    }
+}
+
+impl fmt::Display for CloudDeckError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.user_message())
+    }
+}
+
+impl std::error::Error for CloudDeckError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classifies_auth_errors() {
+        let err = std::io::Error::new(std::io::ErrorKind::Other, "invalid auth token");
+        assert_eq!(CloudDeckError::from_service_error(&err), CloudDeckError::Auth);
+    }
+
+    #[test]
+    fn classifies_timeout_errors() {
+        let err = std::io::Error::new(std::io::ErrorKind::Other, "request timed out");
+        assert_eq!(CloudDeckError::from_service_error(&err), CloudDeckError::Timeout);
+    }
+
+    #[test]
+    fn classifies_network_errors() {
+        let err = std::io::Error::new(std::io::ErrorKind::Other, "network connection lost");
+        assert_eq!(CloudDeckError::from_service_error(&err), CloudDeckError::Network);
+    }
+
+    #[test]
+    fn classifies_throttled_errors() {
+        let err = std::io::Error::new(std::io::ErrorKind::Other, "RequestLimitExceeded");
+        assert_eq!(
+            CloudDeckError::from_service_error(&err).to_string().to_lowercase(),
+            CloudDeckError::Throttled.to_string().to_lowercase()
+        );
+        assert_eq!(CloudDeckError::from_service_error(&err), CloudDeckError::Throttled);
+    }
+
+    #[test]
+    fn classifies_permission_errors() {
+        let err = std::io::Error::new(std::io::ErrorKind::Other, "access denied");
+        assert_eq!(CloudDeckError::from_service_error(&err), CloudDeckError::Permission);
+    }
+
+    #[test]
+    fn classifies_not_found_errors() {
+        let err = std::io::Error::new(std::io::ErrorKind::Other, "no such instance");
+        assert_eq!(CloudDeckError::from_service_error(&err), CloudDeckError::NotFound);
+    }
+
+    #[test]
+    fn classifies_unrecognized_errors_as_unknown() {
+        let err = std::io::Error::new(std::io::ErrorKind::Other, "something weird happened");
+        assert_eq!(
+            CloudDeckError::from_service_error(&err),
+            CloudDeckError::Unknown("something weird happened".to_string())
+        );
+    }
+
+    #[test]
+    fn message_for_adds_prefix_when_absent() {
+        assert_eq!(
+            CloudDeckError::Timeout.message_for("list instances"),
+            "Could not list instances: The request timed out. Try again or reduce the scope of the load."
+        );
+    }
+
+    #[test]
+    fn message_for_is_idempotent_when_prefix_already_present() {
+        let already_prefixed = CloudDeckError::Unknown(
+            "Could not list instances: something failed".to_string(),
+        );
+        assert_eq!(
+            already_prefixed.message_for("list instances"),
+            "Could not list instances: something failed"
+        );
+    }
+}
