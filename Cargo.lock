@@ -864,11 +864,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "clouddeck"
+name = "clouddeck-app"
 version = "0.1.0"
 dependencies = [
+ "clouddeck-core",
  "gpui",
 ]
+
+[[package]]
+name = "clouddeck-core"
+version = "0.1.0"
 
 [[package]]
 name = "cocoa"

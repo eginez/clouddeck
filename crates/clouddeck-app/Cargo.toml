@@ -1,0 +1,15 @@
+[package]
+name = "clouddeck-app"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "clouddeck"
+path = "src/main.rs"
+
+[dependencies]
+clouddeck-core = { path = "../clouddeck-core" }
+gpui = "0.2.2"
+
+[dev-dependencies]
+gpui = { version = "0.2.2", features = ["test-support"] }
