@@ -62,23 +62,25 @@ impl ComputeInstanceFilters {
             .map(|q| q.trim().to_lowercase());
         let normalized_states: std::collections::HashSet<String> =
             self.states.iter().map(|s| s.to_lowercase()).collect();
-        let normalized_types: std::collections::HashSet<String> =
-            self.instance_types.iter().map(|s| s.to_lowercase()).collect();
+        let normalized_types: std::collections::HashSet<String> = self
+            .instance_types
+            .iter()
+            .map(|s| s.to_lowercase())
+            .collect();
 
         instances
             .iter()
             .filter(|instance| {
-                if let Some(query) = normalized_name_query.as_deref() {
-                    if !query.is_empty() {
-                        let name_matches = instance
-                            .name()
-                            .map(|name| name.to_lowercase().contains(query))
-                            .unwrap_or(false);
-                        let instance_id_matches =
-                            instance.instance_id.to_lowercase().contains(query);
-                        if !(name_matches || instance_id_matches) {
-                            return false;
-                        }
+                if let Some(query) = normalized_name_query.as_deref()
+                    && !query.is_empty()
+                {
+                    let name_matches = instance
+                        .name()
+                        .map(|name| name.to_lowercase().contains(query))
+                        .unwrap_or(false);
+                    let instance_id_matches = instance.instance_id.to_lowercase().contains(query);
+                    if !(name_matches || instance_id_matches) {
+                        return false;
                     }
                 }
 

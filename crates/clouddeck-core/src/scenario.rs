@@ -41,13 +41,19 @@ impl EC2Scenario {
     /// Instances for a profile + region (Swift: `instances(profileName:region:)`).
     ///
     /// Fails clearly instead of silently falling back (Swift: same rule).
-    pub fn instances(&self, profile_name: Option<&str>, region: &str) -> Result<Vec<EC2Instance>, BoxError> {
-        let profile_name = profile_name.filter(|name| !name.is_empty()).ok_or_else(|| {
-            Box::new(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "No scenario profile selected. Choose a profile to load scenario instances.",
-            )) as BoxError
-        })?;
+    pub fn instances(
+        &self,
+        profile_name: Option<&str>,
+        region: &str,
+    ) -> Result<Vec<EC2Instance>, BoxError> {
+        let profile_name = profile_name
+            .filter(|name| !name.is_empty())
+            .ok_or_else(|| {
+                Box::new(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "No scenario profile selected. Choose a profile to load scenario instances.",
+                )) as BoxError
+            })?;
 
         let profile = self
             .profiles
@@ -56,7 +62,10 @@ impl EC2Scenario {
             .ok_or_else(|| {
                 Box::new(std::io::Error::new(
                     std::io::ErrorKind::NotFound,
-                    format!("Scenario '{}' does not define AWS profile '{profile_name}'.", self.name),
+                    format!(
+                        "Scenario '{}' does not define AWS profile '{profile_name}'.",
+                        self.name
+                    ),
                 )) as BoxError
             })?;
 
@@ -103,16 +112,18 @@ struct RawRegion {
 
 fn parse_launch_time(raw: Option<&str>) -> Option<std::time::SystemTime> {
     let raw = raw?;
-    chrono::DateTime::parse_from_rfc3339(raw).ok().and_then(|parsed| {
-        let timestamp = parsed.timestamp();
-        let nanos = parsed.timestamp_subsec_nanos();
-        if timestamp < 0 {
-            return None;
-        }
-        let duration = std::time::Duration::from_secs(timestamp as u64)
-            .checked_add(std::time::Duration::from_nanos(nanos as u64))?;
-        Some(std::time::UNIX_EPOCH + duration)
-    })
+    chrono::DateTime::parse_from_rfc3339(raw)
+        .ok()
+        .and_then(|parsed| {
+            let timestamp = parsed.timestamp();
+            let nanos = parsed.timestamp_subsec_nanos();
+            if timestamp < 0 {
+                return None;
+            }
+            let duration = std::time::Duration::from_secs(timestamp as u64)
+                .checked_add(std::time::Duration::from_nanos(nanos as u64))?;
+            Some(std::time::UNIX_EPOCH + duration)
+        })
 }
 
 #[derive(Deserialize)]
@@ -183,7 +194,10 @@ impl DirectoryScenarioCatalog {
         for entry in fs::read_dir(&root).map_err(|err| {
             std::io::Error::new(
                 err.kind(),
-                format!("Could not list scenario directory '{}': {err}", root.display()),
+                format!(
+                    "Could not list scenario directory '{}': {err}",
+                    root.display()
+                ),
             )
         })? {
             let entry = entry?;
@@ -250,9 +264,7 @@ impl EC2ScenarioCatalog for DirectoryScenarioCatalog {
             .flatten()
             .filter_map(|entry| {
                 let file_name = entry.file_name().to_string_lossy().to_string();
-                file_name
-                    .strip_suffix(".json")
-                    .map(str::to_string)
+                file_name.strip_suffix(".json").map(str::to_string)
             })
             .collect()
     }
@@ -499,17 +511,21 @@ mod tests {
         let err = scenario
             .instances(Some("scenario-default"), "eu-west-1")
             .unwrap_err();
-        assert!(err.to_string().contains("does not define region 'eu-west-1'"));
+        assert!(
+            err.to_string()
+                .contains("does not define region 'eu-west-1'")
+        );
     }
 
     #[test]
     fn region_lookup_fails_clearly_for_unknown_profile() {
         let contents = fs::read_to_string(fixture_path("empty-fleet")).unwrap();
         let scenario = parse_scenario(&contents).unwrap();
-        let err = scenario
-            .instances(Some("nope"), "us-east-1")
-            .unwrap_err();
-        assert!(err.to_string().contains("does not define AWS profile 'nope'"));
+        let err = scenario.instances(Some("nope"), "us-east-1").unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("does not define AWS profile 'nope'")
+        );
     }
 
     #[test]
@@ -537,11 +553,7 @@ mod tests {
         assert_eq!(scenario.name, "small-happy-path");
 
         let empty = catalog.scenario("empty-fleet").unwrap();
-        assert!(empty
-            .profiles[0]
-            .regions[0]
-            .instances
-            .is_empty());
+        assert!(empty.profiles[0].regions[0].instances.is_empty());
     }
 
     #[test]
