@@ -8,6 +8,8 @@ name = "clouddeck"
 path = "src/main.rs"
 
 [dependencies]
+aws-config = "1.8.13"
+aws-sdk-ec2 = "1.208.0"
 clouddeck-core = { path = "../clouddeck-core" }
 gpui = "0.2.2"
 
