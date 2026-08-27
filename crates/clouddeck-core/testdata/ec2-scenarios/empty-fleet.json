@@ -1,0 +1,15 @@
+{
+  "name": "empty-fleet",
+  "description": "Scenario with one profile and region but no EC2 instances.",
+  "profiles": [
+    {
+      "name": "scenario-default",
+      "regions": [
+        {
+          "name": "us-east-1",
+          "instances": []
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,98 @@
+{
+  "name": "small-happy-path",
+  "description": "Small realistic EC2 fleet with no failures.",
+  "profiles": [
+    {
+      "name": "scenario-default",
+      "regions": [
+        {
+          "name": "us-east-1",
+          "instances": [
+            {
+              "instanceID": "i-scenario-001",
+              "instanceType": "t3.medium",
+              "state": "running",
+              "launchTime": "2026-04-20T12:00:00Z",
+              "publicIPAddress": null,
+              "privateIPAddress": "10.0.1.12",
+              "vpcID": "vpc-main",
+              "subnetID": "subnet-app-a",
+              "securityGroups": [
+                {
+                  "groupID": "sg-web",
+                  "groupName": "web"
+                }
+              ],
+              "tags": [
+                {
+                  "key": "Name",
+                  "value": "prod-api-1"
+                },
+                {
+                  "key": "Environment",
+                  "value": "prod"
+                },
+                {
+                  "key": "Service",
+                  "value": "api"
+                }
+              ]
+            },
+            {
+              "instanceID": "i-scenario-002",
+              "instanceType": "m6i.large",
+              "state": "stopped",
+              "launchTime": "2026-04-21T08:30:00Z",
+              "publicIPAddress": null,
+              "privateIPAddress": "10.0.1.44",
+              "vpcID": "vpc-main",
+              "subnetID": "subnet-app-b",
+              "securityGroups": [
+                {
+                  "groupID": "sg-workers",
+                  "groupName": "workers"
+                }
+              ],
+              "tags": [
+                {
+                  "key": "Name",
+                  "value": "batch-worker-1"
+                },
+                {
+                  "key": "Environment",
+                  "value": "prod"
+                }
+              ]
+            },
+            {
+              "instanceID": "i-scenario-003",
+              "instanceType": "t3.small",
+              "state": "running",
+              "launchTime": "2026-04-22T17:15:00Z",
+              "publicIPAddress": "203.0.113.22",
+              "privateIPAddress": "10.0.2.18",
+              "vpcID": "vpc-main",
+              "subnetID": "subnet-edge-a",
+              "securityGroups": [
+                {
+                  "groupID": "sg-edge",
+                  "groupName": "edge"
+                }
+              ],
+              "tags": [
+                {
+                  "key": "Name",
+                  "value": "bastion-east-1"
+                },
+                {
+                  "key": "Environment",
+                  "value": "shared"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
