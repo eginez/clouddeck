@@ -62,8 +62,11 @@ impl ComputeInstanceFilters {
             .map(|q| q.trim().to_lowercase());
         let normalized_states: std::collections::HashSet<String> =
             self.states.iter().map(|s| s.to_lowercase()).collect();
-        let normalized_types: std::collections::HashSet<String> =
-            self.instance_types.iter().map(|s| s.to_lowercase()).collect();
+        let normalized_types: std::collections::HashSet<String> = self
+            .instance_types
+            .iter()
+            .map(|s| s.to_lowercase())
+            .collect();
 
         instances
             .iter()

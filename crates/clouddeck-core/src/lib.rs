@@ -1,10 +1,15 @@
 mod error;
+mod fault_injecting;
 mod mock;
 mod models;
 mod scenario;
 mod service;
 
 pub use error::CloudDeckError;
+pub use fault_injecting::{
+    DefaultSleep, FaultInjectingComputeService, FaultInjectionBehavior, FaultInjectionOutcome,
+    Sleep,
+};
 pub use mock::MockComputeService;
 pub use models::{
     ComputeInstanceFilters, ComputeInstanceLoadResult, ComputeServicePartialFailure, EC2Instance,

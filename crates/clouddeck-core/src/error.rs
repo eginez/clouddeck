@@ -56,7 +56,10 @@ impl CloudDeckError {
         let description = error.to_string();
         let normalized = description.to_lowercase();
 
-        if normalized.contains("credential") || normalized.contains("token") || normalized.contains("auth") {
+        if normalized.contains("credential")
+            || normalized.contains("token")
+            || normalized.contains("auth")
+        {
             return CloudDeckError::Auth;
         }
 
@@ -64,7 +67,10 @@ impl CloudDeckError {
             return CloudDeckError::Timeout;
         }
 
-        if normalized.contains("network") || normalized.contains("connection") || normalized.contains("offline") {
+        if normalized.contains("network")
+            || normalized.contains("connection")
+            || normalized.contains("offline")
+        {
             return CloudDeckError::Network;
         }
 
@@ -85,7 +91,10 @@ impl CloudDeckError {
             return CloudDeckError::Permission;
         }
 
-        if normalized.contains("not found") || normalized.contains("no such") || normalized.contains("does not exist") {
+        if normalized.contains("not found")
+            || normalized.contains("no such")
+            || normalized.contains("does not exist")
+        {
             return CloudDeckError::NotFound;
         }
 
@@ -108,41 +117,61 @@ mod tests {
     #[test]
     fn classifies_auth_errors() {
         let err = std::io::Error::new(std::io::ErrorKind::Other, "invalid auth token");
-        assert_eq!(CloudDeckError::from_service_error(&err), CloudDeckError::Auth);
+        assert_eq!(
+            CloudDeckError::from_service_error(&err),
+            CloudDeckError::Auth
+        );
     }
 
     #[test]
     fn classifies_timeout_errors() {
         let err = std::io::Error::new(std::io::ErrorKind::Other, "request timed out");
-        assert_eq!(CloudDeckError::from_service_error(&err), CloudDeckError::Timeout);
+        assert_eq!(
+            CloudDeckError::from_service_error(&err),
+            CloudDeckError::Timeout
+        );
     }
 
     #[test]
     fn classifies_network_errors() {
         let err = std::io::Error::new(std::io::ErrorKind::Other, "network connection lost");
-        assert_eq!(CloudDeckError::from_service_error(&err), CloudDeckError::Network);
+        assert_eq!(
+            CloudDeckError::from_service_error(&err),
+            CloudDeckError::Network
+        );
     }
 
     #[test]
     fn classifies_throttled_errors() {
         let err = std::io::Error::new(std::io::ErrorKind::Other, "RequestLimitExceeded");
         assert_eq!(
-            CloudDeckError::from_service_error(&err).to_string().to_lowercase(),
+            CloudDeckError::from_service_error(&err)
+                .to_string()
+                .to_lowercase(),
             CloudDeckError::Throttled.to_string().to_lowercase()
         );
-        assert_eq!(CloudDeckError::from_service_error(&err), CloudDeckError::Throttled);
+        assert_eq!(
+            CloudDeckError::from_service_error(&err),
+            CloudDeckError::Throttled
+        );
     }
 
     #[test]
     fn classifies_permission_errors() {
         let err = std::io::Error::new(std::io::ErrorKind::Other, "access denied");
-        assert_eq!(CloudDeckError::from_service_error(&err), CloudDeckError::Permission);
+        assert_eq!(
+            CloudDeckError::from_service_error(&err),
+            CloudDeckError::Permission
+        );
     }
 
     #[test]
     fn classifies_not_found_errors() {
         let err = std::io::Error::new(std::io::ErrorKind::Other, "no such instance");
-        assert_eq!(CloudDeckError::from_service_error(&err), CloudDeckError::NotFound);
+        assert_eq!(
+            CloudDeckError::from_service_error(&err),
+            CloudDeckError::NotFound
+        );
     }
 
     #[test]
@@ -164,9 +193,8 @@ mod tests {
 
     #[test]
     fn message_for_is_idempotent_when_prefix_already_present() {
-        let already_prefixed = CloudDeckError::Unknown(
-            "Could not list instances: something failed".to_string(),
-        );
+        let already_prefixed =
+            CloudDeckError::Unknown("Could not list instances: something failed".to_string());
         assert_eq!(
             already_prefixed.message_for("list instances"),
             "Could not list instances: something failed"
