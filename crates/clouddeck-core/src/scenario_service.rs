@@ -1,6 +1,6 @@
 use crate::mock::MockComputeService;
 use crate::scenario::{EC2Scenario, EC2ScenarioCatalog};
-use crate::service::BoxError;
+use crate::service::{BoxError, ComputeService};
 
 /// A named test scenario with a built-in compute service.
 ///
@@ -128,9 +128,22 @@ impl ScenarioService {
         self.scenario.as_ref()
     }
 
-    /// The compute service to hand to a view model under test.
+    /// The compute service to hand to a view model under test (borrowed).
     pub fn service(&self) -> &MockComputeService {
         &self.service
+    }
+
+    /// An owned compute service to hand to a view model that holds its
+    /// service by value (e.g. `Box<dyn ComputeService>` or
+    /// `Arc<dyn ComputeService>`).
+    pub fn into_service(self) -> MockComputeService {
+        self.service
+    }
+
+    /// A boxed compute service, for view models that take
+    /// `Box<dyn ComputeService>`.
+    pub fn boxed_service(&self) -> Box<dyn ComputeService> {
+        Box::new(self.service.clone())
     }
 }
 

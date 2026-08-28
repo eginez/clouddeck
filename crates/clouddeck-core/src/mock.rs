@@ -12,7 +12,7 @@ use crate::service::{BoxError, ComputeService};
 /// `BoxError` is not `Clone`, so the configured error lives behind an `Arc`
 /// and is re-boxed on every call — matching the Swift oracle, whose `Error`
 /// values are `Copy` references.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct MockComputeService {
     instances: Vec<EC2Instance>,
     list_instances_error: Option<Arc<dyn StdError + Send + Sync>>,
