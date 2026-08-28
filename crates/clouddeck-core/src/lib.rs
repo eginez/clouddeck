@@ -3,6 +3,7 @@ mod fault_injecting;
 mod mock;
 mod models;
 mod scenario;
+mod scenario_service;
 mod service;
 
 pub use error::CloudDeckError;
@@ -18,5 +19,8 @@ pub use models::{
 pub use scenario::{
     DirectoryScenarioCatalog, EC2Scenario, EC2ScenarioCatalog, EC2ScenarioProfile,
     EC2ScenarioRegion, parse_scenario,
+};
+pub use scenario_service::{
+    DEFAULT_FAILURE_MESSAGE, ScenarioFailureError, ScenarioService, TestScenarioKind,
 };
 pub use service::{BoxError, ComputeService};
