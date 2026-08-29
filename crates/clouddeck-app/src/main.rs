@@ -1,5 +1,6 @@
 mod shell;
 mod sidebar;
+mod status_bar;
 mod theme;
 
 use gpui::{App, Application, Bounds, WindowBounds, WindowOptions, prelude::*, px, size};
