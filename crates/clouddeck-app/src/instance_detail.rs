@@ -8,13 +8,13 @@
 //! `~/src/cloudDeck/main/Sources/CloudDeck/Views/EC2/InstanceDetailView.swift`
 //! for the oracle this was ported from.
 //!
-//! The oracle's `StatusBadge` (a separate shared view, not yet ported) is
-//! stood in for here with an inline dot + label using
-//! `SurgicalTheme::state_color`, the same pattern `status_bar.rs` uses for
-//! its own state indicator.
+//! The header's status dot + label renders via the shared
+//! [`crate::status_badge::status_badge`] component, matching the oracle's
+//! `StatusBadge(status: viewModel.instance.state)`.
 
 use gpui::{Context, IntoElement, ParentElement, Render, Styled, Window, div, prelude::*, px};
 
+use crate::status_badge::status_badge;
 use crate::theme::{SurgicalTheme, SurgicalTypography, radius};
 use crate::view_models::InstanceDetailViewModel;
 
@@ -288,8 +288,6 @@ impl Render for InstanceDetailView {
         let security_group_descriptions = vm.security_group_descriptions();
         let sorted_tags = vm.sorted_tags();
         let state = instance.state.as_deref();
-        let state_color = SurgicalTheme::state_color(state);
-        let state_label = state.unwrap_or("unknown").to_string();
 
         div()
             .debug_selector(|| "instance-detail-root".into())
@@ -319,27 +317,7 @@ impl Render for InstanceDetailView {
                             .flex_row()
                             .items_center()
                             .gap(px(14.0))
-                            .child(
-                                div()
-                                    .debug_selector(|| "instance-detail-badge".into())
-                                    .flex()
-                                    .flex_row()
-                                    .items_center()
-                                    .gap(px(6.0))
-                                    .child(
-                                        div()
-                                            .w(px(7.0))
-                                            .h(px(7.0))
-                                            .rounded(px(3.5))
-                                            .bg(state_color),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(px(SurgicalTypography::CAPTION_SIZE))
-                                            .text_color(state_color)
-                                            .child(state_label),
-                                    ),
-                            )
+                            .child(status_badge("instance-detail-badge", state))
                             .child(
                                 div()
                                     .debug_selector(|| "instance-detail-instance-id".into())
