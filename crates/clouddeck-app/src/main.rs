@@ -1,8 +1,10 @@
 mod account_window;
 mod instance_detail;
+mod instance_list;
 mod quick_picker;
 mod shell;
 mod sidebar;
+mod status_badge;
 mod status_bar;
 mod theme;
 mod view_models;
