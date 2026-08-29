@@ -1,3 +1,4 @@
+mod account_window;
 mod shell;
 mod sidebar;
 mod status_bar;
