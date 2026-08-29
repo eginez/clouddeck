@@ -1,4 +1,5 @@
 mod account_window;
+mod quick_picker;
 mod shell;
 mod sidebar;
 mod status_bar;
