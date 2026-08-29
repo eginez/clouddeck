@@ -1,3 +1,5 @@
+mod theme;
+
 use gpui::{
     App, Application, Bounds, Context, IntoElement, Render, SharedString, Window, WindowBounds,
     WindowOptions, div, prelude::*, px, size,
