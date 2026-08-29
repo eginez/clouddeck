@@ -22,6 +22,24 @@
 //! real async calls is the EC2-tab composition bead's job
 //! (`clouddeck-rs-w6s.14`), which owns a live `AppShell`/`cx` to spawn
 //! that work from.
+//!
+//! Row hover state is tracked here (`InstanceListView::hovered_instance_id`)
+//! via gpui's `on_hover`, mirroring the oracle's `@State private var
+//! hoveredInstanceID` and feeding into `SurgicalTheme::row_fill`'s
+//! `hovered` argument exactly like the oracle's `rowFill(selected:
+//! hovered:)` call.
+//!
+//! The oracle's `.searchable(text: $viewModel.searchText, ...)` search
+//! field is **not** ported here: `InstanceListViewModel::search_text`
+//! already exists and is applied by `filtered_instances()`, but this
+//! codebase has no established gpui text-input widget anywhere yet (no
+//! `on_hover`-adjacent `on_key_down`/IME-editable element is used by any
+//! other ported view — see e.g. `account_profile_picker.rs` and
+//! `quick_picker.rs`, which have search-filtering *logic* but render no
+//! actual editable text field). Adding a search box here should wait
+//! until such a pattern is established for the app (tracked as a
+//! discovered-from follow-up), rather than growing an ad hoc one-off
+//! implementation in this view.
 
 use gpui::{
     Context, InteractiveElement, IntoElement, ParentElement, Render, StatefulInteractiveElement,
@@ -41,6 +59,10 @@ use clouddeck_core::EC2Instance;
 pub struct InstanceListView {
     pub view_model: InstanceListViewModel,
     pub show_standalone_empty_state: bool,
+    /// Port of the oracle's `@State private var hoveredInstanceID: String?`,
+    /// tracked here (rather than in the view model) since hover is
+    /// transient view-local UI state, not fleet data.
+    hovered_instance_id: Option<String>,
 }
 
 impl InstanceListView {
@@ -48,6 +70,7 @@ impl InstanceListView {
         Self {
             view_model,
             show_standalone_empty_state: false,
+            hovered_instance_id: None,
         }
     }
 
@@ -238,11 +261,13 @@ fn table_header() -> impl IntoElement {
 fn instance_row(
     instance: &EC2Instance,
     is_selected: bool,
+    is_hovered: bool,
     cx: &mut Context<InstanceListView>,
 ) -> impl IntoElement {
     let selector: &'static str = "ec2.instance.row";
     let row_id = instance.id();
     let click_id = row_id.clone();
+    let hover_id = row_id.clone();
     let name = instance.name().map(str::to_string).unwrap_or_else(|| instance.instance_id.clone());
     let instance_id = instance.instance_id.clone();
     let region = instance.region.clone().unwrap_or_else(|| "—".to_string());
@@ -261,7 +286,7 @@ fn instance_row(
         .px(px(12.0))
         .py(px(11.0))
         .rounded(px(radius::STANDARD))
-        .bg(SurgicalTheme::row_fill(is_selected, false, false).unwrap_or_else(SurgicalTheme::surface))
+        .bg(SurgicalTheme::row_fill(is_selected, is_hovered, false).unwrap_or_else(SurgicalTheme::surface))
         .child(
             div()
                 .flex_1()
@@ -302,6 +327,14 @@ fn instance_row(
         .on_click(cx.listener(move |this, _event, _window, cx| {
             this.view_model
                 .set_selected_instance_id(Some(click_id.clone()));
+            cx.notify();
+        }))
+        .on_hover(cx.listener(move |this, is_hovering, _window, cx| {
+            this.hovered_instance_id = if *is_hovering {
+                Some(hover_id.clone())
+            } else {
+                None
+            };
             cx.notify();
         }))
 }
@@ -423,6 +456,7 @@ impl Render for InstanceListView {
         let instances_empty = self.view_model.instances().is_empty();
         let filtered = self.view_model.filtered_instances();
         let selected_id = self.view_model.selected_instance_id().map(str::to_string);
+        let hovered_id = self.hovered_instance_id.clone();
         let has_filter = self.has_any_filter();
         let partial_failure_summary = self.view_model.partial_failure_summary();
 
@@ -494,7 +528,8 @@ impl Render for InstanceListView {
                 .child(table_header());
             for instance in &filtered {
                 let is_selected = selected_id.as_deref() == Some(instance.id().as_str());
-                list = list.child(instance_row(instance, is_selected, cx));
+                let is_hovered = hovered_id.as_deref() == Some(instance.id().as_str());
+                list = list.child(instance_row(instance, is_selected, is_hovered, cx));
             }
 
             if self.show_standalone_empty_state {
@@ -649,5 +684,35 @@ mod tests {
 
         let (_view2, cx2) = cx.add_window_view(|_, _| InstanceListView::new(empty_view_model()));
         assert!(cx2.debug_bounds("ec2.instance.header").is_some());
+    }
+
+    #[gpui::test]
+    fn hovering_a_row_marks_it_hovered_and_moving_off_clears_it(cx: &mut TestAppContext) {
+        let (view, cx) =
+            cx.add_window_view(|_, _| InstanceListView::new(populated_view_model()));
+
+        let bounds = cx
+            .debug_bounds("ec2.instance.row.us-east-1:i-1")
+            .expect("row should render");
+
+        assert!(view.read_with(cx, |view, _| view.hovered_instance_id.is_none()));
+
+        cx.simulate_mouse_move(bounds.center(), None, gpui::Modifiers::default());
+        assert_eq!(
+            view.read_with(cx, |view, _| view.hovered_instance_id.clone()),
+            Some("us-east-1:i-1".to_string())
+        );
+
+        // Move somewhere clearly outside the row (top-left corner of the
+        // window) so the row's hover callback fires with `false`.
+        cx.simulate_mouse_move(
+            gpui::point(px(0.0), px(0.0)),
+            None,
+            gpui::Modifiers::default(),
+        );
+        assert_eq!(
+            view.read_with(cx, |view, _| view.hovered_instance_id.clone()),
+            None
+        );
     }
 }
