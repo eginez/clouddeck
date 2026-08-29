@@ -9,3 +9,4 @@
 # Go build artifacts (tools/marshal)
 tools/marshal/marshal
 tools/marshal/checkworker
+tools/marshal/watcher
