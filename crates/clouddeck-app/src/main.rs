@@ -1,6 +1,7 @@
 mod account_profile_picker;
 mod account_provider_step;
 mod account_window;
+mod account_workspace_setup;
 mod ec2_tab;
 mod instance_detail;
 mod instance_list;
