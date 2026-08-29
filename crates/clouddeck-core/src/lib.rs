@@ -1,5 +1,6 @@
 mod error;
 mod fault_injecting;
+mod fleet_compute;
 mod mock;
 mod models;
 mod scenario;
@@ -11,6 +12,7 @@ pub use fault_injecting::{
     DefaultSleep, FaultInjectingComputeService, FaultInjectionBehavior, FaultInjectionOutcome,
     Sleep,
 };
+pub use fleet_compute::FleetComputeService;
 pub use mock::MockComputeService;
 pub use models::{
     ComputeInstanceFilters, ComputeInstanceLoadResult, ComputeServicePartialFailure, EC2Instance,
