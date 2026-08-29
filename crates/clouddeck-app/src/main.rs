@@ -2,6 +2,7 @@ mod shell;
 mod sidebar;
 mod status_bar;
 mod theme;
+mod view_models;
 
 use gpui::{App, Application, Bounds, WindowBounds, WindowOptions, prelude::*, px, size};
 

@@ -1353,6 +1353,7 @@ dependencies = [
  "aws-sdk-ec2",
  "clouddeck-core",
  "gpui",
+ "tokio",
 ]
 
 [[package]]
