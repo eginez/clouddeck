@@ -5,3 +5,6 @@
 *.db
 .beads-credential-key
 .beads/proxieddb/
+
+# Go build artifacts (tools/marshal)
+tools/marshal/marshal
