@@ -1,3 +1,4 @@
+mod account_profile_picker;
 mod account_window;
 mod ec2_tab;
 mod instance_detail;
