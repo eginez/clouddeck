@@ -1,4 +1,5 @@
 mod account_window;
+mod ec2_tab;
 mod instance_detail;
 mod instance_list;
 mod quick_picker;
