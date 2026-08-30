@@ -30,6 +30,12 @@ pub const FLEET_REGION_IDENTIFIER: &str = "fleet";
 /// Port of the oracle's inline `switch appState.contextStatusState`
 /// (an `AppState`-owned enum, not defined in this file, but consumed by
 /// it for `statusIndicatorColor`/`statusText`).
+// `Reloading`/`SetupRequired`/`Error` are not yet constructed anywhere:
+// `CloudContextStatusBar::default()` only ever sets `Ready`, since driving
+// these from live `AppState`/service reload state is a follow-on wiring
+// bead, not this one. Kept as full parity with the oracle's
+// `ContextStatusState` enum.
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContextStatusState {
     Ready,
@@ -145,7 +151,11 @@ impl CloudContextStatusBar {
         self.dismiss_quick_picker();
     }
 
-    /// Port of `CloudContextQuickPicker.searchText`'s binding.
+    /// Port of `CloudContextQuickPicker.searchText`'s binding. Not yet
+    /// called anywhere: the quick picker's search field is display-only
+    /// for now (no editable text-input widget exists in this codebase yet
+    /// — see `instance_list.rs`'s doc comment on the same limitation).
+    #[allow(dead_code)]
     pub fn set_quick_picker_search_text(&mut self, text: impl Into<String>) {
         self.quick_picker_search_text = text.into();
     }

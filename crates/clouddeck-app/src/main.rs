@@ -25,7 +25,7 @@ fn main() {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            |_, cx| cx.new(|_| AppShell),
+            |_, cx| cx.new(|cx| AppShell::new(cx)),
         )
         .unwrap();
         cx.activate(true);

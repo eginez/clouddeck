@@ -50,6 +50,10 @@ impl SurgicalTheme {
     pub fn text_secondary() -> Hsla {
         rgb(0x474f66).into()
     }
+    // Not yet exercised by any ported view — part of the oracle's full
+    // text-color palette (`SurgicalTheme.textTertiary`), kept for parity
+    // and future use.
+    #[allow(dead_code)]
     pub fn text_tertiary() -> Hsla {
         rgb(0x8087a1).into()
     }
@@ -118,6 +122,9 @@ impl SurgicalTheme {
 /// (values are logical pixels, mirrored here as `f32` since gpui's
 /// `Pixels`/`px()` are context-dependent on the caller).
 pub mod radius {
+    // Not yet used by any ported view — part of the oracle's full radius
+    // scale (`SurgicalTheme.Radius.small`), kept for parity and future use.
+    #[allow(dead_code)]
     pub const SMALL: f32 = 2.0;
     pub const STANDARD: f32 = 4.0;
     pub const LARGE: f32 = 12.0;
@@ -132,6 +139,10 @@ pub struct SurgicalTypography;
 
 impl SurgicalTypography {
     pub const VIEW_TITLE_SIZE: f32 = 24.0;
+    // Not yet used by any ported view — part of the oracle's full type
+    // scale (`SurgicalTypography.sectionTitle`), kept for parity and future
+    // use.
+    #[allow(dead_code)]
     pub const SECTION_TITLE_SIZE: f32 = 18.0;
     pub const BODY_SIZE: f32 = 14.0;
     pub const BODY_EMPHASIS_SIZE: f32 = 14.0;

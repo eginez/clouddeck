@@ -50,6 +50,11 @@ impl InstanceListViewModel {
         self.error_message.as_deref()
     }
 
+    // Not yet read by any view: the partial-failure banner in
+    // `instance_list.rs` is not wired to a live per-region failure feed
+    // yet (this bead's `default_compute_service()` never reports partial
+    // failures). Kept as public ViewModel API for that follow-on wiring.
+    #[allow(dead_code)]
     pub fn partial_failures(&self) -> &[ComputeServicePartialFailure] {
         &self.partial_failures
     }
@@ -59,7 +64,11 @@ impl InstanceListViewModel {
     }
 
     /// Sets the search text and reconciles the current selection against the
-    /// newly filtered list (Swift: `searchText`'s `didSet`).
+    /// newly filtered list (Swift: `searchText`'s `didSet`). Not yet called
+    /// anywhere: no editable text-input widget exists in this codebase yet
+    /// for a real search box (see `instance_list.rs`'s doc comment on the
+    /// same limitation).
+    #[allow(dead_code)]
     pub fn set_search_text(&mut self, text: impl Into<String>) {
         self.search_text = text.into();
         self.reconcile_selection_with_filtered_instances();
@@ -196,7 +205,11 @@ impl InstanceListViewModel {
     }
 
     /// Reloads instances (Swift: `refresh()`, which just calls
-    /// `loadInstances()`).
+    /// `loadInstances()`). Not yet called anywhere outside tests: wiring the
+    /// refresh button's click handler to this async call needs an
+    /// established click-to-async-spawn pattern, which is a follow-on bead
+    /// (see `instance_list.rs`'s doc comment).
+    #[allow(dead_code)]
     pub async fn refresh(&mut self) {
         self.load_instances().await;
     }
