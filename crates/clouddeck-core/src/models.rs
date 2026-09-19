@@ -60,12 +60,17 @@ impl ComputeInstanceFilters {
             .name_contains
             .as_deref()
             .map(|q| q.trim().to_lowercase());
-        let normalized_states: std::collections::HashSet<String> =
-            self.states.iter().map(|s| s.to_lowercase()).collect();
+        let normalized_states: std::collections::HashSet<String> = self
+            .states
+            .iter()
+            .map(|s| s.trim().to_lowercase())
+            .filter(|s| !s.is_empty())
+            .collect();
         let normalized_types: std::collections::HashSet<String> = self
             .instance_types
             .iter()
-            .map(|s| s.to_lowercase())
+            .map(|s| s.trim().to_lowercase())
+            .filter(|s| !s.is_empty())
             .collect();
 
         instances
@@ -74,12 +79,32 @@ impl ComputeInstanceFilters {
                 if let Some(query) = normalized_name_query.as_deref()
                     && !query.is_empty()
                 {
-                    let name_matches = instance
-                        .name()
-                        .map(|name| name.to_lowercase().contains(query))
-                        .unwrap_or(false);
-                    let instance_id_matches = instance.instance_id.to_lowercase().contains(query);
-                    if !(name_matches || instance_id_matches) {
+                    let mut fields: Vec<&str> = vec![&instance.instance_id];
+                    fields.extend(
+                        [
+                            instance.region.as_deref(),
+                            instance.instance_type.as_deref(),
+                            instance.state.as_deref(),
+                            instance.public_ip_address.as_deref(),
+                            instance.private_ip_address.as_deref(),
+                            instance.vpc_id.as_deref(),
+                            instance.subnet_id.as_deref(),
+                        ]
+                        .into_iter()
+                        .flatten(),
+                    );
+                    for tag in &instance.tags {
+                        fields.extend([tag.key.as_str(), tag.value.as_str()]);
+                    }
+                    for group in &instance.security_groups {
+                        fields.extend(
+                            [group.group_id.as_deref(), group.group_name.as_deref()]
+                                .into_iter()
+                                .flatten(),
+                        );
+                    }
+                    let text = fields.join(" ").to_lowercase();
+                    if !query.split_whitespace().all(|term| text.contains(term)) {
                         return false;
                     }
                 }
@@ -204,5 +229,43 @@ mod tests {
         ];
         let filtered = ComputeInstanceFilters::default().apply(&instances);
         assert_eq!(filtered.len(), 2);
+    }
+
+    #[test]
+    fn search_requires_all_terms_across_network_tags_and_security_groups() {
+        let mut target = instance("i-frontend", "t3.micro", "running", "public-api");
+        target.region = Some("eu-west-1".to_string());
+        target.private_ip_address = Some("10.12.0.7".to_string());
+        target.security_groups = vec![EC2SecurityGroup {
+            group_id: Some("sg-web".to_string()),
+            group_name: Some("edge-prod".to_string()),
+        }];
+        target.tags.push(EC2InstanceTag {
+            key: "Owner".to_string(),
+            value: "Platform".to_string(),
+        });
+
+        let mut distractor = target.clone();
+        distractor.instance_id = "i-backend".to_string();
+        distractor.tags[1].value = "internal".to_string();
+
+        let filters = ComputeInstanceFilters {
+            name_contains: Some("  EU-WEST-1 platform sg-web  ".to_string()),
+            ..Default::default()
+        };
+        let filtered = filters.apply(&[target, distractor]);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].instance_id, "i-frontend");
+    }
+
+    #[test]
+    fn state_and_type_filters_trim_whitespace_and_ignore_case() {
+        let instances = vec![instance("i-1", "t3.micro", "Running", "api")];
+        let filters = ComputeInstanceFilters {
+            states: vec!["  running ".into()],
+            instance_types: vec![" T3.MICRO ".into()],
+            ..Default::default()
+        };
+        assert_eq!(filters.apply(&instances).len(), 1);
     }
 }

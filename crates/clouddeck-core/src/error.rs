@@ -50,11 +50,20 @@ impl CloudDeckError {
     }
 
     /// Classifies an arbitrary error by lowercased substring match on its
-    /// `Display` output, matching Swift's `fromServiceError` heuristic order:
-    /// auth, timeout, network, throttled, permission, not-found, else unknown.
+    /// `Display` output. Modeled AWS errors should be classified before they
+    /// reach this fallback (see `from_aws_error_code`), because messages such
+    /// as "not authorized" are permission failures rather than auth expiry.
     pub fn from_service_error(error: &(dyn std::error::Error + 'static)) -> CloudDeckError {
         let description = error.to_string();
         let normalized = description.to_lowercase();
+
+        if normalized.contains("forbidden")
+            || normalized.contains("access denied")
+            || normalized.contains("not authorized")
+            || normalized.contains("permission")
+        {
+            return CloudDeckError::Permission;
+        }
 
         if normalized.contains("credential")
             || normalized.contains("token")
@@ -83,14 +92,6 @@ impl CloudDeckError {
             return CloudDeckError::Throttled;
         }
 
-        if normalized.contains("forbidden")
-            || normalized.contains("access denied")
-            || normalized.contains("not authorized")
-            || normalized.contains("permission")
-        {
-            return CloudDeckError::Permission;
-        }
-
         if normalized.contains("not found")
             || normalized.contains("no such")
             || normalized.contains("does not exist")
@@ -99,6 +100,34 @@ impl CloudDeckError {
         }
 
         CloudDeckError::Unknown(description)
+    }
+
+    /// Classifies a modeled AWS service error using its error code first, then
+    /// falls back to the display text for transport and provider failures.
+    pub fn from_aws_error_code(code: Option<&str>, description: &str) -> CloudDeckError {
+        match code.unwrap_or_default() {
+            "AccessDenied"
+            | "AccessDeniedException"
+            | "UnauthorizedOperation"
+            | "UnauthorizedClientException"
+            | "ForbiddenException" => CloudDeckError::Permission,
+            "ExpiredToken"
+            | "ExpiredTokenException"
+            | "InvalidClientException"
+            | "InvalidGrantException"
+            | "InvalidIdentityToken"
+            | "InvalidIdentityTokenException"
+            | "UnrecognizedClientException" => CloudDeckError::Auth,
+            "RequestLimitExceeded"
+            | "Throttling"
+            | "ThrottlingException"
+            | "TooManyRequestsException" => CloudDeckError::Throttled,
+            "InvalidInstanceID.NotFound" | "InstanceNotFound" => CloudDeckError::NotFound,
+            _ => {
+                let error = std::io::Error::other(description.to_string());
+                Self::from_service_error(&error)
+            }
+        }
     }
 }
 
@@ -162,6 +191,27 @@ mod tests {
         assert_eq!(
             CloudDeckError::from_service_error(&err),
             CloudDeckError::Permission
+        );
+    }
+
+    #[test]
+    fn permission_text_wins_over_auth_wording() {
+        let err = std::io::Error::other("the caller is not authorized to use this credential");
+        assert_eq!(
+            CloudDeckError::from_service_error(&err),
+            CloudDeckError::Permission
+        );
+    }
+
+    #[test]
+    fn modeled_aws_error_codes_are_classified_without_substring_ambiguity() {
+        assert_eq!(
+            CloudDeckError::from_aws_error_code(Some("UnauthorizedOperation"), "not authorized"),
+            CloudDeckError::Permission
+        );
+        assert_eq!(
+            CloudDeckError::from_aws_error_code(Some("ExpiredToken"), "access denied"),
+            CloudDeckError::Auth
         );
     }
 

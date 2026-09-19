@@ -3,6 +3,8 @@ use crate::models::{
     ComputeInstanceFilters, ComputeInstanceLoadResult, ComputeServicePartialFailure,
 };
 use crate::service::{BoxError, ComputeService};
+use std::sync::Arc;
+use std::time::Duration;
 
 /// Aggregates `list_instances` across multiple regions, each backed by a
 /// per-region service produced by `service_factory` (Swift: `FleetComputeService`).
@@ -12,9 +14,12 @@ use crate::service::{BoxError, ComputeService};
 /// failed, matching the Swift oracle's "best effort across regions" behavior.
 type ServiceFactory = dyn Fn(&str) -> Box<dyn ComputeService + Send + Sync> + Send + Sync;
 
+const DEFAULT_REGION_TIMEOUT: Duration = Duration::from_secs(65);
+
 pub struct FleetComputeService {
     regions: Vec<String>,
-    service_factory: Box<ServiceFactory>,
+    service_factory: Arc<ServiceFactory>,
+    region_timeout: Duration,
 }
 
 impl FleetComputeService {
@@ -24,9 +29,31 @@ impl FleetComputeService {
         regions: Vec<String>,
         service_factory: impl Fn(&str) -> Box<dyn ComputeService + Send + Sync> + Send + Sync + 'static,
     ) -> Self {
+        Self::with_timeout(regions, service_factory, DEFAULT_REGION_TIMEOUT)
+    }
+
+    /// Builds a fleet service with a per-region deadline.
+    ///
+    /// Region requests run concurrently, so a fleet refresh is bounded by one
+    /// region deadline rather than the sum of every region deadline. The
+    /// shorter constructor is useful for deterministic tests and callers that
+    /// have a tighter UI budget.
+    pub fn with_timeout(
+        regions: Vec<String>,
+        service_factory: impl Fn(&str) -> Box<dyn ComputeService + Send + Sync> + Send + Sync + 'static,
+        region_timeout: Duration,
+    ) -> Self {
+        let mut unique_regions = Vec::with_capacity(regions.len());
+        for region in regions {
+            let region = region.trim().to_string();
+            if !region.is_empty() && !unique_regions.iter().any(|seen| seen == &region) {
+                unique_regions.push(region);
+            }
+        }
         Self {
-            regions,
-            service_factory: Box::new(service_factory),
+            regions: unique_regions,
+            service_factory: Arc::new(service_factory),
+            region_timeout,
         }
     }
 }
@@ -37,13 +64,58 @@ impl ComputeService for FleetComputeService {
         &self,
         filters: Option<ComputeInstanceFilters>,
     ) -> Result<ComputeInstanceLoadResult, BoxError> {
+        let mut tasks = tokio::task::JoinSet::new();
+        for (index, region) in self.regions.iter().cloned().enumerate() {
+            let service_factory = self.service_factory.clone();
+            let filters = filters.clone();
+            let region_timeout = self.region_timeout;
+            tasks.spawn(async move {
+                let service = (service_factory)(&region);
+                let result =
+                    tokio::time::timeout(region_timeout, service.list_instances(filters)).await;
+                let result = match result {
+                    Ok(result) => result,
+                    Err(_) => Err(std::io::Error::other(format!(
+                        "AWS region load timed out after {} seconds",
+                        region_timeout.as_secs_f64()
+                    ))
+                    .into()),
+                };
+                (index, region, result)
+            });
+        }
+
+        let mut completed = Vec::with_capacity(self.regions.len());
+        while let Some(joined) = tasks.join_next().await {
+            match joined {
+                Ok(item) => completed.push(item),
+                Err(error) => {
+                    // A panic in one region must not strand the remaining
+                    // regions or turn a useful partial result into a process
+                    // panic. This is only reachable for a panicking service
+                    // factory or task runtime failure, so no region can be
+                    // recovered from the JoinError itself.
+                    completed.push((
+                        usize::MAX,
+                        "<unknown>".to_string(),
+                        Err(
+                            std::io::Error::other(format!("AWS region load task failed: {error}"))
+                                .into(),
+                        ),
+                    ));
+                }
+            }
+        }
+
+        // Completion order is intentionally independent of result order. Use
+        // the original region order for deterministic errors and diagnostics.
+        completed.sort_by_key(|(index, _, _)| *index);
         let mut aggregated_instances = Vec::new();
         let mut partial_failures: Vec<ComputeServicePartialFailure> = Vec::new();
         let mut had_successful_region_load = false;
 
-        for region in &self.regions {
-            let service = (self.service_factory)(region);
-            match service.list_instances(filters.clone()).await {
+        for (_, region, result) in completed {
+            match result {
                 Ok(result) => {
                     had_successful_region_load = true;
                     aggregated_instances.extend(result.instances.into_iter().map(
@@ -97,6 +169,7 @@ mod tests {
     use super::*;
     use crate::mock::MockComputeService;
     use crate::models::EC2Instance;
+    use std::sync::Arc;
 
     fn instance(instance_id: &str) -> EC2Instance {
         EC2Instance {
@@ -144,6 +217,29 @@ mod tests {
             _filters: Option<ComputeInstanceFilters>,
         ) -> Result<ComputeInstanceLoadResult, BoxError> {
             Err(Box::new(CloudDeckError::Unknown(self.message.clone())))
+        }
+    }
+
+    struct DelayedService {
+        delay: Duration,
+        instance_id: String,
+        barrier: Option<Arc<tokio::sync::Barrier>>,
+    }
+
+    #[async_trait::async_trait]
+    impl ComputeService for DelayedService {
+        async fn list_instances(
+            &self,
+            _filters: Option<ComputeInstanceFilters>,
+        ) -> Result<ComputeInstanceLoadResult, BoxError> {
+            if let Some(barrier) = &self.barrier {
+                barrier.wait().await;
+            }
+            tokio::time::sleep(self.delay).await;
+            Ok(ComputeInstanceLoadResult {
+                instances: vec![instance(&self.instance_id)],
+                partial_failures: vec![],
+            })
         }
     }
 
@@ -264,5 +360,79 @@ mod tests {
         let result = service.list_instances(None).await.unwrap();
         assert!(result.instances.is_empty());
         assert!(result.partial_failures.is_empty());
+    }
+
+    #[tokio::test]
+    async fn region_loads_run_concurrently_with_one_deadline() {
+        let service = FleetComputeService::with_timeout(
+            vec!["one".into(), "two".into(), "three".into()],
+            {
+                let barrier = Arc::new(tokio::sync::Barrier::new(3));
+                move |region| {
+                    Box::new(DelayedService {
+                        delay: Duration::from_millis(1),
+                        instance_id: format!("i-{region}"),
+                        barrier: Some(barrier.clone()),
+                    })
+                }
+            },
+            Duration::from_millis(200),
+        );
+
+        let result = tokio::time::timeout(Duration::from_secs(1), service.list_instances(None))
+            .await
+            .expect("all region tasks should start together")
+            .unwrap();
+
+        assert_eq!(result.instances.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn slow_region_becomes_partial_failure_at_deadline() {
+        let service = FleetComputeService::with_timeout(
+            vec!["fast".into(), "slow".into()],
+            |region| {
+                Box::new(DelayedService {
+                    delay: if region == "slow" {
+                        Duration::from_millis(100)
+                    } else {
+                        Duration::from_millis(1)
+                    },
+                    instance_id: format!("i-{region}"),
+                    barrier: None,
+                })
+            },
+            Duration::from_millis(20),
+        );
+
+        let result = service.list_instances(None).await.unwrap();
+        assert_eq!(result.instances.len(), 1);
+        assert_eq!(result.instances[0].instance_id, "i-fast");
+        assert_eq!(result.partial_failures.len(), 1);
+        assert_eq!(result.partial_failures[0].region, "slow");
+        assert!(result.partial_failures[0].message.contains("timed out"));
+    }
+
+    #[tokio::test]
+    async fn duplicate_and_blank_regions_are_queried_once() {
+        let seen = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let captured = seen.clone();
+        let service = FleetComputeService::new(
+            vec![
+                "us-east-1".into(),
+                " ".into(),
+                "us-east-1".into(),
+                "us-west-2".into(),
+            ],
+            move |region| {
+                captured.lock().unwrap().push(region.to_string());
+                Box::new(MockComputeService::new(vec![], None))
+            },
+        );
+
+        service.list_instances(None).await.unwrap();
+        let mut seen = seen.lock().unwrap().clone();
+        seen.sort();
+        assert_eq!(seen, vec!["us-east-1".to_string(), "us-west-2".to_string()]);
     }
 }

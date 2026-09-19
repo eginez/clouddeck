@@ -26,3 +26,20 @@ pub use scenario_service::{
     DEFAULT_FAILURE_MESSAGE, ScenarioFailureError, ScenarioService, TestScenarioKind,
 };
 pub use service::{BoxError, ComputeService};
+
+mod instance_detail_view_model;
+mod instance_list_view_model;
+pub use instance_detail_view_model::InstanceDetailViewModel;
+pub use instance_list_view_model::InstanceListViewModel;
+mod aws_cli;
+mod aws_identity;
+mod aws_sdk;
+mod context;
+pub use aws_cli::AwsCliComputeService;
+pub use aws_identity::{AwsIdentity, AwsIdentityProvider, AwsIdentityService};
+pub use aws_sdk::{AwsSdkComputeService, Ec2Page, Ec2PageSource};
+pub use context::{
+    AwsCredentialKind, AwsProfile, AwsProfileAuth, AwsSsoConfiguration, FLEET_REGIONS, REGIONS,
+    WorkspaceContext, context_path, load_profile_auth, load_profiles, parse_profile_auth,
+    parse_profiles,
+};
