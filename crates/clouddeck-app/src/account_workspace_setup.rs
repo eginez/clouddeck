@@ -232,9 +232,7 @@ impl Render for AccountWorkspaceSetupPanel {
                                     .gap(px(4.0))
                                     .child(
                                         div()
-                                            .text_size(px(
-                                                SurgicalTypography::SECTION_TITLE_SIZE,
-                                            ))
+                                            .text_size(px(SurgicalTypography::SECTION_TITLE_SIZE))
                                             .text_color(SurgicalTheme::text_primary())
                                             .child(profile.name.clone()),
                                     )
@@ -353,13 +351,7 @@ impl Render for AccountWorkspaceSetupPanel {
                         .rounded(px(radius::STANDARD))
                         .bg(SurgicalTheme::row_fill(is_selected, false, !is_selected)
                             .unwrap_or_else(SurgicalTheme::surface))
-                        .child(
-                            div()
-                                .w(px(8.0))
-                                .h(px(8.0))
-                                .rounded(px(4.0))
-                                .bg(icon_color),
-                        )
+                        .child(div().w(px(8.0)).h(px(8.0)).rounded(px(4.0)).bg(icon_color))
                         .child(
                             div()
                                 .flex()
@@ -475,7 +467,10 @@ mod tests {
     #[test]
     fn selected_profile_looks_up_by_name() {
         let panel = panel_with_selected_profile();
-        assert_eq!(panel.selected_profile().map(|p| p.name.as_str()), Some("prod-admin"));
+        assert_eq!(
+            panel.selected_profile().map(|p| p.name.as_str()),
+            Some("prod-admin")
+        );
 
         let none_selected = AccountWorkspaceSetupPanel::default();
         assert!(none_selected.selected_profile().is_none());
@@ -488,7 +483,10 @@ mod tests {
         assert!(cx.debug_bounds("account-workspace-setup-panel").is_some());
         assert!(cx.debug_bounds("account-workspace-region-search").is_some());
         assert!(cx.debug_bounds("account-workspace-region-list").is_some());
-        assert!(cx.debug_bounds("account-workspace-context-preview").is_some());
+        assert!(
+            cx.debug_bounds("account-workspace-context-preview")
+                .is_some()
+        );
         // No profile selected -> hint panel, no error message -> no banner.
         assert!(
             cx.debug_bounds("account-workspace-profile-selection-hint")
@@ -556,8 +554,7 @@ mod tests {
 
     #[gpui::test]
     fn selecting_a_profile_renders_the_selected_profile_panel(cx: &mut TestAppContext) {
-        let (_view, cx) =
-            cx.add_window_view(|_, _| panel_with_selected_profile());
+        let (_view, cx) = cx.add_window_view(|_, _| panel_with_selected_profile());
 
         assert!(
             cx.debug_bounds("account-workspace-profile-selection")

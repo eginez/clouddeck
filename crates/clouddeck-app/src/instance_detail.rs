@@ -4,7 +4,7 @@
 //! Driven entirely by an [`InstanceDetailViewModel`]: a header (display
 //! name + status + instance ID), an "Instance" metadata section, a
 //! "Network" metadata section, a "Security Groups" list section, and a
-//! "Tags" section. See
+//! "Tags" section. Metadata rows expose a visible copy action. See
 //! `~/src/cloudDeck/main/Sources/CloudDeck/Views/EC2/InstanceDetailView.swift`
 //! for the oracle this was ported from.
 //!
@@ -19,9 +19,9 @@ use crate::theme::{SurgicalTheme, SurgicalTypography, radius};
 use crate::view_models::InstanceDetailViewModel;
 
 /// Port of `InstanceDetailView`. Owns the view-model for the currently
-/// selected instance and renders its state; there is no view-local
-/// mutable state of its own (the oracle's `InstanceDetailView` is a plain,
-/// stateless `View` over its view-model).
+/// selected instance and renders its state. The parent retains this entity
+/// while the selected ID is stable so its scroll position survives list
+/// updates.
 pub struct InstanceDetailView {
     pub view_model: InstanceDetailViewModel,
 }
@@ -59,8 +59,18 @@ fn metadata_section(
 ) -> impl IntoElement {
     let mut rows_col = div().flex().flex_col();
     for row in rows {
+        let copy_id = format!("{}-copy", row.selector);
+        let copy_value = row.value.clone();
         rows_col = rows_col.child(
             div()
+                .id(row.selector)
+                .on_click({
+                    let value = row.value.clone();
+                    move |_, _, cx| {
+                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(value.clone()))
+                    }
+                })
+                .cursor_pointer()
                 .debug_selector(move || row.selector.into())
                 .flex()
                 .flex_row()
@@ -76,6 +86,8 @@ fn metadata_section(
                 .child(
                     div()
                         .flex_1()
+                        .min_w(px(0.0))
+                        .truncate()
                         .text_size(px(if row.mono {
                             SurgicalTypography::MONO_SIZE
                         } else {
@@ -83,6 +95,24 @@ fn metadata_section(
                         }))
                         .text_color(SurgicalTheme::text_primary())
                         .child(row.value),
+                )
+                .child(
+                    div()
+                        .id(gpui::SharedString::from(copy_id.clone()))
+                        .debug_selector(move || copy_id.clone().into())
+                        .flex_shrink_0()
+                        .px(px(6.0))
+                        .py(px(3.0))
+                        .rounded(px(radius::STANDARD))
+                        .bg(SurgicalTheme::surface_container())
+                        .text_size(px(SurgicalTypography::CAPTION_SIZE))
+                        .text_color(SurgicalTheme::primary_dim())
+                        .child("Copy")
+                        .on_click(move |_, _, cx| {
+                            cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                copy_value.clone(),
+                            ));
+                        }),
                 ),
         );
     }
@@ -91,6 +121,7 @@ fn metadata_section(
         .debug_selector(move || selector.into())
         .flex()
         .flex_col()
+        .flex_shrink_0()
         .gap(px(12.0))
         .child(section_header(title))
         .child(
@@ -135,6 +166,7 @@ fn list_section(
         .debug_selector(move || selector.into())
         .flex()
         .flex_col()
+        .flex_shrink_0()
         .gap(px(12.0))
         .child(section_header(title))
         .child(
@@ -201,6 +233,7 @@ fn tags_section(tags: Vec<clouddeck_core::EC2InstanceTag>) -> impl IntoElement {
         .debug_selector(|| "instance-detail-section-tags".into())
         .flex()
         .flex_col()
+        .flex_shrink_0()
         .gap(px(12.0))
         .child(section_header("Tags"))
         .child(
@@ -290,6 +323,9 @@ impl Render for InstanceDetailView {
         let state = instance.state.as_deref();
 
         div()
+            .id("detail-scroll")
+            .size_full()
+            .overflow_y_scroll()
             .debug_selector(|| "instance-detail-root".into())
             .flex()
             .flex_col()
@@ -302,6 +338,7 @@ impl Render for InstanceDetailView {
                     .debug_selector(|| "instance-detail-header".into())
                     .flex()
                     .flex_col()
+                    .flex_shrink_0()
                     .gap(px(10.0))
                     .child(section_header("Inspector"))
                     .child(
@@ -520,5 +557,47 @@ mod tests {
         assert!(instance_section.origin.y < network_section.origin.y);
         assert!(network_section.origin.y < security_groups_section.origin.y);
         assert!(security_groups_section.origin.y < tags_section.origin.y);
+    }
+
+    #[gpui::test]
+    fn copy_action_places_the_metadata_value_on_the_clipboard(cx: &mut TestAppContext) {
+        let (_view, cx) = cx.add_window_view(|_, _| {
+            InstanceDetailView::new(InstanceDetailViewModel::new(populated_instance()))
+        });
+
+        let copy = cx
+            .debug_bounds("instance-detail-row-private-ip-copy")
+            .expect("private IP copy action renders");
+        cx.simulate_click(copy.center(), Default::default());
+
+        assert_eq!(
+            cx.read_from_clipboard().and_then(|item| item.text()),
+            Some("10.0.0.5".to_string())
+        );
+    }
+
+    #[gpui::test]
+    fn detail_content_can_extend_beyond_the_viewport_for_scrolling(cx: &mut TestAppContext) {
+        let mut instance = populated_instance();
+        instance.tags = (0..24)
+            .map(|i| clouddeck_core::EC2InstanceTag {
+                key: format!("tag-{i}"),
+                value: "fleet metadata".to_string(),
+            })
+            .collect();
+        let (_view, cx) = cx.add_window_view(|_, _| {
+            InstanceDetailView::new(InstanceDetailViewModel::new(instance))
+        });
+
+        let root = cx
+            .debug_bounds("instance-detail-root")
+            .expect("detail root renders");
+        let tags = cx
+            .debug_bounds("instance-detail-section-tags")
+            .expect("tags section renders");
+        assert!(
+            tags.origin.y + tags.size.height > root.origin.y + root.size.height,
+            "the detail sections should retain their natural height so the scroll container can reach tags"
+        );
     }
 }

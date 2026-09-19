@@ -1,50 +1,10 @@
-//! Port of `InstanceListView.swift` (the Swift CloudDeck oracle's
-//! scrollable EC2 instance table) to gpui.
-//!
-//! Driven entirely by an [`InstanceListViewModel`]: a header (title + a
-//! "N visible" count once instances are loaded), an optional
-//! partial-failure banner, a state/type filter chip row + refresh button
-//! standing in for the oracle's toolbar `Picker`s (gpui has no native menu
-//! picker; see the `filter_row` doc comment below), and content that
-//! switches between a loading panel, an error panel, an empty-state
-//! panel, and the instance table depending on view-model state — matching
-//! the oracle's `@ViewBuilder private var content` branching exactly. See
-//! `~/src/cloudDeck/main/Sources/CloudDeck/Views/EC2/InstanceListView.swift`
-//! for the oracle this was ported from.
-//!
-//! The refresh button and filter chips mutate view-model state
-//! synchronously (`set_selected_state`/`set_selected_instance_type`) but
-//! do **not** call the async `refresh`/`load_instances` themselves: this
-//! codebase has no established pattern yet for driving an async
-//! view-model call from a gpui click handler (see
-//! `crates/clouddeck-app/src/view_models/instance_list.rs`). Wiring the
-//! refresh button and initial `.task { loadInstances() }` load to the
-//! real async calls is the EC2-tab composition bead's job
-//! (`clouddeck-rs-w6s.14`), which owns a live `AppShell`/`cx` to spawn
-//! that work from.
-//!
-//! Row hover state is tracked here (`InstanceListView::hovered_instance_id`)
-//! via gpui's `on_hover`, mirroring the oracle's `@State private var
-//! hoveredInstanceID` and feeding into `SurgicalTheme::row_fill`'s
-//! `hovered` argument exactly like the oracle's `rowFill(selected:
-//! hovered:)` call.
-//!
-//! The oracle's `.searchable(text: $viewModel.searchText, ...)` search
-//! field is **not** ported here: `InstanceListViewModel::search_text`
-//! already exists and is applied by `filtered_instances()`, but this
-//! codebase has no established gpui text-input widget anywhere yet (no
-//! `on_hover`-adjacent `on_key_down`/IME-editable element is used by any
-//! other ported view — see e.g. `account_profile_picker.rs` and
-//! `quick_picker.rs`, which have search-filtering *logic* but render no
-//! actual editable text field). Adding a search box here should wait
-//! until such a pattern is established for the app (tracked as a
-//! discovered-from follow-up), rather than growing an ad hoc one-off
-//! implementation in this view.
-
 use gpui::{
     Context, InteractiveElement, IntoElement, ParentElement, Render, StatefulInteractiveElement,
     Styled, Window, div, prelude::*, px,
 };
+
+use gpui::Entity;
+use gpui_component::input::{Input, InputEvent, InputState};
 
 use crate::status_badge::status_badge;
 use crate::theme::{SurgicalTheme, SurgicalTypography, radius};
@@ -63,6 +23,7 @@ pub struct InstanceListView {
     /// tracked here (rather than in the view model) since hover is
     /// transient view-local UI state, not fleet data.
     hovered_instance_id: Option<String>,
+    search: Option<Entity<InputState>>,
 }
 
 impl InstanceListView {
@@ -71,7 +32,27 @@ impl InstanceListView {
             view_model,
             show_standalone_empty_state: false,
             hovered_instance_id: None,
+            search: None,
         }
+    }
+
+    pub fn refresh(&mut self, cx: &mut Context<Self>) {
+        let Some(service) = self.view_model.begin_load() else {
+            return;
+        };
+        cx.notify();
+        let task =
+            crate::runtime::runtime().spawn(async move { service.list_instances(None).await });
+        cx.spawn(async move |this, cx| {
+            let result = task
+                .await
+                .unwrap_or_else(|error| Err(std::io::Error::other(error.to_string()).into()));
+            let _ = this.update(cx, |this, cx| {
+                this.view_model.finish_load(result);
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// Port of `hasAnyFilter`: whether any search/state/type filter is
@@ -104,6 +85,8 @@ fn filter_row(view: &mut InstanceListView, cx: &mut Context<InstanceListView>) -
 
     let mut state_chips = div()
         .debug_selector(|| "ec2.filter.state".into())
+        .flex_1()
+        .min_w(px(0.0))
         .flex()
         .flex_row()
         .flex_wrap()
@@ -134,6 +117,8 @@ fn filter_row(view: &mut InstanceListView, cx: &mut Context<InstanceListView>) -
 
     let mut type_chips = div()
         .debug_selector(|| "ec2.filter.type".into())
+        .flex_1()
+        .min_w(px(0.0))
         .flex()
         .flex_row()
         .flex_wrap()
@@ -155,8 +140,7 @@ fn filter_row(view: &mut InstanceListView, cx: &mut Context<InstanceListView>) -
             instance_type,
             is_selected,
             cx.listener(move |this, _event, _window, cx| {
-                this.view_model
-                    .set_selected_instance_type(value.clone());
+                this.view_model.set_selected_instance_type(value.clone());
                 cx.notify();
             }),
         ));
@@ -164,6 +148,7 @@ fn filter_row(view: &mut InstanceListView, cx: &mut Context<InstanceListView>) -
 
     div()
         .debug_selector(|| "ec2.instance.toolbar".into())
+        .flex_wrap()
         .flex()
         .flex_row()
         .items_center()
@@ -180,7 +165,12 @@ fn filter_row(view: &mut InstanceListView, cx: &mut Context<InstanceListView>) -
                 .bg(SurgicalTheme::surface_container())
                 .text_size(px(SurgicalTypography::CAPTION_SIZE))
                 .text_color(SurgicalTheme::text_primary())
-                .child("Refresh"),
+                .child(if view.view_model.is_loading() {
+                    "Refreshing…"
+                } else {
+                    "Refresh"
+                })
+                .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
         )
 }
 
@@ -251,10 +241,16 @@ fn table_header() -> impl IntoElement {
         .bg(SurgicalTheme::surface_high())
         .text_size(px(SurgicalTypography::LABEL_SIZE))
         .text_color(SurgicalTheme::text_secondary())
-        .child(div().flex_1().child("Instance"))
-        .child(div().w(px(110.0)).child("Region"))
-        .child(div().w(px(96.0)).child("Type"))
-        .child(div().w(px(92.0)).child("State"))
+        .child(
+            div()
+                .flex_1()
+                .flex_basis(px(260.0))
+                .min_w(px(140.0))
+                .child("Instance"),
+        )
+        .child(div().w(px(90.0)).flex_shrink_0().child("Region"))
+        .child(div().w(px(78.0)).flex_shrink_0().child("Type"))
+        .child(div().w(px(72.0)).flex_shrink_0().child("State"))
 }
 
 /// Port of `row(for:)`.
@@ -268,7 +264,10 @@ fn instance_row(
     let row_id = instance.id();
     let click_id = row_id.clone();
     let hover_id = row_id.clone();
-    let name = instance.name().map(str::to_string).unwrap_or_else(|| instance.instance_id.clone());
+    let name = instance
+        .name()
+        .map(str::to_string)
+        .unwrap_or_else(|| instance.instance_id.clone());
     let instance_id = instance.instance_id.clone();
     let region = instance.region.clone().unwrap_or_else(|| "—".to_string());
     let instance_type = instance
@@ -286,21 +285,30 @@ fn instance_row(
         .px(px(12.0))
         .py(px(11.0))
         .rounded(px(radius::STANDARD))
-        .bg(SurgicalTheme::row_fill(is_selected, is_hovered, false).unwrap_or_else(SurgicalTheme::surface))
+        .bg(SurgicalTheme::row_fill(is_selected, is_hovered, false)
+            .unwrap_or_else(SurgicalTheme::surface))
         .child(
             div()
                 .flex_1()
+                .flex_basis(px(260.0))
+                .min_w(px(140.0))
                 .flex()
                 .flex_col()
                 .gap(px(3.0))
                 .child(
                     div()
+                        .min_w(px(0.0))
+                        .whitespace_nowrap()
+                        .text_ellipsis()
                         .text_size(px(SurgicalTypography::BODY_EMPHASIS_SIZE))
                         .text_color(SurgicalTheme::text_primary())
                         .child(name),
                 )
                 .child(
                     div()
+                        .min_w(px(0.0))
+                        .whitespace_nowrap()
+                        .text_ellipsis()
                         .text_size(px(SurgicalTypography::MONO_SIZE))
                         .text_color(SurgicalTheme::text_secondary())
                         .child(instance_id),
@@ -308,25 +316,34 @@ fn instance_row(
         )
         .child(
             div()
-                .w(px(110.0))
+                .w(px(90.0))
+                .flex_shrink_0()
                 .text_size(px(SurgicalTypography::METADATA_SIZE))
                 .text_color(SurgicalTheme::text_secondary())
                 .child(region),
         )
         .child(
             div()
-                .w(px(96.0))
+                .w(px(78.0))
+                .flex_shrink_0()
                 .text_size(px(SurgicalTypography::METADATA_SIZE))
                 .text_color(SurgicalTheme::text_secondary())
                 .child(instance_type),
         )
-        .child(div().w(px(92.0)).child(status_badge(
-            "ec2.instance.row.status",
-            state.as_deref(),
-        )))
+        .child(
+            div()
+                .w(px(72.0))
+                .flex_shrink_0()
+                .child(status_badge("ec2.instance.row.status", state.as_deref())),
+        )
         .on_click(cx.listener(move |this, _event, _window, cx| {
-            this.view_model
-                .set_selected_instance_id(Some(click_id.clone()));
+            let next_selection =
+                if this.view_model.selected_instance_id() == Some(click_id.as_str()) {
+                    None
+                } else {
+                    Some(click_id.clone())
+                };
+            this.view_model.set_selected_instance_id(next_selection);
             cx.notify();
         }))
         .on_hover(cx.listener(move |this, is_hovering, _window, cx| {
@@ -452,7 +469,24 @@ fn standalone_inspector_prompt() -> impl IntoElement {
 }
 
 impl Render for InstanceListView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.search.is_none() {
+            if !cx.has_global::<gpui_component::Theme>() {
+                gpui_component::init(cx);
+            }
+            let search = cx.new(|cx| {
+                InputState::new(window, cx).placeholder("Search names, tags, IPs, regions…")
+            });
+            cx.subscribe(&search, |this, input, event, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.view_model
+                        .set_search_text(input.read(cx).value().to_string());
+                    cx.notify();
+                }
+            })
+            .detach();
+            self.search = Some(search);
+        }
         let instances_empty = self.view_model.instances().is_empty();
         let filtered = self.view_model.filtered_instances();
         let selected_id = self.view_model.selected_instance_id().map(str::to_string);
@@ -466,8 +500,8 @@ impl Render for InstanceListView {
             .flex_col()
             .gap(px(4.0))
             .px(px(20.0))
-            .pt(px(8.0))
-            .pb(px(4.0))
+            .pt(px(12.0))
+            .pb(px(8.0))
             .bg(SurgicalTheme::workspace_canvas())
             .child(
                 div()
@@ -487,10 +521,16 @@ impl Render for InstanceListView {
             )
             .child(
                 div()
-                    .text_size(px(SurgicalTypography::BODY_SIZE))
-                    .text_color(SurgicalTheme::text_secondary())
+                    .id("fleet-search")
+                    .debug_selector(|| "fleet-search".into())
+                    .w_full()
+                    .h(px(34.0))
+                    .flex_shrink_0()
                     .child(
-                        "Inspect instance state, identity, and configuration for the current account and region.",
+                        Input::new(self.search.as_ref().unwrap())
+                            .w_full()
+                            .h(px(34.0))
+                            .cleanable(true),
                     ),
             )
             .child(filter_row(self, cx));
@@ -509,10 +549,8 @@ impl Render for InstanceListView {
 
         let content = if self.view_model.is_loading() && instances_empty {
             loading_panel().into_any_element()
-        } else if let Some(error_message) = self
-            .view_model
-            .error_message()
-            .filter(|_| instances_empty)
+        } else if let Some(error_message) =
+            self.view_model.error_message().filter(|_| instances_empty)
         {
             error_panel(error_message.to_string()).into_any_element()
         } else if filtered.is_empty() {
@@ -544,7 +582,14 @@ impl Render for InstanceListView {
             }
         };
 
-        root.child(content)
+        root.child(
+            div()
+                .id("fleet-scroll")
+                .flex_1()
+                .min_h(px(0.0))
+                .overflow_y_scroll()
+                .child(content),
+        )
     }
 }
 
@@ -552,9 +597,17 @@ impl Render for InstanceListView {
 mod tests {
     use super::*;
     use clouddeck_core::{EC2InstanceTag, MockComputeService};
-    use gpui::TestAppContext;
+    use gpui::{Entity, TestAppContext, VisualTestContext};
+    use std::cell::RefCell;
+    use std::rc::Rc;
 
-    fn instance(id: &str, name: &str, state: &str, instance_type: &str, region: &str) -> EC2Instance {
+    fn instance(
+        id: &str,
+        name: &str,
+        state: &str,
+        instance_type: &str,
+        region: &str,
+    ) -> EC2Instance {
         EC2Instance {
             instance_id: id.to_string(),
             region: Some(region.to_string()),
@@ -579,30 +632,51 @@ mod tests {
             instance("i-2", "bastion", "stopped", "t3.small", "us-west-2"),
         ];
         let mut vm = InstanceListViewModel::new(Box::new(MockComputeService::new(instances, None)));
-        let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
         rt.block_on(vm.load_instances());
         vm
     }
 
     fn empty_view_model() -> InstanceListViewModel {
         let mut vm = InstanceListViewModel::new(Box::new(MockComputeService::new(vec![], None)));
-        let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
         rt.block_on(vm.load_instances());
         vm
     }
 
+    fn add_rooted_list(
+        cx: &mut TestAppContext,
+    ) -> (Entity<InstanceListView>, &mut VisualTestContext) {
+        let slot = Rc::new(RefCell::new(None));
+        let slot_for_window = slot.clone();
+        let (_root, cx) = cx.add_window_view(move |window, cx| {
+            gpui_component::init(cx);
+            let list = cx.new(|_| InstanceListView::new(populated_view_model()));
+            *slot_for_window.borrow_mut() = Some(list.clone());
+            gpui_component::Root::new(list, window, cx)
+        });
+        let list = slot
+            .borrow()
+            .as_ref()
+            .expect("rooted list entity should be created")
+            .clone();
+        (list, cx)
+    }
+
     #[gpui::test]
     fn mounts_without_a_display(cx: &mut TestAppContext) {
-        let (_view, cx) =
-            cx.add_window_view(|_, _| InstanceListView::new(populated_view_model()));
+        let (_view, cx) = cx.add_window_view(|_, _| InstanceListView::new(populated_view_model()));
 
         assert!(cx.debug_bounds("ec2.instance.panel").is_some());
     }
 
     #[gpui::test]
     fn renders_a_row_per_filtered_instance(cx: &mut TestAppContext) {
-        let (_view, cx) =
-            cx.add_window_view(|_, _| InstanceListView::new(populated_view_model()));
+        let (_view, cx) = cx.add_window_view(|_, _| InstanceListView::new(populated_view_model()));
 
         assert!(cx.debug_bounds("ec2.instance.list").is_some());
         assert!(cx.debug_bounds("ec2.instance.table-header").is_some());
@@ -643,8 +717,7 @@ mod tests {
 
     #[gpui::test]
     fn does_not_render_standalone_prompt_by_default(cx: &mut TestAppContext) {
-        let (_view, cx) =
-            cx.add_window_view(|_, _| InstanceListView::new(populated_view_model()));
+        let (_view, cx) = cx.add_window_view(|_, _| InstanceListView::new(populated_view_model()));
 
         assert!(
             cx.debug_bounds("ec2.instance.standalone-inspector-prompt")
@@ -658,7 +731,9 @@ mod tests {
             vec![],
             Some(Box::new(std::io::Error::other("boom"))),
         )));
-        let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
         rt.block_on(vm.load_instances());
         assert!(vm.error_message().is_some());
 
@@ -678,8 +753,7 @@ mod tests {
 
     #[gpui::test]
     fn header_shows_visible_count_only_when_instances_are_loaded(cx: &mut TestAppContext) {
-        let (_view, cx) =
-            cx.add_window_view(|_, _| InstanceListView::new(populated_view_model()));
+        let (_view, cx) = cx.add_window_view(|_, _| InstanceListView::new(populated_view_model()));
         assert!(cx.debug_bounds("ec2.instance.header").is_some());
 
         let (_view2, cx2) = cx.add_window_view(|_, _| InstanceListView::new(empty_view_model()));
@@ -688,8 +762,7 @@ mod tests {
 
     #[gpui::test]
     fn hovering_a_row_marks_it_hovered_and_moving_off_clears_it(cx: &mut TestAppContext) {
-        let (view, cx) =
-            cx.add_window_view(|_, _| InstanceListView::new(populated_view_model()));
+        let (view, cx) = cx.add_window_view(|_, _| InstanceListView::new(populated_view_model()));
 
         let bounds = cx
             .debug_bounds("ec2.instance.row.us-east-1:i-1")
@@ -713,6 +786,105 @@ mod tests {
         assert_eq!(
             view.read_with(cx, |view, _| view.hovered_instance_id.clone()),
             None
+        );
+    }
+
+    #[gpui::test]
+    fn toolbar_renders_search_state_type_filters_and_refresh_together(cx: &mut TestAppContext) {
+        // Structural proof for the agreed layout (clouddeck-rs-wz2.3): the
+        // top toolbar carries search, State and Type filters, and Refresh
+        // side by side, above the full-width table.
+        let (_view, cx) = cx.add_window_view(|_, cx| {
+            gpui_component::init(cx);
+            InstanceListView::new(populated_view_model())
+        });
+
+        let header = cx
+            .debug_bounds("ec2.instance.header")
+            .expect("header region should render");
+        let search = cx
+            .debug_bounds("fleet-search")
+            .expect("search field should render in the toolbar");
+        let state_filter = cx
+            .debug_bounds("ec2.filter.state")
+            .expect("State filter should render in the toolbar");
+        let type_filter = cx
+            .debug_bounds("ec2.filter.type")
+            .expect("Type filter should render in the toolbar");
+        let refresh = cx
+            .debug_bounds("ec2.instance.refresh")
+            .expect("Refresh control should render in the toolbar");
+
+        // Search sits above the filter/refresh row, and all of them live
+        // inside the header region (not off in some other panel).
+        assert!(search.origin.y >= header.origin.y);
+        assert!(state_filter.origin.y >= search.origin.y + search.size.height);
+        assert!(type_filter.origin.y >= search.origin.y + search.size.height);
+        assert!(refresh.origin.y >= search.origin.y + search.size.height);
+        // State, Type, and Refresh are pinned to the same toolbar row (the
+        // oracle's picker/refresh row), not stacked vertically: each pair's
+        // vertical spans overlap rather than one sitting fully above/below
+        // another. Chips and the refresh control have slightly different
+        // paddings, so `items_center` can offset their tops by a subpixel or
+        // two; compare overlap rather than exact `origin.y` equality.
+        let overlaps = |a: gpui::Bounds<gpui::Pixels>, b: gpui::Bounds<gpui::Pixels>| {
+            a.origin.y < b.origin.y + b.size.height && b.origin.y < a.origin.y + a.size.height
+        };
+        assert!(
+            overlaps(state_filter, type_filter),
+            "State and Type filters should share a row"
+        );
+        assert!(
+            overlaps(state_filter, refresh),
+            "State filter and Refresh should share a row"
+        );
+    }
+
+    #[gpui::test]
+    fn typing_in_search_filters_the_rendered_fleet(cx: &mut TestAppContext) {
+        let (view, cx) = add_rooted_list(cx);
+
+        let search = cx.debug_bounds("fleet-search").expect("search renders");
+        cx.simulate_click(search.center(), Default::default());
+        cx.simulate_input("bastion");
+
+        assert_eq!(
+            view.read_with(cx, |view, _| view.view_model.search_text().to_string()),
+            "bastion"
+        );
+        assert_eq!(
+            view.read_with(cx, |view, _| view.view_model.filtered_instances().len()),
+            1,
+            "typing should immediately narrow the visible fleet"
+        );
+        assert!(
+            cx.debug_bounds("ec2.instance.row.us-west-2:i-2").is_some(),
+            "the matching row should remain rendered"
+        );
+    }
+
+    #[gpui::test]
+    fn clicking_the_selected_row_clears_selection(cx: &mut TestAppContext) {
+        let (view, cx) = cx.add_window_view(|_, _| InstanceListView::new(populated_view_model()));
+        let row = cx
+            .debug_bounds("ec2.instance.row.us-east-1:i-1")
+            .expect("row renders");
+
+        cx.simulate_click(row.center(), Default::default());
+        assert_eq!(
+            view.read_with(cx, |view, _| {
+                view.view_model.selected_instance_id().map(str::to_owned)
+            }),
+            Some("us-east-1:i-1".to_string())
+        );
+
+        cx.simulate_click(row.center(), Default::default());
+        assert_eq!(
+            view.read_with(cx, |view, _| {
+                view.view_model.selected_instance_id().map(str::to_owned)
+            }),
+            None,
+            "clicking the active row again should return to the unselected state"
         );
     }
 }

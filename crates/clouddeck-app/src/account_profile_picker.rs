@@ -292,8 +292,7 @@ impl Render for AccountProfilePicker {
                     .bg(SurgicalTheme::surface())
                     .children(filtered.into_iter().map(|profile| {
                         let is_selected = selected_name.as_deref() == Some(profile.name.as_str());
-                        let selector_id =
-                            format!("account-workspace-profile-row-{}", profile.name);
+                        let selector_id = format!("account-workspace-profile-row-{}", profile.name);
                         let debug_id = selector_id.clone();
                         let row_name = profile.name.clone();
                         let identity = profile_identity(&profile);
@@ -324,13 +323,7 @@ impl Render for AccountProfilePicker {
                             .rounded(px(radius::STANDARD))
                             .bg(SurgicalTheme::row_fill(is_selected, false, !is_selected)
                                 .unwrap_or_else(SurgicalTheme::surface))
-                            .child(
-                                div()
-                                    .w(px(8.0))
-                                    .h(px(8.0))
-                                    .rounded(px(4.0))
-                                    .bg(icon_color),
-                            )
+                            .child(div().w(px(8.0)).h(px(8.0)).rounded(px(4.0)).bg(icon_color))
                             .child(
                                 div()
                                     .flex()
@@ -339,9 +332,7 @@ impl Render for AccountProfilePicker {
                                     .gap(px(4.0))
                                     .child(
                                         div()
-                                            .text_size(px(
-                                                SurgicalTypography::BODY_EMPHASIS_SIZE,
-                                            ))
+                                            .text_size(px(SurgicalTypography::BODY_EMPHASIS_SIZE))
                                             .text_color(SurgicalTheme::text_primary())
                                             .child(profile.name.clone()),
                                     )
@@ -388,7 +379,10 @@ mod tests {
     #[test]
     fn fuzzy_match_matches_substring_case_and_space_insensitively() {
         assert!(fuzzy_match("prod", "prod-admin"));
-        assert!(fuzzy_match("PROD ADMIN", "prod-admin".replace('-', " ").as_str()));
+        assert!(fuzzy_match(
+            "PROD ADMIN",
+            "prod-admin".replace('-', " ").as_str()
+        ));
         assert!(fuzzy_match("", "anything"));
     }
 
@@ -479,10 +473,7 @@ mod tests {
             sso: false,
             region: None,
         };
-        assert_eq!(
-            preferred_region_text(&unregioned, "us-east-1"),
-            "us-east-1"
-        );
+        assert_eq!(preferred_region_text(&unregioned, "us-east-1"), "us-east-1");
     }
 
     #[test]
@@ -570,8 +561,14 @@ mod tests {
     fn mounts_without_a_display(cx: &mut TestAppContext) {
         let (_view, cx) = cx.add_window_view(|_, _| AccountProfilePicker::default());
 
-        assert!(cx.debug_bounds("account-workspace-profile-picker").is_some());
-        assert!(cx.debug_bounds("account-workspace-profile-search").is_some());
+        assert!(
+            cx.debug_bounds("account-workspace-profile-picker")
+                .is_some()
+        );
+        assert!(
+            cx.debug_bounds("account-workspace-profile-search")
+                .is_some()
+        );
         assert!(cx.debug_bounds("account-workspace-profile-list").is_some());
     }
 

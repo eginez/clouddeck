@@ -8,11 +8,11 @@ name = "clouddeck"
 path = "src/main.rs"
 
 [dependencies]
-aws-config = "1.8.13"
-aws-sdk-ec2 = "1.208.0"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 clouddeck-core = { path = "../clouddeck-core" }
 gpui = "0.2.2"
+gpui-component = "=0.5.1"
+tokio = { version = "1", features = ["rt-multi-thread", "time"] }
 
 [dev-dependencies]
 gpui = { version = "0.2.2", features = ["test-support"] }

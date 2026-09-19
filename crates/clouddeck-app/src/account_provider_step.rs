@@ -212,7 +212,10 @@ mod tests {
     #[test]
     fn default_provider_matches_oracle_default() {
         assert_eq!(CloudProvider::default(), CloudProvider::Aws);
-        assert_eq!(AccountProviderStep::default().selected_provider, CloudProvider::Aws);
+        assert_eq!(
+            AccountProviderStep::default().selected_provider,
+            CloudProvider::Aws
+        );
     }
 
     #[test]

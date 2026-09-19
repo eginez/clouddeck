@@ -1,16 +1,15 @@
 //! Port of `CloudContextStatusBar.swift` (the Swift CloudDeck oracle's
 //! bottom bar showing the active cloud provider/profile/region) to gpui.
 //!
-//! This bead ports layout and static/mock context data only. The
+//! The shell supplies live AWS profile and curated region data. The
 //! `CloudContextQuickPicker` popover that the profile/region chips launch
-//! is ported in `quick_picker.rs` (its pure mock-data/filtering logic) and
-//! rendered here, since selecting a row needs to mutate this view's own
-//! `active_quick_picker`/`profile`/`region` state — the hook point this
-//! bead originally left for it.
+//! is rendered here, since selecting a row needs to mutate this view's own
+//! `active_quick_picker`/`profile`/`region` state.
 //! See
 //! `~/src/cloudDeck/main/Sources/CloudDeck/Views/Shared/CloudContextStatusBar.swift`
 //! for the oracle this was ported from.
 
+use gpui::AppContext;
 use gpui::{
     BoxShadow, Context, InteractiveElement, IntoElement, ParentElement, Render,
     StatefulInteractiveElement, Styled, Window, div, point, prelude::FluentBuilder, px,
@@ -18,7 +17,7 @@ use gpui::{
 
 use crate::quick_picker::{
     filtered_profiles, filtered_regions, footer_message, mock_profiles, picker_title,
-    recent_profiles, region_row_title, search_prompt,
+    recent_profiles, region_row_title,
 };
 use crate::theme::{SurgicalTheme, SurgicalTypography, radius};
 
@@ -30,11 +29,8 @@ pub const FLEET_REGION_IDENTIFIER: &str = "fleet";
 /// Port of the oracle's inline `switch appState.contextStatusState`
 /// (an `AppState`-owned enum, not defined in this file, but consumed by
 /// it for `statusIndicatorColor`/`statusText`).
-// `Reloading`/`SetupRequired`/`Error` are not yet constructed anywhere:
-// `CloudContextStatusBar::default()` only ever sets `Ready`, since driving
-// these from live `AppState`/service reload state is a follow-on wiring
-// bead, not this one. Kept as full parity with the oracle's
-// `ContextStatusState` enum.
+// The shell derives these states from the active InstanceListViewModel and
+// writes the state into the status bar before each render.
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContextStatusState {
@@ -53,9 +49,14 @@ pub enum CloudContextQuickPickerKind {
 }
 
 /// Port of `CloudContextStatusBar`. Context data (`provider`, `profile`,
-/// `region`, `status`) is static/mock for this bead; live wiring to
-/// `AppState` happens in a view-model bead.
+/// `region`, `status`) is supplied by the composing shell and updated after
+/// every profile or region selection.
 pub struct CloudContextStatusBar {
+    pub search: Option<gpui::Entity<gpui_component::input::InputState>>,
+    pub profiles: Option<Vec<crate::quick_picker::AwsProfile>>,
+    pub regions: Option<Vec<String>>,
+    pub manage_requested: bool,
+    pub demo_requested: bool,
     pub provider: String,
     pub profile: Option<String>,
     pub region: String,
@@ -73,12 +74,17 @@ pub struct CloudContextStatusBar {
 impl Default for CloudContextStatusBar {
     fn default() -> Self {
         Self {
+            profiles: None,
+            regions: None,
+            manage_requested: false,
+            demo_requested: false,
             provider: "AWS".into(),
             profile: None,
             region: String::new(),
             status: ContextStatusState::Ready,
             active_quick_picker: None,
             quick_picker_search_text: String::new(),
+            search: None,
         }
     }
 }
@@ -129,12 +135,14 @@ impl CloudContextStatusBar {
             Some(kind)
         };
         self.quick_picker_search_text.clear();
+        self.search = None;
     }
 
     /// Port of `dismiss()` as passed into `CloudContextQuickPicker`.
     fn dismiss_quick_picker(&mut self) {
         self.active_quick_picker = None;
         self.quick_picker_search_text.clear();
+        self.search = None;
     }
 
     /// Port of `profileButton`'s action:
@@ -271,7 +279,8 @@ impl CloudContextStatusBar {
     /// Port of `CloudContextQuickPicker`'s body: header, search field, list
     /// content, footer. Rendered from `render()` when `active_quick_picker`
     /// is `Some`; sits below the chip row. See `quick_picker.rs` for the
-    /// mock data/filtering logic this pulls from.
+    /// fallback data/filtering logic this pulls from when a standalone test
+    /// has not supplied live profile/region data.
     fn render_quick_picker(
         &self,
         kind: CloudContextQuickPickerKind,
@@ -281,6 +290,9 @@ impl CloudContextStatusBar {
         let query = self.quick_picker_search_text.clone();
 
         let mut list = div()
+            .id("picker-scroll")
+            .max_h(px(350.0))
+            .overflow_y_scroll()
             .debug_selector(|| "statusbar.quickpicker.list".into())
             .flex()
             .flex_col()
@@ -294,7 +306,7 @@ impl CloudContextStatusBar {
             // Current/Recent sections can display `appState.profileHint(for:)`
             // the same way the "All Profiles"/"Matches" section does, rather
             // than a placeholder label.
-            let all_profiles = mock_profiles();
+            let all_profiles = self.profiles.clone().unwrap_or_else(mock_profiles);
             let hint_for = |name: &str| -> Option<String> {
                 all_profiles
                     .iter()
@@ -313,7 +325,11 @@ impl CloudContextStatusBar {
                 ));
             }
 
-            let recents = recent_profiles(self.profile.as_deref());
+            let recents = if self.profiles.is_some() {
+                vec![]
+            } else {
+                recent_profiles(self.profile.as_deref())
+            };
             if !recents.is_empty() {
                 let mut recent_col = div().flex().flex_col().gap(px(4.0));
                 for name in &recents {
@@ -340,7 +356,16 @@ impl CloudContextStatusBar {
                 list = list.child(section_label("Recent")).child(recent_col);
             }
 
-            let matches = filtered_profiles(self.profile.as_deref(), &query);
+            let matches = if let Some(profiles) = &self.profiles {
+                profiles
+                    .iter()
+                    .filter(|p| Some(p.name.as_str()) != self.profile.as_deref())
+                    .filter(|p| p.name.to_lowercase().contains(&query.to_lowercase()))
+                    .cloned()
+                    .collect()
+            } else {
+                filtered_profiles(self.profile.as_deref(), &query)
+            };
             list = list.child(section_label(if query.is_empty() {
                 "All Profiles"
             } else {
@@ -372,7 +397,16 @@ impl CloudContextStatusBar {
                 list = list.child(col);
             }
         } else {
-            let matches = filtered_regions(&query);
+            let matches = self
+                .regions
+                .clone()
+                .map(|regions| {
+                    regions
+                        .into_iter()
+                        .filter(|r| r.to_lowercase().contains(&query.to_lowercase()))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_else(|| filtered_regions(&query));
             list = list.child(section_label(if query.is_empty() {
                 "Regions"
             } else {
@@ -477,38 +511,21 @@ impl CloudContextStatusBar {
                             })),
                     ),
             )
-            .child(
-                // searchField (static display, not real keyboard input in
-                // this bead's scope; see `set_quick_picker_search_text`).
-                div()
-                    .debug_selector(|| "statusbar.quickpicker.search".into())
-                    .px(px(10.0))
-                    .py(px(7.0))
-                    .rounded(px(radius::STANDARD))
-                    .bg(SurgicalTheme::surface_container())
-                    .text_size(px(SurgicalTypography::BODY_SIZE))
-                    .text_color(if query.is_empty() {
-                        SurgicalTheme::text_secondary()
-                    } else {
-                        SurgicalTheme::text_primary()
-                    })
-                    .child(if query.is_empty() {
-                        search_prompt(is_profile).to_string()
-                    } else {
-                        query.clone()
-                    }),
-            )
+            .children(self.search.as_ref().map(gpui_component::input::Input::new))
             .child(list)
             .child(
-                // footer
+                // Keep the explanatory copy and manage button in separate
+                // rows so the fixed-width popover never clips the action.
                 div()
                     .debug_selector(|| "statusbar.quickpicker.footer".into())
                     .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_between()
+                    .flex_col()
+                    .items_end()
+                    .gap(px(8.0))
                     .child(
                         div()
+                            .w_full()
+                            .whitespace_normal()
                             .text_size(px(SurgicalTypography::CAPTION_SIZE))
                             .text_color(SurgicalTheme::text_secondary())
                             .child(footer_message(is_profile)),
@@ -516,8 +533,8 @@ impl CloudContextStatusBar {
                     .child(
                         // Port of the "Manage Accounts..." button. The
                         // oracle's `manageAccounts` callback (opening real
-                        // account-management UI) is out of scope for this
-                        // mock-data bead, so this just dismisses the picker.
+                        // The shell observes this flag and opens the account
+                        // setup window after dismissing the picker.
                         div()
                             .id("statusbar.quickpicker.manage-accounts")
                             .debug_selector(|| "statusbar.quickpicker.manage-accounts".into())
@@ -530,6 +547,7 @@ impl CloudContextStatusBar {
                             .child("Manage Accounts...")
                             .on_click(cx.listener(|this, _event, _window, cx| {
                                 this.dismiss_quick_picker();
+                                this.manage_requested = true;
                                 cx.notify();
                             })),
                     ),
@@ -558,7 +576,24 @@ fn empty_state(title: &'static str) -> impl IntoElement {
 }
 
 impl Render for CloudContextStatusBar {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.active_quick_picker.is_some() && self.search.is_none() {
+            if !cx.has_global::<gpui_component::Theme>() {
+                gpui_component::init(cx);
+            }
+            let search = cx.new(|cx| {
+                gpui_component::input::InputState::new(window, cx)
+                    .placeholder("Search profiles or regions")
+            });
+            cx.subscribe(&search, |this, input, event, cx| {
+                if matches!(event, gpui_component::input::InputEvent::Change) {
+                    this.quick_picker_search_text = input.read(cx).value().to_string();
+                    cx.notify();
+                }
+            })
+            .detach();
+            self.search = Some(search);
+        }
         let provider_label = format!("\u{2601} {}", self.provider); // cloud glyph stand-in for systemImage: "cloud"
         let profile_title = self.profile_chip_title();
         let region_title = self.region_chip_title();
@@ -651,6 +686,27 @@ impl Render for CloudContextStatusBar {
                     })),
             )
             .child(
+                div()
+                    .id("statusbar.manage")
+                    .debug_selector(|| "statusbar.manage".into())
+                    .flex_shrink_0()
+                    .px(px(10.0))
+                    .py(px(7.0))
+                    .rounded(px(radius::STANDARD))
+                    .bg(SurgicalTheme::surface_container())
+                    .text_size(px(SurgicalTypography::CAPTION_SIZE))
+                    .text_color(SurgicalTheme::text_primary())
+                    .child(if self.profile.is_some() {
+                        "Manage AWS"
+                    } else {
+                        "Set up AWS"
+                    })
+                    .on_click(cx.listener(|this, _event, _window, cx| {
+                        this.manage_requested = true;
+                        cx.notify();
+                    })),
+            )
+            .child(
                 // regionChip
                 div()
                     .id("statusbar.region")
@@ -672,6 +728,27 @@ impl Render for CloudContextStatusBar {
                     .child(region_title)
                     .on_click(cx.listener(|this, _event, _window, cx| {
                         this.toggle_quick_picker(CloudContextQuickPickerKind::Region);
+                        cx.notify();
+                    })),
+            )
+            .child(
+                div()
+                    .id("statusbar.demo")
+                    .debug_selector(|| "statusbar.demo".into())
+                    .flex_shrink_0()
+                    .px(px(10.0))
+                    .py(px(7.0))
+                    .rounded(px(radius::STANDARD))
+                    .bg(SurgicalTheme::surface_container())
+                    .text_size(px(SurgicalTypography::CAPTION_SIZE))
+                    .text_color(SurgicalTheme::text_secondary())
+                    .child(if self.provider.starts_with("DEMO") {
+                        "Use AWS profiles"
+                    } else {
+                        "Explore demo"
+                    })
+                    .on_click(cx.listener(|this, _event, _window, cx| {
+                        this.demo_requested = true;
                         cx.notify();
                     })),
             )
@@ -715,7 +792,7 @@ impl Render for CloudContextStatusBar {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{AppContext as _, Entity, TestAppContext, VisualTestContext};
+    use gpui::{Entity, TestAppContext, VisualTestContext};
 
     /// Test-only harness that docks `CloudContextStatusBar` at the bottom
     /// of a tall window, mirroring `AppShell`'s real layout (sidebar/main
@@ -766,29 +843,41 @@ mod tests {
     #[gpui::test]
     fn renders_all_sections(cx: &mut TestAppContext) {
         let (_view, cx) = cx.add_window_view(|_, _| CloudContextStatusBar {
+            profiles: None,
+            regions: None,
+            manage_requested: false,
+            demo_requested: false,
             provider: "AWS".into(),
             profile: Some("prod-admin".into()),
             region: "us-west-2".into(),
             status: ContextStatusState::Ready,
             active_quick_picker: None,
             quick_picker_search_text: String::new(),
+            search: None,
         });
 
         assert!(cx.debug_bounds("statusbar.provider").is_some());
         assert!(cx.debug_bounds("statusbar.profile").is_some());
         assert!(cx.debug_bounds("statusbar.region").is_some());
+        assert!(cx.debug_bounds("statusbar.manage").is_some());
+        assert!(cx.debug_bounds("statusbar.demo").is_some());
         assert!(cx.debug_bounds("statusbar.message").is_some());
     }
 
     #[gpui::test]
     fn sections_are_laid_out_left_to_right(cx: &mut TestAppContext) {
         let (_view, cx) = cx.add_window_view(|_, _| CloudContextStatusBar {
+            profiles: None,
+            regions: None,
+            manage_requested: false,
+            demo_requested: false,
             provider: "AWS".into(),
             profile: Some("prod-admin".into()),
             region: "us-west-2".into(),
             status: ContextStatusState::Ready,
             active_quick_picker: None,
             quick_picker_search_text: String::new(),
+            search: None,
         });
 
         let provider = cx.debug_bounds("statusbar.provider").unwrap();
