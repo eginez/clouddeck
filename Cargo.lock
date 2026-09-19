@@ -1375,8 +1375,10 @@ dependencies = [
  "aws-sdk-sts",
  "aws-types",
  "chrono",
+ "hex",
  "serde",
  "serde_json",
+ "sha1",
  "tokio",
 ]
 

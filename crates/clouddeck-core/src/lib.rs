@@ -34,10 +34,14 @@ pub use instance_list_view_model::InstanceListViewModel;
 mod aws_cli;
 mod aws_identity;
 mod aws_sdk;
+mod aws_sso_login;
 mod context;
 pub use aws_cli::AwsCliComputeService;
 pub use aws_identity::{AwsIdentity, AwsIdentityProvider, AwsIdentityService};
 pub use aws_sdk::{AwsSdkComputeService, Ec2Page, Ec2PageSource};
+pub use aws_sso_login::{
+    AwsSsoLoginService, LoginGuidance, PendingSsoSignIn, SsoDeviceAuthorization, login_guidance,
+};
 pub use context::{
     AwsCredentialKind, AwsProfile, AwsProfileAuth, AwsSsoConfiguration, FLEET_REGIONS, REGIONS,
     WorkspaceContext, context_path, load_profile_auth, load_profiles, parse_profile_auth,
