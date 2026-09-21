@@ -258,23 +258,20 @@ impl AppShell {
                         .unwrap_or_else(|| "us-east-1".into())
                 },
             });
-        let mut view_model =
-            InstanceListViewModel::new(Self::service(&context, demo, demo_scenario));
-        // Small fixture loads are immediate for deterministic demo startup.
-        // Fleet demos use the same async path as live FleetComputeService so
-        // its tokio JoinSet always runs inside the shared runtime.
-        if demo && demo_scenario != DemoScenario::Partial {
-            cx.background_executor().block(view_model.load_instances());
-        }
+        let view_model = InstanceListViewModel::new(Self::service(&context, demo, demo_scenario));
         let ec2_tab = cx.new(|cx| EC2Tab::new(view_model, cx));
         cx.observe(&ec2_tab, |_, _, cx| cx.notify()).detach();
-        if !demo || demo_scenario == DemoScenario::Partial {
-            ec2_tab
-                .read(cx)
-                .list
-                .clone()
-                .update(cx, |list, cx| list.refresh(cx));
-        }
+        // Load asynchronously via `InstanceListView::refresh`'s cx.spawn
+        // pattern (background_executor().block() would freeze the UI
+        // thread once this wraps a real, network-latency-bearing
+        // ComputeService). Demo fixtures resolve almost instantly through
+        // the same path, and live/FleetComputeService loads keep the
+        // window responsive while they're in flight.
+        ec2_tab
+            .read(cx)
+            .list
+            .clone()
+            .update(cx, |list, cx| list.refresh(cx));
         let status_bar = cx.new(|_| CloudContextStatusBar {
             provider: if demo {
                 "DEMO · AWS".into()
@@ -539,6 +536,7 @@ mod tests {
     #[gpui::test]
     fn ec2_tab_shows_the_seeded_sample_instances(cx: &mut TestAppContext) {
         let (_view, cx) = cx.add_window_view(|_, cx| AppShell::new_demo(cx));
+        cx.run_until_parked();
 
         assert!(
             cx.debug_bounds("ec2.tab.list-only").is_some(),
@@ -548,6 +546,124 @@ mod tests {
             cx.debug_bounds("ec2.instance.row.us-east-1:i-scenario-001")
                 .is_some(),
             "a seeded sample instance row should render"
+        );
+    }
+
+    /// A [`clouddeck_core::ComputeService`] whose `list_instances` call
+    /// blocks on an externally-held [`tokio::sync::Notify`] until released.
+    /// `AppShell::build_with_scenario`'s startup load can't be observed
+    /// mid-flight against a fixture-backed demo service (it resolves too
+    /// fast to reliably catch the loading frame), so this stands in for it
+    /// to deterministically exercise the exact
+    /// `cx.new(EC2Tab::new) + list.refresh(cx)` sequence
+    /// `build_with_scenario`/`apply_context` use in place of the old
+    /// `cx.background_executor().block(...)` call.
+    struct GatedComputeService {
+        gate: std::sync::Arc<tokio::sync::Notify>,
+        instances: Vec<EC2Instance>,
+    }
+
+    impl ComputeService for GatedComputeService {
+        fn list_instances<'life0, 'async_trait>(
+            &'life0 self,
+            _filters: Option<clouddeck_core::ComputeInstanceFilters>,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<
+                        Output = Result<
+                            clouddeck_core::ComputeInstanceLoadResult,
+                            clouddeck_core::BoxError,
+                        >,
+                    > + Send
+                    + 'async_trait,
+            >,
+        >
+        where
+            'life0: 'async_trait,
+            Self: 'async_trait,
+        {
+            let gate = self.gate.clone();
+            let instances = self.instances.clone();
+            Box::pin(async move {
+                gate.notified().await;
+                Ok(clouddeck_core::ComputeInstanceLoadResult {
+                    instances,
+                    partial_failures: vec![],
+                })
+            })
+        }
+    }
+
+    #[gpui::test]
+    fn startup_load_is_async_and_transitions_from_loading_to_populated(cx: &mut TestAppContext) {
+        // Mirrors the sequence `build_with_scenario` now uses at startup
+        // (and `apply_context` on a context switch): build the `EC2Tab`
+        // entity, then call `list.refresh(cx)` -- the same cx.spawn path
+        // the refresh button uses -- instead of blocking the UI thread on
+        // `cx.background_executor().block(view_model.load_instances())`.
+        let gate = std::sync::Arc::new(tokio::sync::Notify::new());
+        let service = GatedComputeService {
+            gate: gate.clone(),
+            instances: vec![EC2Instance {
+                instance_id: "i-gated".to_string(),
+                region: Some("us-east-1".to_string()),
+                instance_type: None,
+                state: None,
+                launch_time: None,
+                public_ip_address: None,
+                private_ip_address: None,
+                vpc_id: None,
+                subnet_id: None,
+                security_groups: vec![],
+                tags: vec![],
+            }],
+        };
+        let view_model = InstanceListViewModel::new(Box::new(service));
+
+        let (ec2_tab, cx) = cx.add_window_view(|_, cx| {
+            let tab = EC2Tab::new(view_model, cx);
+            tab.list.clone().update(cx, |list, cx| list.refresh(cx));
+            tab
+        });
+
+        assert!(
+            cx.debug_bounds("ec2.instance.row.us-east-1:i-gated")
+                .is_none(),
+            "data should not be populated synchronously while the gated load is in flight"
+        );
+        assert!(
+            ec2_tab.read_with(cx, |tab, cx| tab.list.read(cx).view_model.is_loading()),
+            "the view model should report loading while the spawn is in flight"
+        );
+
+        gate.notify_one();
+        // `EC2Tab`/`InstanceListView::refresh`'s load resolves on the
+        // shared tokio runtime, a real OS thread pool outside gpui's
+        // deterministic test executor -- a single `run_until_parked()` can
+        // return before that cross-thread result lands, so poll with
+        // bounded, short real sleeps.
+        let mut loaded = false;
+        for _ in 0..200 {
+            cx.run_until_parked();
+            if cx
+                .debug_bounds("ec2.instance.row.us-east-1:i-gated")
+                .is_some()
+            {
+                loaded = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(loaded, "the load did not complete within the timeout");
+
+        assert!(
+            cx.debug_bounds("ec2.instance.row.us-east-1:i-gated")
+                .is_some(),
+            "the row should render once the async load completes"
+        );
+        assert!(
+            !ec2_tab.read_with(cx, |tab, cx| tab.list.read(cx).view_model.is_loading()),
+            "loading should clear once the spawn resolves"
         );
     }
 

@@ -667,6 +667,26 @@ mod tests {
         (list, cx)
     }
 
+    /// `InstanceListView::refresh`'s load resolves on the shared tokio
+    /// runtime (`crate::runtime::runtime()`), a real OS thread pool outside
+    /// gpui's deterministic test executor. A single `cx.run_until_parked()`
+    /// call can return before that cross-thread result has landed, so poll
+    /// with bounded, short real sleeps rather than assuming one call
+    /// suffices.
+    fn wait_until_parked(
+        cx: &mut VisualTestContext,
+        mut condition: impl FnMut(&mut VisualTestContext) -> bool,
+    ) {
+        for _ in 0..200 {
+            cx.run_until_parked();
+            if condition(cx) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        panic!("condition was not satisfied within the timeout");
+    }
+
     #[gpui::test]
     fn mounts_without_a_display(cx: &mut TestAppContext) {
         let (_view, cx) = cx.add_window_view(|_, _| InstanceListView::new(populated_view_model()));
@@ -885,6 +905,101 @@ mod tests {
             }),
             None,
             "clicking the active row again should return to the unselected state"
+        );
+    }
+
+    /// A [`clouddeck_core::ComputeService`] whose `list_instances` call
+    /// blocks on an externally-held [`tokio::sync::Notify`] until the test
+    /// releases it. Lets a test deterministically observe the `is_loading`
+    /// window between a refresh being kicked off and its result landing,
+    /// without racing real wall-clock scheduling on the shared tokio
+    /// runtime (a fixture-backed service like [`MockComputeService`]
+    /// resolves too fast for that window to be reliably observable).
+    struct GatedComputeService {
+        gate: std::sync::Arc<tokio::sync::Notify>,
+        instances: Vec<EC2Instance>,
+    }
+
+    impl clouddeck_core::ComputeService for GatedComputeService {
+        fn list_instances<'life0, 'async_trait>(
+            &'life0 self,
+            _filters: Option<clouddeck_core::ComputeInstanceFilters>,
+        ) -> std::pin::Pin<
+            Box<
+                dyn std::future::Future<
+                        Output = Result<
+                            clouddeck_core::ComputeInstanceLoadResult,
+                            clouddeck_core::BoxError,
+                        >,
+                    > + Send
+                    + 'async_trait,
+            >,
+        >
+        where
+            'life0: 'async_trait,
+            Self: 'async_trait,
+        {
+            let gate = self.gate.clone();
+            let instances = self.instances.clone();
+            Box::pin(async move {
+                gate.notified().await;
+                Ok(clouddeck_core::ComputeInstanceLoadResult {
+                    instances,
+                    partial_failures: vec![],
+                })
+            })
+        }
+    }
+
+    #[gpui::test]
+    fn clicking_refresh_reloads_via_the_async_spawn_pattern(cx: &mut TestAppContext) {
+        // `InstanceListView::refresh` kicks off `begin_load()` synchronously
+        // (flipping `is_loading` before the click handler returns) then
+        // finishes the load on a `cx.spawn`-bridged tokio task, never
+        // blocking the UI thread. Gate the service's response so both
+        // halves of that transition are observable deterministically.
+        let gate = std::sync::Arc::new(tokio::sync::Notify::new());
+        let service = GatedComputeService {
+            gate: gate.clone(),
+            instances: vec![instance(
+                "i-1",
+                "api-server",
+                "running",
+                "t3.medium",
+                "us-east-1",
+            )],
+        };
+        let vm = InstanceListViewModel::new(Box::new(service));
+        let (view, cx) = cx.add_window_view(|_, _| InstanceListView::new(vm));
+        let refresh = cx
+            .debug_bounds("ec2.instance.refresh")
+            .expect("refresh control renders");
+
+        cx.simulate_click(refresh.center(), Default::default());
+
+        assert!(
+            view.read_with(cx, |view, _| view.view_model.is_loading()),
+            "clicking refresh should synchronously flip is_loading, without \
+             waiting on the network call"
+        );
+        assert!(
+            cx.debug_bounds("ec2.instance.loading").is_some(),
+            "the loading panel should render while the gated load is in flight"
+        );
+
+        gate.notify_one();
+        wait_until_parked(cx, |cx| {
+            !view.read_with(cx, |view, _| view.view_model.is_loading())
+        });
+
+        assert!(
+            !view.read_with(cx, |view, _| view.view_model.is_loading()),
+            "is_loading should clear once the spawned load completes"
+        );
+        assert_eq!(
+            view.read_with(cx, |view, _| view.view_model.instances().len()),
+            1,
+            "refresh should load the instances the gated service returns"
         );
     }
 }
