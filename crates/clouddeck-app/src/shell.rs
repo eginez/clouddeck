@@ -362,7 +362,7 @@ impl AppShell {
     }
 
     fn open_setup(&mut self, cx: &mut Context<Self>) {
-        use crate::account_window::{AccountWindowMode, AccountWindowView, AccountWizardStep};
+        use crate::account_window::{AccountWindowMode, AccountWindowView};
         let profiles = match Self::profiles(self.demo, self.demo_scenario) {
             Ok(profiles) => profiles,
             Err(error) => {
@@ -415,10 +415,15 @@ impl AppShell {
                     },
                     selected_region: region,
                     mode,
-                    current_step: AccountWizardStep::Provider,
                     ..Default::default()
                 });
                 cx.observe(&wizard, move |wizard, cx| {
+                    // Drives the SDK-backed connection check (STS identity,
+                    // EC2 access, browser SSO sign-in, rescan) behind the
+                    // wizard's one-shot request flags. See
+                    // `account_connect` for why this lives in its own
+                    // module rather than inline here.
+                    crate::account_connect::drive(&wizard, cx);
                     if wizard.read(cx).finished {
                         let profile = wizard.read(cx).selected_profile.clone();
                         let region = wizard.read(cx).selected_region.clone();
@@ -634,6 +639,56 @@ mod tests {
             .block_on(service.list_instances(None))
             .expect("large demo should load");
         assert_eq!(result.instances.len(), 120);
+    }
+
+    #[gpui::test]
+    fn opening_setup_creates_the_wizard_and_finishing_it_updates_the_status_bar(
+        cx: &mut TestAppContext,
+    ) {
+        use crate::account_window::AccountConnectionState;
+
+        let (shell, cx) = cx.add_window_view(|_, cx| AppShell::new_demo(cx));
+
+        // The trigger: nothing opens the account-connect window on its own
+        // (per clouddeck-rs-w6s.18's design, existing profiles need minimal
+        // interaction), but `open_setup` -- reached from the status bar's
+        // "Set up AWS"/"Manage AWS" chip and the quick picker's "Manage
+        // Accounts..." row -- must actually create a wizard window.
+        shell.update(cx, |shell, cx| {
+            assert!(shell.wizard.is_none(), "no wizard until setup is opened");
+            shell.open_setup(cx);
+            assert!(
+                shell.wizard.is_some(),
+                "open_setup should create the Connect to AWS wizard entity"
+            );
+        });
+
+        let wizard = shell
+            .read_with(cx, |shell, _| shell.wizard.clone())
+            .expect("wizard entity");
+
+        // Drive the wizard to a finished connection the same way a real
+        // connect (account_connect::drive) would, then confirm the shell's
+        // observer flows the result back into the live status bar chips --
+        // not `quick_picker::mock_profiles()`/`mock_regions()`.
+        wizard.update(cx, |wizard, cx| {
+            wizard.selected_profile = Some("scenario-default".into());
+            wizard.selected_region = "us-west-2".into();
+            wizard.connection_state = AccountConnectionState::Connected {
+                account_id: "123456789012".into(),
+            };
+            wizard.open_fleet();
+            cx.notify();
+        });
+
+        shell.read_with(cx, |shell, cx| {
+            assert_eq!(
+                shell.status_bar.read(cx).profile.as_deref(),
+                Some("scenario-default"),
+                "finishing the wizard should flow its selected profile into the status bar"
+            );
+            assert_eq!(shell.status_bar.read(cx).region, "us-west-2");
+        });
     }
 
     #[gpui::test]

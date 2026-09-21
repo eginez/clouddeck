@@ -17,61 +17,6 @@ use gpui::{
 
 use crate::theme::{SurgicalTheme, SurgicalTypography, radius};
 
-/// Kept for compatibility with the shell's existing setup-window constructor.
-/// The compact onboarding screen renders the same content for both values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AccountWizardStep {
-    Provider,
-    Workspace,
-}
-
-impl AccountWizardStep {
-    pub const ALL: [AccountWizardStep; 2] =
-        [AccountWizardStep::Provider, AccountWizardStep::Workspace];
-
-    pub fn raw_value(self) -> usize {
-        match self {
-            Self::Provider => 0,
-            Self::Workspace => 1,
-        }
-    }
-
-    pub fn title(self) -> &'static str {
-        match self {
-            Self::Provider => "AWS",
-            Self::Workspace => "Workspace",
-        }
-    }
-
-    pub fn subtitle(self) -> &'static str {
-        match self {
-            Self::Provider => "Cloud provider",
-            Self::Workspace => "Profile and region",
-        }
-    }
-
-    pub fn accessibility_identifier(self) -> &'static str {
-        match self {
-            Self::Provider => "provider",
-            Self::Workspace => "workspace",
-        }
-    }
-
-    pub fn previous(self) -> Option<Self> {
-        match self {
-            Self::Provider => None,
-            Self::Workspace => Some(Self::Provider),
-        }
-    }
-
-    pub fn next(self) -> Option<Self> {
-        match self {
-            Self::Provider => Some(Self::Workspace),
-            Self::Workspace => None,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AccountWindowMode {
     SetupRequired,
@@ -181,9 +126,6 @@ pub struct AccountWindowView {
     pub selected_profile: Option<String>,
     pub selected_region: String,
     pub mode: AccountWindowMode,
-    /// Retained for compatibility with callers that still initialize the old
-    /// wizard. It no longer controls the rendered layout.
-    pub current_step: AccountWizardStep,
     pub dismissed: bool,
     /// Set only after the user chooses Open Fleet following a successful
     /// identity/connection check.
@@ -211,7 +153,6 @@ impl Default for AccountWindowView {
             selected_profile: None,
             selected_region: "us-east-1".into(),
             mode: AccountWindowMode::SetupRequired,
-            current_step: AccountWizardStep::Workspace,
             dismissed: false,
             finished: false,
             connection_state: AccountConnectionState::Idle,
