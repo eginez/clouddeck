@@ -32,23 +32,39 @@ use clouddeck_core::{
 /// re-notify -- e.g. from the async work's own state updates -- never
 /// re-dispatches the same request.
 pub fn drive(wizard: &Entity<AccountWindowView>, cx: &mut App) {
-    let (connect, sign_in, rescan_requested, open_browser) = wizard.update(cx, |view, _cx| {
+    // Note: `demo_requested` is deliberately left untouched here -- the demo
+    // route isn't this module's concern (see the shell's own wizard
+    // observer, which proxies it into the status bar's already-wired demo
+    // toggle) -- so only the four flags this module actually drives are
+    // cleared.
+    let (connect, sign_in, rescan_requested) = wizard.update(cx, |view, _cx| {
         let flags = (
             view.connect_requested,
             view.sign_in_requested,
             view.rescan_requested,
-            view.open_browser_requested,
         );
-        view.clear_requests();
+        view.connect_requested = false;
+        view.sign_in_requested = false;
+        view.rescan_requested = false;
         flags
     });
 
-    if open_browser && let Some(prompt) = wizard.read(cx).browser_login_prompt.clone() {
+    // `open_browser_requested` is intentionally *not* cleared above: the
+    // primary "Sign in with browser" button sets it in the same tick as
+    // `sign_in_requested`, before `begin_sign_in`'s async device-auth call
+    // has returned a `browser_login_prompt` to open. Clearing it
+    // unconditionally here would silently drop the auto-open once the
+    // prompt is actually published and re-notifies. Leave it set until a
+    // prompt exists to act on, then consume it.
+    if wizard.read(cx).open_browser_requested
+        && let Some(prompt) = wizard.read(cx).browser_login_prompt.clone()
+    {
         let url = prompt
             .verification_uri_complete
             .clone()
             .unwrap_or_else(|| prompt.verification_uri.clone());
         cx.open_url(&url);
+        wizard.update(cx, |view, _cx| view.open_browser_requested = false);
     }
 
     if rescan_requested {
@@ -102,13 +118,7 @@ fn begin_connect(wizard: Entity<AccountWindowView>, cx: &mut App) {
     let attempt = wizard.read(cx).connection_attempt;
     let credential_kind = credential_kind_for(&profile);
 
-    if let LoginGuidance::Unsupported { reason } = login_guidance(&credential_kind) {
-        let error = unsupported_connection_error(&credential_kind, reason);
-        wizard.update(cx, |view, cx| {
-            if view.fail_connection_for_attempt(attempt, error) {
-                cx.notify();
-            }
-        });
+    if reject_unsupported_profile(&wizard, cx, &credential_kind, attempt) {
         return;
     }
 
@@ -116,6 +126,33 @@ fn begin_connect(wizard: Entity<AccountWindowView>, cx: &mut App) {
         run_identity_and_access_check(wizard, profile, region, attempt, cx).await;
     })
     .detach();
+}
+
+/// Shared fast-fail check used by both `begin_connect` and `begin_sign_in`:
+/// a credential mechanism this app genuinely cannot drive (no CLI dependency
+/// -- see aws_sso_login.rs) fails immediately with the actionable
+/// `login_guidance` reason, rather than spinning on a network/OIDC call
+/// guaranteed to fail. Kept as one function so both entry points -- "Connect
+/// to AWS" and "Sign in with browser" -- report the identical
+/// `AccountConnectionError` for the same profile, instead of `begin_connect`
+/// short-circuiting cleanly while `begin_sign_in` falls through to a raw,
+/// unclassified `AwsSsoLoginService::begin` error.
+fn reject_unsupported_profile(
+    wizard: &Entity<AccountWindowView>,
+    cx: &mut App,
+    credential_kind: &AwsCredentialKind,
+    attempt: u64,
+) -> bool {
+    if let LoginGuidance::Unsupported { reason } = login_guidance(credential_kind) {
+        let error = unsupported_connection_error(credential_kind, reason);
+        wizard.update(cx, |view, cx| {
+            if view.fail_connection_for_attempt(attempt, error) {
+                cx.notify();
+            }
+        });
+        return true;
+    }
+    false
 }
 
 /// Handles "Sign in with browser" / the "Sign in again" retry action:
@@ -128,6 +165,10 @@ fn begin_sign_in(wizard: Entity<AccountWindowView>, cx: &mut App) {
     let region = wizard.read(cx).selected_region.clone();
     let attempt = wizard.read(cx).connection_attempt;
     let credential_kind = credential_kind_for(&profile);
+
+    if reject_unsupported_profile(&wizard, cx, &credential_kind, attempt) {
+        return;
+    }
 
     cx.spawn(async move |cx| {
         let login_service = AwsSsoLoginService::new();
@@ -295,6 +336,40 @@ fn classify(message: &str) -> AccountConnectionError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::account_window::AccountConnectionState;
+    use gpui::{AppContext as _, TestAppContext};
+
+    /// Regression test for a bug where `begin_sign_in` skipped the
+    /// unsupported-credential-kind pre-check that `begin_connect` used,
+    /// so the same profile produced a polished `UnsupportedProfile` error
+    /// via "Connect to AWS" but a generic `Unknown` error via "Sign in with
+    /// browser". Both entry points now share `reject_unsupported_profile`.
+    #[gpui::test]
+    fn unsupported_profiles_fail_identically_whether_connecting_or_signing_in(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            let wizard = cx.new(|_| AccountWindowView::default());
+            let attempt = wizard.read(cx).connection_attempt;
+
+            let rejected = reject_unsupported_profile(
+                &wizard,
+                cx,
+                &AwsCredentialKind::ExternalProvider,
+                attempt,
+            );
+
+            assert!(
+                rejected,
+                "an ExternalProvider profile must fail fast instead of attempting a doomed sign-in"
+            );
+            assert_eq!(
+                wizard.read(cx).connection_state,
+                AccountConnectionState::Failed(AccountConnectionError::UnsupportedProfile),
+                "must be the dedicated UnsupportedProfile error, not a generic classify() fallback"
+            );
+        });
+    }
 
     #[test]
     fn classifies_auth_failures_as_expired_login_not_generic_unknown() {

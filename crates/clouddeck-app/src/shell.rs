@@ -418,6 +418,22 @@ impl AppShell {
                     ..Default::default()
                 });
                 cx.observe(&wizard, move |wizard, cx| {
+                    // "Explore demo fleet" is handled here, not by
+                    // `account_connect::drive`: it doesn't touch AWS at all,
+                    // it just needs to flip the whole shell into demo mode,
+                    // which requires the AppShell entity `drive` doesn't have
+                    // access to. Proxy it into the status bar's own
+                    // `demo_requested` flag, which the AppShell-level
+                    // observer set up in `build_with_scenario` already knows
+                    // how to act on.
+                    if wizard.read(cx).demo_requested {
+                        wizard.update(cx, |view, _cx| view.demo_requested = false);
+                        bar.update(cx, |bar, cx| {
+                            bar.demo_requested = true;
+                            cx.notify();
+                        });
+                        return;
+                    }
                     // Drives the SDK-backed connection check (STS identity,
                     // EC2 access, browser SSO sign-in, rescan) behind the
                     // wizard's one-shot request flags. See
@@ -688,6 +704,44 @@ mod tests {
                 "finishing the wizard should flow its selected profile into the status bar"
             );
             assert_eq!(shell.status_bar.read(cx).region, "us-west-2");
+        });
+    }
+
+    // Regression test for a bug where the wizard's "Explore demo fleet"
+    // action (`demo_requested`) was read and cleared by
+    // `account_connect::drive` -- which never acts on it -- every render
+    // cycle, so the button was a silent no-op. The wizard's observer must
+    // intercept `demo_requested` itself and proxy it into the status bar's
+    // own `demo_requested` flag, which `build_with_scenario`'s
+    // shell-level observer already knows how to turn into a demo-mode
+    // rebuild.
+    #[gpui::test]
+    fn wizard_demo_request_proxies_into_the_status_bars_demo_toggle(cx: &mut TestAppContext) {
+        let (shell, cx) = cx.add_window_view(|_, cx| AppShell::new_demo(cx));
+
+        shell.update(cx, |shell, cx| shell.open_setup(cx));
+
+        let wizard = shell
+            .read_with(cx, |shell, _| shell.wizard.clone())
+            .expect("wizard entity");
+        let demo_before = shell.read_with(cx, |shell, _| shell.demo);
+
+        wizard.update(cx, |wizard, cx| {
+            wizard.request_demo();
+            cx.notify();
+        });
+
+        shell.read_with(cx, |shell, _| {
+            assert_ne!(
+                shell.demo, demo_before,
+                "Explore demo fleet must flip the shell's demo mode, not silently no-op"
+            );
+        });
+        wizard.read_with(cx, |wizard, _| {
+            assert!(
+                !wizard.demo_requested,
+                "the one-shot demo request must be consumed, not left set"
+            );
         });
     }
 

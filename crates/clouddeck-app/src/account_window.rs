@@ -303,15 +303,6 @@ impl AccountWindowView {
         self.demo_requested = true;
     }
 
-    /// Clear one-shot requests after the composing shell has consumed them.
-    pub fn clear_requests(&mut self) {
-        self.connect_requested = false;
-        self.rescan_requested = false;
-        self.sign_in_requested = false;
-        self.open_browser_requested = false;
-        self.demo_requested = false;
-    }
-
     pub fn open_fleet(&mut self) {
         if self.connection_state.is_connected() {
             self.finished = true;
@@ -1071,9 +1062,10 @@ impl Render for AccountWindowView {
                         .text_size(px(SurgicalTypography::CAPTION_SIZE))
                         .text_color(SurgicalTheme::text_secondary())
                         .child("Explore demo fleet")
-                        .on_click(cx.listener(|this, _, _, cx| {
+                        .on_click(cx.listener(|this, _, window, cx| {
                             this.request_demo();
                             cx.notify();
+                            window.remove_window();
                         })),
                 ),
         )
