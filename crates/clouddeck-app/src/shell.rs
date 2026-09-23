@@ -536,7 +536,26 @@ mod tests {
     #[gpui::test]
     fn ec2_tab_shows_the_seeded_sample_instances(cx: &mut TestAppContext) {
         let (_view, cx) = cx.add_window_view(|_, cx| AppShell::new_demo(cx));
-        cx.run_until_parked();
+        // The demo scenario now loads via the same cx.spawn path that
+        // crosses onto the shared tokio runtime (a real OS thread pool
+        // outside gpui's deterministic test executor), so a single
+        // run_until_parked() can return before the result lands -- poll
+        // with bounded, short real sleeps like
+        // startup_load_is_async_and_transitions_from_loading_to_populated
+        // does below.
+        let mut loaded = false;
+        for _ in 0..200 {
+            cx.run_until_parked();
+            if cx
+                .debug_bounds("ec2.instance.row.us-east-1:i-scenario-001")
+                .is_some()
+            {
+                loaded = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(loaded, "the seeded row did not render within the timeout");
 
         assert!(
             cx.debug_bounds("ec2.tab.list-only").is_some(),
