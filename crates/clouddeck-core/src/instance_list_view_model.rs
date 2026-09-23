@@ -62,11 +62,8 @@ impl InstanceListViewModel {
     }
 
     /// Sets the search text and reconciles the current selection against the
-    /// newly filtered list (Swift: `searchText`'s `didSet`). Not yet called
-    /// anywhere: no editable text-input widget exists in this codebase yet
-    /// for a real search box (see `instance_list.rs`'s doc comment on the
-    /// same limitation).
-    #[allow(dead_code)]
+    /// newly filtered list (Swift: `searchText`'s `didSet`). Called from
+    /// `instance_list.rs`'s search `Input`'s change handler.
     pub fn set_search_text(&mut self, text: impl Into<String>) {
         self.search_text = text.into();
         self.reconcile_selection_with_filtered_instances();
@@ -221,11 +218,15 @@ impl InstanceListViewModel {
     }
 
     /// Reloads instances (Swift: `refresh()`, which just calls
-    /// `loadInstances()`). Not yet called anywhere outside tests: wiring the
-    /// refresh button's click handler to this async call needs an
-    /// established click-to-async-spawn pattern, which is a follow-on bead
-    /// (see `instance_list.rs`'s doc comment).
-    #[allow(dead_code)]
+    /// `loadInstances()`). Only called from tests: gpui `Entity` updates
+    /// can't hold `&mut self` across an `.await`, so the click-to-async-spawn
+    /// pattern used by the refresh button and `AppShell`'s startup load
+    /// (`InstanceListView::refresh` in `instance_list.rs`) decomposes this
+    /// into `begin_load()` (sync, before the spawn) + the service call
+    /// (inside the spawned task) + `finish_load()` (sync, back on the
+    /// entity) instead of awaiting this method directly. Kept as public
+    /// ViewModel API for non-gpui/test callers that want the whole
+    /// load in one `.await`.
     pub async fn refresh(&mut self) {
         self.load_instances().await;
     }
