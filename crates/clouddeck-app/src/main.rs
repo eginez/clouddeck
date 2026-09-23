@@ -1,7 +1,12 @@
-mod account_profile_picker;
-mod account_provider_step;
+mod account_connect;
 mod account_window;
-mod account_workspace_setup;
+// `account_provider_step`, `account_profile_picker`, and
+// `account_workspace_setup` (the old multi-step onboarding wizard views)
+// were removed under clouddeck-rs-w6s.18: the approved single-screen
+// Connect to AWS design (there is effectively only one provider, AWS, so a
+// provider-selection step added nothing) folded profile/region selection
+// directly into `account_window::AccountWindowView`. Nothing outside their
+// own files referenced them.
 mod ec2_tab;
 mod instance_detail;
 mod instance_list;
