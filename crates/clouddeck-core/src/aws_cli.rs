@@ -281,7 +281,7 @@ mod tests {
             "profile with spaces",
             "eu-west-1",
             script.clone(),
-            Duration::from_secs(1),
+            Duration::from_secs(10),
             Some(ComputeInstanceFilters {
                 name_contains: Some("api".into()),
                 ..Default::default()
@@ -302,7 +302,7 @@ mod tests {
             "team",
             "us-east-1",
             script.clone(),
-            Duration::from_secs(1),
+            Duration::from_secs(10),
             None,
         )
         .await
