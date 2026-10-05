@@ -9,8 +9,6 @@
 
 # Go build artifacts (tools/harness)
 tools/harness/harness
-tools/harness/checkworker
-tools/harness/watcher
 
 # bd gate lock files (created at the repo root and in .beads/)
 *.gate.lock*
