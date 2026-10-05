@@ -513,6 +513,7 @@ impl Render for AppShell {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::GatedComputeService;
     use gpui::TestAppContext;
 
     #[gpui::test]
@@ -587,51 +588,6 @@ mod tests {
                 .is_some(),
             "a seeded sample instance row should render"
         );
-    }
-
-    /// A [`clouddeck_core::ComputeService`] whose `list_instances` call
-    /// blocks on an externally-held [`tokio::sync::Notify`] until released.
-    /// `AppShell::build_with_scenario`'s startup load can't be observed
-    /// mid-flight against a fixture-backed demo service (it resolves too
-    /// fast to reliably catch the loading frame), so this stands in for it
-    /// to deterministically exercise the exact
-    /// `cx.new(EC2Tab::new) + list.refresh(cx)` sequence
-    /// `build_with_scenario`/`apply_context` use in place of the old
-    /// `cx.background_executor().block(...)` call.
-    struct GatedComputeService {
-        gate: std::sync::Arc<tokio::sync::Notify>,
-        instances: Vec<EC2Instance>,
-    }
-
-    impl ComputeService for GatedComputeService {
-        fn list_instances<'life0, 'async_trait>(
-            &'life0 self,
-            _filters: Option<clouddeck_core::ComputeInstanceFilters>,
-        ) -> std::pin::Pin<
-            Box<
-                dyn std::future::Future<
-                        Output = Result<
-                            clouddeck_core::ComputeInstanceLoadResult,
-                            clouddeck_core::BoxError,
-                        >,
-                    > + Send
-                    + 'async_trait,
-            >,
-        >
-        where
-            'life0: 'async_trait,
-            Self: 'async_trait,
-        {
-            let gate = self.gate.clone();
-            let instances = self.instances.clone();
-            Box::pin(async move {
-                gate.notified().await;
-                Ok(clouddeck_core::ComputeInstanceLoadResult {
-                    instances,
-                    partial_failures: vec![],
-                })
-            })
-        }
     }
 
     #[gpui::test]

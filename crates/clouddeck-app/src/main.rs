@@ -15,6 +15,8 @@ mod runtime;
 mod shell;
 mod status_badge;
 mod status_bar;
+#[cfg(test)]
+mod test_support;
 mod theme;
 // `sidebar` (the port of the oracle's left-nav `SidebarView`) was removed:
 // the agreed layout (clouddeck-rs-wz2.3) drops the left sidebar in favor of
