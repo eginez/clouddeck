@@ -334,6 +334,75 @@ mod tests {
         assert_eq!(vm.search_text(), "keep-me");
     }
 
+    #[tokio::test]
+    async fn throttled_load_shows_throttled_message_and_no_instances() {
+        let mut vm = view_model_for(TestScenarioKind::ThrottledFailure);
+        vm.load_instances().await;
+        assert!(vm.instances().is_empty());
+        assert_eq!(
+            vm.error_message(),
+            Some(
+                crate::CloudDeckError::Throttled
+                    .message_for("list instances")
+                    .as_str()
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn permission_load_shows_permission_message_and_no_instances() {
+        let mut vm = view_model_for(TestScenarioKind::PermissionFailure);
+        vm.load_instances().await;
+        assert!(vm.instances().is_empty());
+        assert_eq!(
+            vm.error_message(),
+            Some(
+                crate::CloudDeckError::Permission
+                    .message_for("list instances")
+                    .as_str()
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn multi_region_partial_failure_shows_healthy_regions_and_names_failed_region() {
+        let mut vm = view_model_for(TestScenarioKind::MultiRegionPartialFailure);
+        vm.load_instances().await;
+        assert!(vm.error_message().is_none());
+        assert_eq!(vm.instances().len(), 3);
+        assert_eq!(vm.partial_failures().len(), 1);
+        assert_eq!(
+            vm.partial_failures()[0].region,
+            crate::scenario_service::MULTI_REGION_FAILING_REGION
+        );
+        assert_eq!(
+            vm.partial_failure_summary().as_deref(),
+            Some("1 region failed: eu-west-1")
+        );
+    }
+
+    #[tokio::test]
+    async fn multi_region_all_failing_errors_the_whole_load() {
+        let regions = vec!["us-east-1".to_string(), "eu-west-1".to_string()];
+        let fleet = crate::FleetComputeService::new(regions, |_| {
+            let resolved = ScenarioService::for_kind(
+                TestScenarioKind::ThrottledFailure,
+                &DirectoryScenarioCatalog::new(FIXTURES),
+            )
+            .unwrap();
+            Box::new(resolved.into_service())
+        });
+        let mut vm = InstanceListViewModel::new(Box::new(fleet));
+        vm.load_instances().await;
+        assert!(vm.instances().is_empty());
+        assert!(vm.partial_failures().is_empty());
+        assert!(
+            vm.error_message()
+                .unwrap()
+                .starts_with("Could not list instances:")
+        );
+    }
+
     /// A service whose first call fails and whose subsequent calls succeed,
     /// used to exercise the failure-then-success load transition below.
     struct FailsOnceThenSucceeds {

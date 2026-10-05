@@ -1,0 +1,111 @@
+{
+  "name": "multi-region",
+  "description": "One profile spanning three regions; tests make one region fail.",
+  "profiles": [
+    {
+      "name": "scenario-default",
+      "regions": [
+        {
+          "name": "us-east-1",
+          "instances": [
+            {
+              "instanceID": "i-mr-use1-b",
+              "instanceType": "t3.medium",
+              "state": "running",
+              "launchTime": "2026-04-20T12:00:00Z",
+              "publicIPAddress": null,
+              "privateIPAddress": "10.1.0.2",
+              "vpcID": "vpc-main",
+              "subnetID": "subnet-a",
+              "securityGroups": [],
+              "tags": [
+                {
+                  "key": "Name",
+                  "value": "mr-mr-use1-b"
+                }
+              ]
+            },
+            {
+              "instanceID": "i-mr-use1-a",
+              "instanceType": "m6i.large",
+              "state": "stopped",
+              "launchTime": "2026-04-20T12:00:00Z",
+              "publicIPAddress": null,
+              "privateIPAddress": "10.1.0.1",
+              "vpcID": "vpc-main",
+              "subnetID": "subnet-a",
+              "securityGroups": [],
+              "tags": [
+                {
+                  "key": "Name",
+                  "value": "mr-mr-use1-a"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "eu-west-1",
+          "instances": [
+            {
+              "instanceID": "i-mr-euw1-a",
+              "instanceType": "t3.small",
+              "state": "running",
+              "launchTime": "2026-04-20T12:00:00Z",
+              "publicIPAddress": null,
+              "privateIPAddress": "10.2.0.1",
+              "vpcID": "vpc-main",
+              "subnetID": "subnet-a",
+              "securityGroups": [],
+              "tags": [
+                {
+                  "key": "Name",
+                  "value": "mr-mr-euw1-a"
+                }
+              ]
+            },
+            {
+              "instanceID": "i-mr-euw1-b",
+              "instanceType": "t3.small",
+              "state": "running",
+              "launchTime": "2026-04-20T12:00:00Z",
+              "publicIPAddress": null,
+              "privateIPAddress": "10.2.0.2",
+              "vpcID": "vpc-main",
+              "subnetID": "subnet-a",
+              "securityGroups": [],
+              "tags": [
+                {
+                  "key": "Name",
+                  "value": "mr-mr-euw1-b"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "ap-southeast-2",
+          "instances": [
+            {
+              "instanceID": "i-mr-apse2-a",
+              "instanceType": "c6i.large",
+              "state": "running",
+              "launchTime": "2026-04-20T12:00:00Z",
+              "publicIPAddress": null,
+              "privateIPAddress": "10.3.0.1",
+              "vpcID": "vpc-main",
+              "subnetID": "subnet-a",
+              "securityGroups": [],
+              "tags": [
+                {
+                  "key": "Name",
+                  "value": "mr-mr-apse2-a"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
