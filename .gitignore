@@ -7,10 +7,10 @@
 .beads-credential-key
 .beads/proxieddb/
 
-# Go build artifacts (tools/marshal)
-tools/marshal/marshal
-tools/marshal/checkworker
-tools/marshal/watcher
+# Go build artifacts (tools/harness)
+tools/harness/harness
+tools/harness/checkworker
+tools/harness/watcher
 
 # bd gate lock files (created at the repo root and in .beads/)
 *.gate.lock*
