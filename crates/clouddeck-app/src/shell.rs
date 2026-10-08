@@ -88,6 +88,26 @@ fn rescan_changed(before: &[String], after: &[clouddeck_core::AwsProfile]) -> bo
     before != after_names.as_slice()
 }
 
+/// The adopt-first-profile decision for a post-sign-in rescan, factored out
+/// of the shell observer so it can be unit-tested against profile vectors
+/// rather than the host's real `~/.aws` (clouddeck-rs-w6s.18).
+///
+/// Returns the name of the profile to adopt when (and only when) the current
+/// context has no profile selected yet *and* the detected set changed since
+/// launch (e.g. a browser sign-in created the first profiles). Otherwise
+/// `None`: a saved context is never overridden, an unchanged set means
+/// nothing new appeared, and an empty set means there is nothing to adopt.
+fn profile_to_adopt(
+    current_profile: &str,
+    before: &[String],
+    after: &[clouddeck_core::AwsProfile],
+) -> Option<String> {
+    if !current_profile.is_empty() || !rescan_changed(before, after) || after.is_empty() {
+        return None;
+    }
+    after.first().map(|p| p.name.clone())
+}
+
 impl AppShell {
     pub fn new(cx: &mut Context<Self>) -> Self {
         let (demo, scenario) = launch_options();
@@ -311,36 +331,47 @@ impl AppShell {
                     // otherwise the fleet errors again, inline and
                     // recoverable).
                     match Self::profiles(this.demo, this.demo_scenario) {
-                        Ok(mut rescanned) => {
-                            let changed = rescan_changed(observer_startups.as_slice(), &rescanned);
+                        Ok(rescanned) => {
+                            // Decide the adopt-up-front, before the status bar
+                            // update borrows the list, so the rescan-adopt
+                            // branch cannot race a move out of `rescanned`
+                            // (a previous draft `mem::take`-ed the profiles into
+                            // the status bar and then read `.first()`, which
+                            // was always `None` — clouddeck-rs-w6s.18 review).
+                            // `profile_to_adopt` re-checks the "changed since
+                            // launch" condition itself, so no separate `changed`
+                            // binding is needed here.
+                            let adopted = profile_to_adopt(
+                                &this.context.profile,
+                                &observer_startups,
+                                &rescanned,
+                            );
                             this.status_bar.update(cx, |bar, cx| {
                                 bar.profiles = Some(
-                                    std::mem::take(&mut rescanned)
-                                        .into_iter()
+                                    rescanned
+                                        .iter()
                                         .map(|p| crate::quick_picker::AwsProfile {
-                                            name: p.name,
-                                            hint: p.region.unwrap_or_default(),
+                                            name: p.name.clone(),
+                                            hint: p.region.clone().unwrap_or_default(),
                                         })
                                         .collect(),
                                 );
                                 cx.notify();
                             });
-                            if changed && this.context.profile.is_empty() {
+                            if let Some(adopted) = adopted {
                                 // No context was ever chosen and the first
                                 // profiles just appeared (e.g. a browser
                                 // sign-in created them): adopt the first
                                 // detected profile instead of restarting the
                                 // load against an empty profile name.
-                                if let Some(adopted) = rescanned.first().map(|p| p.name.clone()) {
-                                    this.apply_context(
-                                        WorkspaceContext {
-                                            profile: adopted,
-                                            region: "us-east-1".into(),
-                                        },
-                                        cx,
-                                    );
-                                    return;
-                                }
+                                this.apply_context(
+                                    WorkspaceContext {
+                                        profile: adopted,
+                                        region: "us-east-1".into(),
+                                    },
+                                    cx,
+                                );
+                                return;
                             }
                             this.refresh(cx);
                         }
@@ -605,7 +636,65 @@ impl Render for AppShell {
 mod tests {
     use super::*;
     use crate::test_support::GatedComputeService;
+    use clouddeck_core::AwsProfile;
     use gpui::TestAppContext;
+
+    // clouddeck-rs-w6s.18: the adopt-first-profile decision after a rescan,
+    // factored into a pure fn so it can be exercised against profile vectors
+    // instead of the host's real `~/.aws` (which the shell observer reads).
+    fn aws_profile(name: &str, region: Option<&str>) -> AwsProfile {
+        AwsProfile {
+            name: name.into(),
+            region: region.map(Into::into),
+        }
+    }
+
+    #[test]
+    fn profile_to_adopt_returns_first_profile_when_current_is_empty_and_list_changed() {
+        let before: Vec<String> = vec![];
+        let after = vec![
+            aws_profile("new-first", Some("us-east-1")),
+            aws_profile("new-second", None),
+        ];
+        assert_eq!(
+            profile_to_adopt("", &before, &after),
+            Some("new-first".to_string()),
+            "a first launch with no chosen profile and newly appeared profiles adopts the first"
+        );
+    }
+
+    #[test]
+    fn profile_to_adopt_returns_none_when_current_profile_is_non_empty() {
+        let before: Vec<String> = vec![];
+        let after = vec![aws_profile("new-first", None)];
+        assert_eq!(
+            profile_to_adopt("existing-profile", &before, &after),
+            None,
+            "a saved context is never overridden by a rescan"
+        );
+    }
+
+    #[test]
+    fn profile_to_adopt_returns_none_when_profile_list_is_unchanged() {
+        let before: Vec<String> = vec!["stable".into()];
+        let after = vec![aws_profile("stable", Some("eu-west-1"))];
+        assert_eq!(
+            profile_to_adopt("", &before, &after),
+            None,
+            "an unchanged set means nothing new appeared, so nothing is adopted"
+        );
+    }
+
+    #[test]
+    fn profile_to_adopt_returns_none_when_profile_list_is_empty() {
+        let before: Vec<String> = vec!["gone".into()];
+        let after: Vec<AwsProfile> = vec![];
+        assert_eq!(
+            profile_to_adopt("", &before, &after),
+            None,
+            "an empty rescan means there is nothing to adopt"
+        );
+    }
 
     #[gpui::test]
     fn mounts_without_a_display(cx: &mut TestAppContext) {
