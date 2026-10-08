@@ -29,6 +29,15 @@ pub struct AppShell {
     demo_scenario: DemoScenario,
     wizard: Option<Entity<crate::account_window::AccountWindowView>>,
     message: Option<String>,
+    /// Test-only: an optional compute service injected into `apply_context`
+    /// so that a test can deterministically hold a picker-driven context
+    /// switch load open (via `GatedComputeService`) and observe the
+    /// `is_loading` / `Reloading` transition window that
+    /// `MockComputeService` resolves too fast to reliably catch.
+    #[cfg(test)]
+    test_service_override: Option<
+        std::sync::Arc<dyn ComputeService + Send + Sync>,
+    >,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -454,7 +463,22 @@ impl AppShell {
             demo_scenario,
             message,
             wizard: None,
+            #[cfg(test)]
+            test_service_override: None,
         }
+    }
+
+    /// Test-only: install a compute service that will be used (instead of
+    /// the scenario-derived one) by the *next* `apply_context` call, so a
+    /// test can deterministically observe the loading window of a
+    /// picker-driven context switch. Must be called before the trigger
+    /// that causes `apply_context` to fire.
+    #[cfg(test)]
+    pub fn set_test_service_override(
+        &mut self,
+        service: std::sync::Arc<dyn ComputeService + Send + Sync>,
+    ) {
+        self.test_service_override = Some(service);
     }
 
     fn apply_context(&mut self, context: WorkspaceContext, cx: &mut Context<Self>) {
@@ -466,8 +490,25 @@ impl AppShell {
         // `refresh` flips the new tab's view model to loading synchronously
         // before its spawned task resolves, so the very next render
         // already reports Reloading from the new tab itself.
-        let vm =
-            InstanceListViewModel::new(Self::service(&self.context, self.demo, self.demo_scenario));
+        #[cfg(test)]
+        let service: Box<dyn ComputeService + Send + Sync> = self
+            .test_service_override
+            .as_ref()
+            .map(|s| {
+                // Wrap the shared `Arc<dyn>` in `ArcComputeService` so each
+                // new tab gets its own `Box<dyn>` handle over the same
+                // underlying service.
+                Box::new(crate::test_support::ArcComputeService::new(
+                    std::sync::Arc::clone(s),
+                )) as _
+            })
+            .unwrap_or_else(|| {
+                Self::service(&self.context, self.demo, self.demo_scenario)
+            });
+        #[cfg(not(test))]
+        let service: Box<dyn ComputeService + Send + Sync> =
+            Self::service(&self.context, self.demo, self.demo_scenario);
+        let vm = InstanceListViewModel::new(service);
         let new_tab = cx.new(|cx| EC2Tab::new(vm, cx));
         cx.observe(&new_tab, |_, _, cx| cx.notify()).detach();
         new_tab
@@ -813,6 +854,7 @@ mod tests {
                 security_groups: vec![],
                 tags: vec![],
             }],
+            error: None,
         };
         let view_model = InstanceListViewModel::new(Box::new(service));
 
@@ -1511,12 +1553,10 @@ mod tests {
     /// the context updated, the picker closed, and the error panel
     /// rendered with the correct error message. The loading state during
     /// the transition (Reloading status bar, `is_loading` on the view
-    /// model) is covered by the dedicated
-    /// `startup_load_is_async_and_transitions_from_loading_to_populated`
-    /// test, which uses `GatedComputeService` to deterministically observe
-    /// the loading window. A picker-switch-specific loading assertion
-    /// would require a gated compute service injected into
-    /// `apply_context`, which is tracked in a follow-up bead.
+    /// model) is covered by
+    /// `region_picker_switch_shows_reloading_state_during_failure_load`,
+    /// which injects a `GatedComputeService` into `apply_context` to
+    /// deterministically observe the loading window.
     #[gpui::test]
     fn region_picker_switch_shows_error_state_after_failure_load(
         cx: &mut TestAppContext,
@@ -1608,6 +1648,158 @@ mod tests {
         assert!(
             matches!(status_after, ContextStatusState::Error(_)),
             "the status bar must report the error state after the failure load settles"
+        );
+        assert!(
+            error_msg
+                .as_deref()
+                .unwrap_or("")
+                .contains("Simulated demo load failure"),
+            "the error message should be the simulated demo failure, got: {error_msg:?}"
+        );
+    }
+
+    /// Switching regions through the picker while a `GatedComputeService`
+    /// is injected into `apply_context` must show the Reloading state on
+    /// the status bar and `is_loading` on the view model while the load
+    /// is in flight, then the settled error state after the gate is
+    /// released. This is the deterministic, picker-switch-specific version
+    /// of the loading-window assertion that
+    /// `startup_load_is_async_and_transitions_from_loading_to_populated`
+    /// covers for the startup path.
+    #[gpui::test]
+    fn region_picker_switch_shows_reloading_state_during_failure_load(
+        cx: &mut TestAppContext,
+    ) {
+        let gate = std::sync::Arc::new(tokio::sync::Notify::new());
+        let (shell, cx) = cx.add_window_view(|_, cx| {
+            let shell = AppShell::new_demo_failure(cx);
+            shell
+        });
+
+        // The failure scenario's startup load resolves almost instantly
+        // (MockComputeService); wait for the error panel to appear so the
+        // shell is in a settled state before we inject the gated service.
+        wait_until(cx, "error panel to render after startup", |cx| {
+            cx.debug_bounds("ec2.instance.error").is_some()
+        });
+
+        // The failure demo starts with region us-east-1 (the profile's
+        // default region), so switching to fleet is a real change.
+        let starting_region = shell.read_with(cx, |shell, _| shell.context.region.clone());
+        assert_ne!(
+            starting_region, "fleet",
+            "the test must start in a concrete region so the fleet switch is a meaningful change"
+        );
+
+        // Inject a GatedComputeService that will produce the same simulated
+        // failure error as the failure scenario once the gate is released.
+        // This overrides what `apply_context` would normally use
+        // (MockComputeService) for the picker-driven context switch.
+        shell.update(cx, |shell, _| {
+            let service = GatedComputeService {
+                gate: gate.clone(),
+                instances: vec![],
+                error: Some(
+                    std::sync::Arc::new(std::io::Error::other(
+                        "Simulated demo load failure",
+                    )) as std::sync::Arc<dyn std::error::Error + Send + Sync>,
+                ),
+            };
+            shell.set_test_service_override(std::sync::Arc::new(service));
+        });
+
+        // Open the region picker and switch to the fleet region. This
+        // triggers `apply_context`, which uses the injected gated service.
+        let chip = cx
+            .debug_bounds("statusbar.region")
+            .expect("region chip should render");
+        cx.simulate_click(chip.center(), gpui::Modifiers::default());
+        let region_row = cx
+            .debug_bounds("statusbar.quickpicker.region.row.fleet")
+            .expect("fleet row should render in the demo's region picker");
+        cx.simulate_click(region_row.center(), gpui::Modifiers::default());
+
+        // After the click: the context updated, the picker closed, and the
+        // gated load is in flight (is_loading == true, status bar is
+        // Reloading). The gate has not been released yet, so the error
+        // state must NOT be visible.
+        // Run one park cycle so `AppShell::render` has a chance to update
+        // `status_bar.status` to `Reloading` based on the now-loading view
+        // model (the `status` field is only set during render).
+        cx.run_until_parked();
+        let (region, picker_closed, is_loading, status_during) = shell.read_with(cx, |shell, cx| {
+            let vm = &shell.ec2_tab.read(cx).list.read(cx).view_model;
+            (
+                shell.context.region.clone(),
+                shell.status_bar.read(cx).active_quick_picker.is_none(),
+                vm.is_loading(),
+                shell.status_bar.read(cx).status.clone(),
+            )
+        });
+        assert_eq!(
+            region, "fleet",
+            "the shell's context must track the picker's region selection"
+        );
+        assert!(
+            picker_closed,
+            "the picker must be closed after a region row is selected"
+        );
+        assert!(
+            is_loading,
+            "the view model must report loading while the gated load is in flight"
+        );
+        assert!(
+            matches!(status_during, ContextStatusState::Reloading),
+            "the status bar must report Reloading while the picker-driven load is in flight, got: {status_during:?}"
+        );
+
+        // Release the gate: the gated service now resolves with the
+        // simulated failure error.
+        gate.notify_one();
+
+        // Wait for the load to settle with an error (poll the view model
+        // directly to avoid racing with stale `debug_bounds` from the old
+        // tab).
+        for _ in 0..200 {
+            if shell.read_with(cx, |shell, cx| {
+                shell
+                    .ec2_tab
+                    .read(cx)
+                    .list
+                    .read(cx)
+                    .view_model
+                    .error_message()
+                    .is_some()
+            }) {
+                break;
+            }
+            cx.run_until_parked();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+
+        // After settling: the view model has the expected error, is no
+        // longer loading, the status bar reports the error state, and the
+        // error message is the simulated demo failure.
+        let (has_error, is_loading_after, status_after, error_msg) = shell.read_with(cx, |shell, cx| {
+            let vm = &shell.ec2_tab.read(cx).list.read(cx).view_model;
+            (
+                vm.error_message().is_some(),
+                vm.is_loading(),
+                shell.status_bar.read(cx).status.clone(),
+                vm.error_message().map(str::to_owned),
+            )
+        });
+        assert!(
+            has_error,
+            "the gated service must produce an error after the gate is released"
+        );
+        assert!(
+            !is_loading_after,
+            "the view model must no longer be loading after the gated load settles"
+        );
+        assert!(
+            matches!(status_after, ContextStatusState::Error(_)),
+            "the status bar must report the error state after the gated failure load settles, got: {status_after:?}"
         );
         assert!(
             error_msg

@@ -1085,6 +1085,7 @@ mod tests {
                 "t3.medium",
                 "us-east-1",
             )],
+            error: None,
         };
         let vm = InstanceListViewModel::new(Box::new(service));
         let (view, cx) = cx.add_window_view(|_, _| InstanceListView::new(vm));
