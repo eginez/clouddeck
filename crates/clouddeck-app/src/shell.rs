@@ -124,6 +124,11 @@ impl AppShell {
         Self::build_with_scenario(true, DemoScenario::Empty, cx)
     }
 
+    #[cfg(test)]
+    fn new_demo_failure(cx: &mut Context<Self>) -> Self {
+        Self::build_with_scenario(true, DemoScenario::Failure, cx)
+    }
+
     fn profiles(
         demo: bool,
         demo_scenario: DemoScenario,
@@ -1390,6 +1395,226 @@ mod tests {
         assert_eq!(
             context_after, context_before,
             "dismissing the picker without selecting must not change the context"
+        );
+    }
+
+    /// Selecting a *different* profile through the real picker must update
+    /// the shell's context, the status bar's profile chip, close the
+    /// picker, and replace the EC2Tab so the fleet reloads for the new
+    /// profile. Injects a second profile into the status bar's picker data
+    /// (the demo fixture only has one) so the "All Profiles" section has a
+    /// selectable row.
+    #[gpui::test]
+    fn profile_picker_row_click_drives_shell_context(cx: &mut TestAppContext) {
+        let (shell, cx) = cx.add_window_view(|_, cx| AppShell::new_demo(cx));
+        wait_until(cx, "startup load to settle", |cx| {
+            cx.debug_bounds("ec2.instance.row.us-east-1:i-scenario-001")
+                .is_some()
+        });
+
+        // Inject a second profile into the status bar's picker data so
+        // the "All Profiles" section has a selectable row. The demo
+        // fixture only has `scenario-default`; this simulates a user who
+        // has multiple AWS profiles configured.
+        shell.update(cx, |shell, cx| {
+            shell.status_bar.update(cx, |bar, cx| {
+                bar.profiles = Some(vec![
+                    crate::quick_picker::AwsProfile {
+                        name: "scenario-default".into(),
+                        hint: "us-east-1".into(),
+                    },
+                    crate::quick_picker::AwsProfile {
+                        name: "other-profile".into(),
+                        hint: "".into(),
+                    },
+                ]);
+                cx.notify();
+            });
+        });
+        cx.run_until_parked();
+
+        // Open the profile picker.
+        let chip = cx
+            .debug_bounds("statusbar.profile")
+            .expect("profile chip should render");
+        cx.simulate_click(chip.center(), gpui::Modifiers::default());
+        assert!(
+            cx.debug_bounds("statusbar.quickpicker").is_some(),
+            "the quick picker popover should open from the profile chip click"
+        );
+        assert!(
+            cx.debug_bounds("statusbar.quickpicker.profile.row.other-profile")
+                .is_some(),
+            "the injected other-profile row should render in the All Profiles section"
+        );
+
+        // Click the other-profile row.
+        let row = cx
+            .debug_bounds("statusbar.quickpicker.profile.row.other-profile")
+            .expect("other-profile row should be clickable");
+        cx.simulate_click(row.center(), gpui::Modifiers::default());
+
+        // Assert the shell's context, status bar, and picker state updated.
+        let (context_profile, bar_profile, picker_closed) = shell.read_with(cx, |shell, cx| {
+            (
+                shell.context.profile.clone(),
+                shell.status_bar.read(cx).profile.clone(),
+                shell.status_bar.read(cx).active_quick_picker.is_none(),
+            )
+        });
+        assert_eq!(
+            context_profile, "other-profile",
+            "the shell's context profile must match the picker's selection"
+        );
+        assert_eq!(
+            bar_profile.as_deref(),
+            Some("other-profile"),
+            "the status bar's profile chip must show the selected profile"
+        );
+        assert!(
+            picker_closed,
+            "the picker must close once a profile row is selected"
+        );
+
+        // The EC2Tab was replaced by apply_context; the new view model
+        // is loading or has already settled. Wait for the load to settle
+        // (is_loading becomes false), then assert the fleet is empty
+        // (the demo service for an unknown profile returns no instances).
+        wait_until(cx, "profile switch load to settle", |cx| {
+            cx.debug_bounds("ec2.instance.empty").is_some()
+        });
+        let (is_loading, instances_count, error) = shell.read_with(cx, |shell, cx| {
+            let vm = &shell.ec2_tab.read(cx).list.read(cx).view_model;
+            (
+                vm.is_loading(),
+                vm.instances().len(),
+                vm.error_message().map(str::to_owned),
+            )
+        });
+        assert!(!is_loading, "the profile switch load must have settled");
+        assert_eq!(
+            instances_count, 0,
+            "the demo service for an unknown profile returns no instances"
+        );
+        assert!(
+            error.is_none(),
+            "the demo service for an unknown profile should not produce an error"
+        );
+    }
+
+    /// Switching regions through the picker on a failure-scenario shell
+    /// must show the error panel after the load settles. Uses the failure
+    /// demo scenario (all loads fail with a simulated error) so the error
+    /// state is deterministic.
+    ///
+    /// This test checks the *settled* error state after the region switch:
+    /// the context updated, the picker closed, and the error panel
+    /// rendered with the correct error message. The loading state during
+    /// the transition (Reloading status bar, `is_loading` on the view
+    /// model) is covered by the dedicated
+    /// `startup_load_is_async_and_transitions_from_loading_to_populated`
+    /// test, which uses `GatedComputeService` to deterministically observe
+    /// the loading window. A picker-switch-specific loading assertion
+    /// would require a gated compute service injected into
+    /// `apply_context`, which is tracked in a follow-up bead.
+    #[gpui::test]
+    fn region_picker_switch_shows_error_state_after_failure_load(
+        cx: &mut TestAppContext,
+    ) {
+        let (shell, cx) = cx.add_window_view(|_, cx| AppShell::new_demo_failure(cx));
+
+        // The failure scenario's startup load resolves almost instantly;
+        // wait for the error panel to appear.
+        wait_until(cx, "error panel to render after startup", |cx| {
+            cx.debug_bounds("ec2.instance.error").is_some()
+        });
+
+        // The failure demo starts with region us-east-1 (the profile's
+        // default region), so switching to fleet is a real change.
+        let starting_region = shell.read_with(cx, |shell, _| shell.context.region.clone());
+        assert_ne!(
+            starting_region, "fleet",
+            "the test must start in a concrete region so the fleet switch is a meaningful change"
+        );
+
+        // Open the region picker and switch to the fleet region.
+        let chip = cx
+            .debug_bounds("statusbar.region")
+            .expect("region chip should render");
+        cx.simulate_click(chip.center(), gpui::Modifiers::default());
+        assert!(
+            cx.debug_bounds("statusbar.quickpicker").is_some(),
+            "the quick picker popover should open"
+        );
+        let region_row = cx
+            .debug_bounds("statusbar.quickpicker.region.row.fleet")
+            .expect("fleet row should render in the demo's region picker");
+        cx.simulate_click(region_row.center(), gpui::Modifiers::default());
+
+        // After the click: the context and status bar updated, the picker
+        // closed. The new tab's load resolves almost instantly (mock
+        // failure service), so the error may already be set.
+        let (region, picker_closed) = shell.read_with(cx, |shell, cx| {
+            (
+                shell.context.region.clone(),
+                shell.status_bar.read(cx).active_quick_picker.is_none(),
+            )
+        });
+        assert_eq!(
+            region, "fleet",
+            "the shell's context must track the picker's region selection"
+        );
+        assert!(
+            picker_closed,
+            "the picker must be closed after a region row is selected"
+        );
+
+        // Wait for the new tab's view model to settle with an error
+        // (the failure scenario always produces an error, so this is
+        // deterministic). Poll the view model directly to avoid racing
+        // with stale `debug_bounds` from the old tab.
+        for _ in 0..200 {
+            if shell.read_with(cx, |shell, cx| {
+                shell
+                    .ec2_tab
+                    .read(cx)
+                    .list
+                    .read(cx)
+                    .view_model
+                    .error_message()
+                    .is_some()
+            }) {
+                break;
+            }
+            cx.run_until_parked();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+
+        // After settling: the view model has an error, the status bar
+        // reports the error state, and the error message is the simulated
+        // demo failure.
+        let (has_error, status_after, error_msg) = shell.read_with(cx, |shell, cx| {
+            let vm = &shell.ec2_tab.read(cx).list.read(cx).view_model;
+            (
+                vm.error_message().is_some(),
+                shell.status_bar.read(cx).status.clone(),
+                vm.error_message().map(str::to_owned),
+            )
+        });
+        assert!(
+            has_error,
+            "the failure scenario must produce an error after the region switch"
+        );
+        assert!(
+            matches!(status_after, ContextStatusState::Error(_)),
+            "the status bar must report the error state after the failure load settles"
+        );
+        assert!(
+            error_msg
+                .as_deref()
+                .unwrap_or("")
+                .contains("Simulated demo load failure"),
+            "the error message should be the simulated demo failure, got: {error_msg:?}"
         );
     }
 
