@@ -73,6 +73,21 @@ fn scenario_for(kind: DemoScenario) -> EC2Scenario {
     clouddeck_core::parse_scenario(fixture).expect("bundled demo")
 }
 
+/// True when the shell is running against real AWS credentials (as opposed
+/// to the bundled demo scenario). Public so the fleet view's
+/// no-profiles onboarding affordance can decide whether "Connect to AWS"
+/// and "Rescan profiles" make sense at all (they do not in demo mode,
+/// where the fleet is scenario data). Tests never pass `--demo`, so
+/// `cargo test` runs always see real mode here.
+pub fn is_real_mode() -> bool {
+    !std::env::args_os().any(|arg| arg == "--demo")
+}
+
+fn rescan_changed(before: &[String], after: &[clouddeck_core::AwsProfile]) -> bool {
+    let after_names: Vec<String> = after.iter().map(|p| p.name.clone()).collect();
+    before != after_names.as_slice()
+}
+
 impl AppShell {
     pub fn new(cx: &mut Context<Self>) -> Self {
         let (demo, scenario) = launch_options();
@@ -210,7 +225,7 @@ impl AppShell {
             return Self::demo_service(context, demo_scenario);
         }
         if context.profile.is_empty() {
-            return Box::new(MockComputeService::new(vec![], Some(std::io::Error::other("Choose an AWS profile using Set up AWS. You can explore the demo without credentials.").into())));
+            return Box::new(MockComputeService::new(vec![], Some(std::io::Error::other("No AWS profile selected. Use “Connect to AWS” to sign in and choose a profile, or explore the demo without credentials.").into())));
         }
         if context.region == "fleet" {
             let profile = context.profile.clone();
@@ -240,6 +255,16 @@ impl AppShell {
             .err()
             .map(|e| format!("Could not read AWS profiles: {e}"));
         let profiles = loaded.unwrap_or_default();
+        // Remember the profile list feeding the status bar chips at startup,
+        // so a later empty-state rescan can tell whether the profile set
+        // changed since launch (e.g. a browser sign-in created the first
+        // profiles after launch). Shared by value with the rescan observer
+        // below.
+        let startup_profile_names: std::sync::Arc<Vec<String>> = profiles
+            .iter()
+            .map(|p| p.name.clone())
+            .collect::<Vec<_>>()
+            .into();
         let saved = if demo {
             None
         } else {
@@ -261,6 +286,72 @@ impl AppShell {
         let view_model = InstanceListViewModel::new(Self::service(&context, demo, demo_scenario));
         let ec2_tab = cx.new(|cx| EC2Tab::new(view_model, cx));
         cx.observe(&ec2_tab, |_, _, cx| cx.notify()).detach();
+        let ec2_tab = ec2_tab.clone();
+        let observer_startups = startup_profile_names.clone();
+        // The fleet's empty state can ask for the setup window ("Connect to
+        // AWS" on first launch with no profiles) or for a profile rescan
+        // (after a browser sign-in created the first profile) without the
+        // shell being rebuilt: consume those one-shot flags here.
+        cx.observe(&ec2_tab, move |this: &mut Self, tab, cx| {
+            let list = tab.read(cx).list.clone();
+            let manage = list.read(cx).manage_requested;
+            let rescan = list.read(cx).rescan_requested;
+            if manage || rescan {
+                list.update(cx, |list, cx| {
+                    list.manage_requested = false;
+                    list.rescan_requested = false;
+                    cx.notify();
+                });
+                if manage {
+                    this.open_setup(cx);
+                } else {
+                    // Rescan: refresh the profile list feeding the status
+                    // bar chips and restart the fleet load against the same
+                    // context (a newly created profile may now be usable;
+                    // otherwise the fleet errors again, inline and
+                    // recoverable).
+                    match Self::profiles(this.demo, this.demo_scenario) {
+                        Ok(mut rescanned) => {
+                            let changed = rescan_changed(observer_startups.as_slice(), &rescanned);
+                            this.status_bar.update(cx, |bar, cx| {
+                                bar.profiles = Some(
+                                    std::mem::take(&mut rescanned)
+                                        .into_iter()
+                                        .map(|p| crate::quick_picker::AwsProfile {
+                                            name: p.name,
+                                            hint: p.region.unwrap_or_default(),
+                                        })
+                                        .collect(),
+                                );
+                                cx.notify();
+                            });
+                            if changed && this.context.profile.is_empty() {
+                                // No context was ever chosen and the first
+                                // profiles just appeared (e.g. a browser
+                                // sign-in created them): adopt the first
+                                // detected profile instead of restarting the
+                                // load against an empty profile name.
+                                if let Some(adopted) = rescanned.first().map(|p| p.name.clone()) {
+                                    this.apply_context(
+                                        WorkspaceContext {
+                                            profile: adopted,
+                                            region: "us-east-1".into(),
+                                        },
+                                        cx,
+                                    );
+                                    return;
+                                }
+                            }
+                            this.refresh(cx);
+                        }
+                        Err(error) => {
+                            this.message = Some(format!("Could not read AWS profiles: {error}"));
+                        }
+                    }
+                }
+            }
+        })
+        .detach();
         // Load asynchronously via `InstanceListView::refresh`'s cx.spawn
         // pattern (background_executor().block() would freeze the UI
         // thread once this wraps a real, network-latency-bearing
@@ -795,6 +886,83 @@ mod tests {
                 "finishing the wizard should flow its selected profile into the status bar"
             );
             assert_eq!(shell.status_bar.read(cx).region, "us-west-2");
+        });
+    }
+
+    #[gpui::test]
+    fn mounting_in_real_mode_without_profiles_shows_setup_affordance(cx: &mut TestAppContext) {
+        // A real (non-demo) launch with no detected AWS profiles must reach
+        // the fleet with an in-place "Connect to AWS" affordance (the
+        // no-profiles onboarding entry point, clouddeck-rs-w6s.18) rather
+        // than a dead end. The shell's no-profile branch of `service()`
+        // (see `shell.rs`) resolves to a load-failure error panel (not the
+        // plain empty panel), so the affordance must render in that error
+        // panel too — this test covers exactly that path.
+        let real_mode = crate::shell::is_real_mode();
+        let (_shell, cx) = cx.add_window_view(|_, cx| {
+            if real_mode {
+                AppShell::build_with_scenario(false, DemoScenario::Happy, cx)
+            } else {
+                AppShell::build_with_scenario(true, DemoScenario::Empty, cx)
+            }
+        });
+
+        // The state (empty or error) renders once the load resolves; the
+        // setup affordance must be present by then, so poll for it directly
+        // rather than just waiting for any state to appear.
+        let mut saw_setup = false;
+        for _ in 0..200 {
+            cx.run_until_parked();
+            if cx.debug_bounds("ec2.instance.empty-setup").is_some() {
+                saw_setup = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+
+        assert!(
+            cx.debug_bounds("ec2.instance.empty").is_some()
+                || cx.debug_bounds("ec2.instance.error").is_some(),
+            "the empty/error state should render"
+        );
+        if real_mode {
+            assert!(
+                saw_setup,
+                "a real-mode launch with no profiles should show Connect to AWS"
+            );
+        } else {
+            assert!(
+                cx.debug_bounds("ec2.instance.empty-setup").is_none(),
+                "the demo empty scenario must not offer AWS onboarding"
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn empty_state_setup_request_opens_the_wizard(cx: &mut TestAppContext) {
+        // The empty-fleet "Connect to AWS" affordance sets
+        // `manage_requested`; the shell must consume that flag and open the
+        // Connect to AWS window (the no-profiles onboarding trigger,
+        // clouddeck-rs-w6s.18).
+        let (shell, cx) = cx.add_window_view(|_, cx| AppShell::new_demo(cx));
+
+        shell.update(cx, |shell, cx| {
+            shell.ec2_tab.read(cx).list.clone().update(cx, |list, cx| {
+                list.manage_requested = true;
+                cx.notify();
+            });
+        });
+        cx.run_until_parked();
+
+        shell.read_with(cx, |shell, cx| {
+            assert!(
+                shell.wizard.is_some(),
+                "the empty-state setup request should open the Connect to AWS window"
+            );
+            assert!(
+                !shell.ec2_tab.read(cx).list.read(cx).manage_requested,
+                "the one-shot setup request must be consumed by the shell"
+            );
         });
     }
 

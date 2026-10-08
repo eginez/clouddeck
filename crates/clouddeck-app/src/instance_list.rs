@@ -19,6 +19,14 @@ use clouddeck_core::EC2Instance;
 pub struct InstanceListView {
     pub view_model: InstanceListViewModel,
     pub show_standalone_empty_state: bool,
+    /// One-shot request consumed by the shell: open the Connect to AWS
+    /// setup window from the empty-fleet onboarding state.
+    pub manage_requested: bool,
+    /// One-shot request consumed by the shell: re-scan the detected AWS
+    /// profiles (e.g. after a browser sign-in created the first one) and
+    /// restart the fleet load so the new profile is usable without a
+    /// restart.
+    pub rescan_requested: bool,
     /// Port of the oracle's `@State private var hoveredInstanceID: String?`,
     /// tracked here (rather than in the view model) since hover is
     /// transient view-local UI state, not fleet data.
@@ -31,6 +39,8 @@ impl InstanceListView {
         Self {
             view_model,
             show_standalone_empty_state: false,
+            manage_requested: false,
+            rescan_requested: false,
             hovered_instance_id: None,
             search: None,
         }
@@ -381,8 +391,12 @@ fn loading_panel() -> impl IntoElement {
 }
 
 /// Port of `errorPanel(message:)`.
-fn error_panel(message: String) -> impl IntoElement {
-    div()
+fn error_panel(
+    message: String,
+    window: &mut Window,
+    cx: &mut Context<InstanceListView>,
+) -> impl IntoElement {
+    let mut root = div()
         .debug_selector(|| "ec2.instance.error".into())
         .flex()
         .flex_col()
@@ -401,12 +415,30 @@ fn error_panel(message: String) -> impl IntoElement {
                 .text_size(px(SurgicalTypography::CAPTION_SIZE))
                 .text_color(SurgicalTheme::text_secondary())
                 .child(message),
-        )
+        );
+    // Any real-mode load failure (no profiles detected at all, an expired
+    // SSO login, a denied-access profile, …) lands the user on exactly this
+    // dead-end error panel; each of those recovery paths is the same one —
+    // open the Connect to AWS window (or rescan, if a browser sign-in just
+    // created the first profile) — so the in-place "Connect to AWS" /
+    // "Rescan profiles" affordance renders here whenever the failure leaves
+    // the fleet empty, not just for one specific error string
+    // (clouddeck-rs-w6s.18). Demo mode has its own recovery affordance
+    // ("Explore demo fleet"), so this is real-mode only.
+    if crate::shell::is_real_mode() {
+        let view_entity: gpui::Entity<InstanceListView> = cx.entity();
+        root = root.child(onboarding_actions(&view_entity, window));
+    }
+    root
 }
 
 /// Port of `emptyPanel(hasFilter:)`.
-fn empty_panel(has_filter: bool) -> impl IntoElement {
-    let (title, message): (&'static str, &'static str) = if has_filter {
+fn empty_panel(
+    has_filter: bool,
+    window: &mut Window,
+    cx: &mut Context<InstanceListView>,
+) -> impl IntoElement {
+    let (title, message): (&'static str, &str) = if has_filter {
         (
             "No Matching Instances",
             "Adjust your search or filter values to widen the current fleet view.",
@@ -418,7 +450,7 @@ fn empty_panel(has_filter: bool) -> impl IntoElement {
         )
     };
 
-    div()
+    let mut root = div()
         .debug_selector(|| "ec2.instance.empty".into())
         .flex()
         .flex_col()
@@ -437,7 +469,72 @@ fn empty_panel(has_filter: bool) -> impl IntoElement {
                 .text_size(px(SurgicalTypography::CAPTION_SIZE))
                 .text_color(SurgicalTheme::text_secondary())
                 .child(message),
-        )
+        );
+
+    // The no-profiles / wrong-profile onboarding affordance: only offered
+    // in real (non-demo) AWS mode. In the demo the fleet is scenario data
+    // and there is nothing to set up; here a first launch with no `~/.aws`
+    // profiles reaches exactly this state and previously had no visible way
+    // into the Connect to AWS flow (only the small "Set up AWS" chip in the
+    // status bar). Clicking "Connect to AWS" sets `manage_requested`, which
+    // the shell consumes to open the setup window; clicking "Rescan
+    // profiles" sets `rescan_requested`, which the shell consumes to
+    // re-scan detected profiles after a browser sign-in created the first
+    // one (clouddeck-rs-w6s.18).
+    if crate::shell::is_real_mode() {
+        let view_entity: gpui::Entity<InstanceListView> = cx.entity();
+        root = root.child(onboarding_actions(&view_entity, window));
+    }
+
+    root
+}
+
+/// The in-place "Connect to AWS" / "Rescan profiles" buttons shown in the
+/// empty-fleet state for real (non-demo) launches, the no-profiles /
+/// wrong-profile onboarding entry point (clouddeck-rs-w6s.18). Built with
+/// raw `Fn` closures (the same shape as `filter_chip`'s `on_click`
+/// parameter) routed through `Window::listener_for`, which captures the
+/// view entity itself — the `StatefulInteractiveElement` `cx.listener`
+/// sugar does not typecheck on a `Div` inside a free function's
+/// `impl IntoElement` return, but `listener_for` returns exactly the
+/// `Fn(&E, &mut Window, &mut App)` signature `on_click` accepts.
+fn onboarding_actions(view: &Entity<InstanceListView>, window: &mut Window) -> impl IntoElement {
+    let setup_button: gpui::Stateful<gpui::Div> = div()
+        .id("ec2.instance.empty-setup")
+        .debug_selector(|| "ec2.instance.empty-setup".into())
+        .px(px(12.0))
+        .py(px(7.0))
+        .rounded(px(radius::STANDARD))
+        .bg(SurgicalTheme::primary())
+        .text_size(px(SurgicalTypography::CAPTION_SIZE))
+        .text_color(SurgicalTheme::surface())
+        .child("Connect to AWS")
+        .on_click(window.listener_for(view, |this, _event, _window, cx| {
+            this.manage_requested = true;
+            cx.notify();
+        }));
+    let rescan_button: gpui::Stateful<gpui::Div> = div()
+        .id("ec2.instance.empty-rescan")
+        .debug_selector(|| "ec2.instance.empty-rescan".into())
+        .px(px(12.0))
+        .py(px(7.0))
+        .rounded(px(radius::STANDARD))
+        .bg(SurgicalTheme::surface_container())
+        .text_size(px(SurgicalTypography::CAPTION_SIZE))
+        .text_color(SurgicalTheme::text_primary())
+        .child("Rescan profiles")
+        .on_click(window.listener_for(view, |this, _event, _window, cx| {
+            this.rescan_requested = true;
+            cx.notify();
+        }));
+    div()
+        .debug_selector(|| "ec2.instance.empty-actions".into())
+        .flex()
+        .flex_row()
+        .gap(px(8.0))
+        .mt(px(10.0))
+        .child(setup_button)
+        .child(rescan_button)
 }
 
 /// Port of `standaloneInspectorPrompt`.
@@ -552,9 +649,9 @@ impl Render for InstanceListView {
         } else if let Some(error_message) =
             self.view_model.error_message().filter(|_| instances_empty)
         {
-            error_panel(error_message.to_string()).into_any_element()
+            error_panel(error_message.to_string(), window, cx).into_any_element()
         } else if filtered.is_empty() {
-            empty_panel(has_filter).into_any_element()
+            empty_panel(has_filter, window, cx).into_any_element()
         } else {
             let mut list = div()
                 .debug_selector(|| "ec2.instance.list".into())
@@ -720,6 +817,68 @@ mod tests {
 
         assert!(cx.debug_bounds("ec2.instance.empty").is_some());
         assert!(cx.debug_bounds("ec2.instance.list").is_none());
+    }
+
+    // clouddeck-rs-w6s.18: the empty-fleet state is the onboarding entry
+    // point for real (non-demo) launches with no detected profiles, so it
+    // must offer an in-place "Connect to AWS" / rescan affordance instead of
+    // dead-ending on "No Instances Found".
+    #[gpui::test]
+    fn empty_state_offers_connect_to_aws_in_real_mode(cx: &mut TestAppContext) {
+        let real_mode = crate::shell::is_real_mode();
+        let (view, cx) = cx.add_window_view(|_, _| InstanceListView::new(empty_view_model()));
+
+        assert!(
+            cx.debug_bounds("ec2.instance.empty").is_some(),
+            "the empty state panel must render regardless of mode"
+        );
+
+        if !real_mode {
+            assert!(
+                cx.debug_bounds("ec2.instance.empty-setup").is_none(),
+                "the demo fleet must not offer AWS onboarding"
+            );
+            assert!(
+                cx.debug_bounds("ec2.instance.empty-rescan").is_none(),
+                "the demo fleet must not offer a profile rescan"
+            );
+            return;
+        }
+
+        assert!(
+            cx.debug_bounds("ec2.instance.empty-setup").is_some(),
+            "a real-mode empty fleet should offer Connect to AWS in place"
+        );
+        assert!(
+            cx.debug_bounds("ec2.instance.empty-rescan").is_some(),
+            "a real-mode empty fleet should offer a profile rescan"
+        );
+
+        // The affordance is rendered by the fleet view's shell-level observer
+        // (one-shot `manage_requested` / `rescan_requested` flags), not by a
+        // per-button click handler: clicking where the affordance renders
+        // must trigger the setup request the shell consumes to open the
+        // Connect to AWS window. The click is routed through the list's
+        // onboarding handler.
+        let setup = cx
+            .debug_bounds("ec2.instance.empty-setup")
+            .expect("connect-to-aws affordance renders");
+        cx.simulate_click(setup.center(), Default::default());
+        cx.run_until_parked();
+        assert!(
+            view.read_with(cx, |view, _| view.manage_requested),
+            "clicking Connect to AWS must flag a setup request for the shell"
+        );
+
+        let rescan = cx
+            .debug_bounds("ec2.instance.empty-rescan")
+            .expect("rescan affordance renders");
+        cx.simulate_click(rescan.center(), Default::default());
+        cx.run_until_parked();
+        assert!(
+            view.read_with(cx, |view, _| view.rescan_requested),
+            "clicking Rescan profiles must flag a rescan request for the shell"
+        );
     }
 
     #[gpui::test]
