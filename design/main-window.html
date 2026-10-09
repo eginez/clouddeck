@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>CloudDeck main window (light)</title>
+<style>
+:root{
+  --win:#fbfbfc; --chrome:#ececef; --side:#f1f1f4; --panel:#f7f7f9; --line:#dcdce1; --line2:#e8e8ec;
+  --text:#1c1c1f; --dim:#6b6b73; --faint:#6f6f79; --hover:#ececf0; --sel:#dfe6f5; --selbar:#2f6fdb;
+  --accent:#2f6fdb; --run:#1f9d55; --stop:#8a8a93; --warn:#b7791f; --err:#c4372c;
+  --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif;
+  --mono:ui-monospace,"SF Mono",Menlo,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:#c9c9cf;font:12px/1.3 var(--font);color:var(--text);padding:24px;display:flex;flex-direction:column;gap:28px;align-items:center}
+h2{margin:0 0 8px;font:600 13px var(--font);color:#333}
+.note{font-size:12px;color:#444;max-width:1280px;margin:0 0 8px}
+.board{width:1280px}
+.win{width:1280px;height:760px;background:var(--win);border-radius:10px;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 0 0 .5px #0006,0 18px 50px #0004;position:relative}
+svg.i{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.2;stroke-linecap:round;stroke-linejoin:round;flex:none}
+/* toolbar */
+.tb{height:44px;background:var(--chrome);display:flex;align-items:center;gap:8px;padding:0 10px 0 14px;flex:none}
+.lights{display:flex;gap:8px;margin-right:6px}.lights i{width:12px;height:12px;border-radius:50%;display:block}
+.btn{height:26px;min-width:26px;padding:0 7px;border:0;border-radius:6px;background:transparent;color:var(--text);display:inline-flex;align-items:center;gap:5px;font:inherit;cursor:default}
+.btn:hover{background:#0000000d}.btn:focus-visible,.row:focus-visible,.sb-item:focus-visible,th:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.btn.menu{background:#fff;box-shadow:0 0 0 .5px var(--line),0 1px 0 #0000000a}
+.btn .c{color:var(--faint)}.sep{width:1px;height:12px;background:#0000001a;margin:0 4px}
+.crumb{display:flex;align-items:center;gap:2px;color:var(--dim)}.crumb b{color:var(--text);font-weight:500}
+.title{font-weight:600;margin-left:4px}
+.sp{flex:1}
+.search{width:220px;height:26px;border-radius:6px;background:#fff;box-shadow:0 0 0 .5px var(--line);display:flex;align-items:center;gap:6px;padding:0 7px;color:var(--faint)}
+.recent{display:none;position:absolute;top:30px;right:0;width:260px;background:#fffffff2;backdrop-filter:blur(20px);border-radius:8px;box-shadow:0 0 0 .5px #0004,0 10px 30px #0003;padding:4px;z-index:9;color:var(--text)}.search{position:relative}.search input:placeholder-shown:focus~.recent{display:block}.recent div{height:24px;border-radius:4px;display:flex;align-items:center;gap:8px;padding:0 8px}.recent div:not(.h):hover{background:var(--accent);color:#fff}.recent .h{height:20px;font:600 10px var(--font);color:var(--faint);text-transform:uppercase;letter-spacing:.04em}.search input{border:0;outline:0;background:transparent;font:inherit;color:var(--text);width:100%;min-width:0}
+kbd{font:10px var(--font);color:var(--faint);border:1px solid var(--line);border-radius:4px;padding:0 4px;background:#fff}
+/* body */
+.main{flex:1;display:flex;min-height:0}
+.side{width:210px;background:var(--side);padding:8px 8px;overflow:auto;flex:none}
+.side.rail{width:48px;padding:8px 6px;display:flex;flex-direction:column;gap:4px;align-items:center}
+.sb-h{font:600 10px var(--font);letter-spacing:.04em;color:var(--faint);padding:10px 8px 4px;text-transform:uppercase}
+.sb-item{height:24px;border-radius:5px;display:flex;align-items:center;gap:7px;padding:0 8px;color:var(--text)}
+.sb-item:hover{background:var(--hover)}.sb-item.on{background:var(--sel)}
+.sb-item .n{margin-left:auto;color:var(--faint);font-variant-numeric:tabular-nums}
+.sb-item.sub{padding-left:26px}
+.dot{width:8px;height:8px;border-radius:50%;flex:none}
+.run{background:var(--run)}.stp{background:var(--stop)}.pen{background:var(--warn)}
+.center{flex:1;min-width:0;display:flex;flex-direction:column;position:relative}
+.banner{height:28px;background:#fbf1dc;color:#7a5410;display:flex;align-items:center;gap:8px;padding:0 12px;flex:none}
+.banner a{margin-left:auto;color:var(--accent)}
+.tbl{flex:1;overflow:auto;min-height:0}
+table{border-collapse:collapse;width:100%;table-layout:fixed}
+thead th{position:sticky;top:0;background:var(--panel);height:24px;text-align:left;font-weight:500;color:var(--dim);padding:0 8px;white-space:nowrap;overflow:hidden;cursor:default}
+thead th .s{display:inline-flex;align-items:center;gap:3px}
+thead th.sorted{color:var(--text)}
+tbody td{height:28px;padding:0 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+tbody tr.row:nth-child(even){background:#00000004}tbody tr.row:hover{background:#0000000a}
+tbody tr.row.sel{background:var(--sel);box-shadow:inset 2px 0 0 var(--selbar)}
+td.mono,.mono{font-family:var(--mono);font-size:11px;letter-spacing:-.1px}
+td.dim{color:var(--dim)}td.num{font-variant-numeric:tabular-nums}
+.st{display:inline-flex;align-items:center;gap:6px}.st.run-t{color:#177a42}.st.stp-t{color:var(--dim)}.st.pen-t{color:var(--warn)}
+tr.grp td{height:22px;background:var(--side);font-weight:600;color:var(--dim);font-size:11px}
+tr.grp td .n{font-weight:400;color:var(--faint);margin-left:6px}
+/* inspector */
+.insp{width:340px;background:var(--panel);display:flex;flex-direction:column;flex:none;position:relative}
+.insp .rz{position:absolute;left:-3px;top:0;bottom:0;width:6px;cursor:col-resize}
+.insp .rz:hover{background:#2f6fdb33}
+.ih{padding:12px 14px 10px;background:#f0f0f4}
+.ih .nm{font:600 14px var(--font);display:flex;align-items:center;gap:8px}
+.ih .id{color:var(--dim);margin-top:3px;display:flex;align-items:center;gap:6px}
+.ib{overflow:auto;flex:1;padding:4px 14px 14px}
+.sec{font:600 10px var(--font);letter-spacing:.04em;color:var(--faint);text-transform:uppercase;padding:12px 0 4px}
+.kv{display:grid;grid-template-columns:96px 1fr;gap:5px 8px;align-items:center}
+.kv dt{color:var(--dim)}.kv dd{margin:0;display:flex;align-items:center;gap:6px;min-width:0}
+.kv dd span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cp{color:var(--faint);opacity:0}.kv dd:hover .cp{opacity:1}
+.tag{display:inline-flex;gap:0;border:1px solid var(--line);border-radius:4px;overflow:hidden;background:#fff;margin:0 4px 4px 0;font-size:11px}
+.tag i{font-style:normal;padding:1px 6px;color:var(--dim);background:#f3f3f6}.tag b{font-weight:400;padding:1px 6px}
+.sbar{height:24px;background:var(--chrome);display:flex;align-items:center;padding:0 12px;gap:10px;color:var(--dim);font-size:11px;flex:none}
+.sbb{height:20px;padding:0 6px;border:0;border-radius:4px;background:transparent;color:inherit;font:inherit;display:inline-flex;align-items:center;gap:5px;cursor:default}.sbb.warn{color:#8a5a0a}.sbb.warn:hover{color:#6b4608}.stale td{color:var(--faint)}.failpop{width:380px!important;padding:12px!important;right:8px;left:auto!important}.failpop .h2{font-weight:600;display:flex;align-items:center;gap:6px;margin-bottom:6px;color:#8a5a0a}.failpop p{margin:0 0 8px;color:var(--dim)}.failpop code{font:11px var(--mono);background:#0000000a;border-radius:4px;padding:6px 8px;display:block;margin-bottom:10px;color:var(--text)}.failpop .a .sbtn,.failpop .a .pbtn{white-space:nowrap}.failpop .a{display:flex;gap:6px;justify-content:flex-end}.sbb.ic{width:22px;padding:0;justify-content:center}.sbb.on{background:#0000001a;color:var(--text)}.sbb.prof{color:var(--text)}
+.pk{display:flex;align-items:center;gap:10px;padding:5px 8px;border-radius:6px}.pk:hover{background:var(--hover)}.pk.cur{background:var(--sel)}.bdg{width:28px;height:28px;border-radius:50%;background:#8b93a1;color:#fff;font:600 11px var(--font);display:flex;align-items:center;justify-content:center;flex:none}.pk.cur .bdg,.bdg.acc{background:var(--accent)}.pk .t{font-weight:500}.pk .u{color:var(--dim);font-size:11px}
+.pp{width:300px!important;padding:6px!important}.pp .pk{height:auto;min-height:40px;padding:5px 8px}.pp .pk div,.pp .pk div:hover{height:auto;display:block;padding:0;background:none;border-radius:0;color:inherit}.pp .pk .u{color:var(--dim)}.pp .pk:hover .u{color:#ffffffcc}.pp .ft .pk{min-height:28px;display:flex;align-items:center;gap:8px}.pp .ft{border-radius:0}.pp .srch{height:26px;border-radius:6px;background:#fff;box-shadow:0 0 0 .5px var(--line);display:flex;align-items:center;gap:6px;padding:0 7px;color:var(--faint);margin-bottom:4px}.pp .pk:hover{background:var(--accent);color:#fff}.pp .pk:hover .u{color:#ffffffcc}
+.ft{margin-top:4px;padding-top:4px;color:var(--dim)}
+.wel{display:flex;width:1000px;height:560px;background:var(--win);border-radius:10px;overflow:hidden;box-shadow:0 0 0 .5px #0006,0 18px 50px #0004}.wl{width:300px;background:var(--side);padding:22px 20px;display:flex;flex-direction:column;align-items:center;gap:6px}.wl .big{width:100%;height:40px;border-radius:7px;background:#00000010;display:flex;align-items:center;gap:10px;padding:0 12px;color:var(--text)}.wl .big:hover{background:#0000001a}.wr{flex:1;padding:20px 22px;display:flex;flex-direction:column;gap:10px}.sheet{width:760px;height:470px;background:var(--side);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:12px;box-shadow:0 0 0 .5px #0006,0 18px 50px #0004}.grid{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;flex:1;align-content:start}.cell{display:flex;flex-direction:column;align-items:center;gap:6px;padding:12px 4px;border-radius:6px;text-align:center}.cell .bdg{width:44px;height:44px;font-size:14px}.cell.f{outline:2px solid var(--accent);outline-offset:-2px;background:#2f6fdb12}.cell .u{color:var(--dim);font-size:11px}.spin{width:10px;height:10px;border-radius:50%;border:1.5px solid #bbb;border-top-color:var(--accent);animation:sp .7s linear infinite}@keyframes sp{to{transform:rotate(360deg)}}.sbb:hover{background:#0000000f;color:var(--text)}.pk:focus-visible,.cell:focus-visible,.sbtn:focus-visible,.pbtn:focus-visible,.big:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}.hl{background:var(--accent)!important;color:#fff!important}.hl .u{color:#ffffffcc!important}.sbb:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.pop{position:absolute;bottom:28px;left:8px;width:220px;background:#fffffff2;backdrop-filter:blur(20px);border-radius:8px;box-shadow:0 0 0 .5px #0004,0 10px 30px #0003;padding:4px;z-index:9}.pop div{height:24px;border-radius:4px;display:flex;align-items:center;gap:8px;padding:0 8px}.pop div:hover{background:var(--accent);color:#fff}.pop .h{height:20px;font:600 10px var(--font);color:var(--faint);text-transform:uppercase;letter-spacing:.04em}.pop .h:hover{background:none;color:var(--faint)}.pop kbd{margin-left:auto;background:transparent;border:0;color:inherit;opacity:.6}
+.sbar .r{margin-left:auto;display:flex;align-items:center;gap:6px}
+/* context menu */
+.ctx{position:absolute;width:236px;background:#fffffff2;backdrop-filter:blur(20px);border-radius:8px;box-shadow:0 0 0 .5px #0004,0 10px 30px #0003;padding:4px;z-index:9}
+.ctx div{height:24px;border-radius:4px;display:flex;align-items:center;gap:8px;padding:0 8px}
+.ctx div:first-child{background:var(--accent);color:#fff}.ctx kbd{margin-left:auto;background:transparent;border:0;color:inherit;opacity:.6}
+.ctx hr{border:0;border-top:1px solid var(--line2);margin:4px 6px}
+/* states strip (other states) */
+.states{display:flex;gap:16px;width:1280px;flex-wrap:wrap}
+.mini{width:408px;height:250px;background:var(--win);border-radius:8px;box-shadow:0 0 0 .5px #0005,0 6px 20px #0002;overflow:hidden;display:flex;flex-direction:column}
+.mini .cap{height:22px;background:var(--chrome);border-bottom:1px solid var(--line);font-size:10px;color:var(--dim);display:flex;align-items:center;padding:0 10px}
+.mini .bd{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;text-align:center;padding:12px;position:relative}
+.mini .bd h4{margin:0;font:600 13px var(--font)}.mini .bd p{margin:0;color:var(--dim);max-width:280px}
+.pbtn{height:26px;padding:0 12px;border-radius:6px;background:var(--accent);color:#fff;display:inline-flex;align-items:center;gap:6px}
+.sbtn,.pbtn{border:0;font:inherit;cursor:default}.sbtn{height:26px;padding:0 12px;border-radius:6px;background:#fff;box-shadow:0 0 0 .5px var(--line);display:inline-flex;align-items:center;gap:6px}
+.cloud{animation:bob 2.4s ease-in-out infinite}@keyframes bob{0%,100%{transform:translateY(3px);opacity:.55}50%{transform:translateY(-4px);opacity:1}}.dots i{font-style:normal;animation:bl 1.2s infinite}.dots i:nth-child(2){animation-delay:.2s}.dots i:nth-child(3){animation-delay:.4s}@keyframes bl{0%,60%,100%{opacity:.15}30%{opacity:1}}@media(prefers-reduced-motion:reduce){.cloud,.dots i,.spin{animation:none}}
+.sk{display:flex;gap:10px;width:100%;align-items:center;padding:0 4px}
+.sk i{height:8px;border-radius:4px;background:linear-gradient(90deg,#e6e6ea,#f3f3f6,#e6e6ea);display:block}
+</style></head><body>
+
+<div class="note"><b>CloudDeck main window, light mode, 20 instances.</b> Profile and region live in the status bar (click to switch). Click rows, click column headers to sort, use ↑/↓ or j/k to move, ⌘F (or /) to focus search, Esc to clear, right-click a row for the context menu. State and type facets in the sidebar are live (counts follow the other filters); pinned searches and recent instances sit below them. Icons are inline 16px / 1.2px-stroke Lucide-style paths.</div>
+
+<div class="board"><h2>Main window · flat sortable table, facets and pinned searches in the sidebar</h2><div class="win" id="A"></div></div>
+
+<div class="board"><h2>Onboarding · first run (welcome window)</h2><div id="onb" style="display:flex;flex-direction:column;gap:20px;align-items:flex-start"></div></div>
+<div class="board"><h2>Other states</h2><div class="states" id="states"></div></div>
+
+<script>
+const P={
+ sidebar:'<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/>',
+ refresh:'<path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/>',
+ search:'<circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>',
+ chev:'<path d="m6 9 6 6 6-6"/>',chevr:'<path d="m9 6 6 6-6 6"/>',
+ user:'<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+ globe:'<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
+ server:'<rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/>',
+ up:'<path d="m18 15-6-6-6 6"/>',down:'<path d="m6 9 6 6 6-6"/>',
+ copy:'<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/>',
+ term:'<path d="m4 17 6-6-6-6M12 19h8"/>',ext:'<path d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
+ x:'<path d="M18 6 6 18M6 6l12 12"/>',warn:'<path d="m21.7 18-8-14a2 2 0 0 0-3.4 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.7-3Z"/><path d="M12 9v4M12 17h.01"/>',
+ alert:'<circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/>',plug:'<path d="M12 22v-5M9 8V2M15 8V2M18 8v5a6 6 0 0 1-12 0V8Z"/>',
+ filter:'<path d="M22 3H2l8 9.5V19l4 2v-8.5Z"/>',cloud:'<path d="M17.5 19a4.5 4.5 0 1 0-1.4-8.8A6 6 0 1 0 6 18.5"/><path d="M6 19h11.5"/>',
+ more:'<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>',check:'<path d="M20 6 9 17l-5-5"/>',panelr:'<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/>',plus:'<path d="M12 5v14M5 12h14"/>',bug:'<path d="M12 20v-9M6 13H2M22 13h-4M6 17l-3 2M18 17l3 2M8 8a4 4 0 0 1 8 0v6a4 4 0 0 1-8 0Z"/>',download:'<path d="M12 15V3M7 10l5 5 5-5M5 21h14"/>',key:'<circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 9.3-9.3M17 6l3 3"/>'
+};
+const I=(n,s)=>`<svg class="i" viewBox="0 0 24 24"${s?` style="${s}"`:''}>${P[n]}</svg>`;
+
+// ---- data: 20 instances
+const names=['api-gateway','api-gateway','auth-service','billing-worker','billing-worker','web-frontend','web-frontend','web-frontend','search-indexer','search-indexer','metrics-collector','bastion','batch-etl','batch-etl','ml-trainer','cache-redis','cache-redis','db-replica','db-replica','staging-api'];
+const types=['t3.medium','t3.medium','t3.small','m6i.large','m6i.large','t3.small','t3.small','t3.medium','m6i.xlarge','m6i.xlarge','t3.small','t3.micro','m6i.large','m6i.large','g5.xlarge','r6i.large','r6i.large','r6i.xlarge','r6i.xlarge','t3.medium'];
+const regions=['us-east-1','us-east-1','us-east-1','us-east-1','us-east-1','us-east-1','us-east-1','us-west-2','us-west-2','us-west-2','us-west-2','us-west-2','eu-west-1','eu-west-1','eu-west-1','eu-west-1','eu-central-1','eu-central-1','eu-central-1','eu-central-1'];
+const stopped=new Set([4,9,12,14,18]), pending=new Set([7]);
+const hex=(n)=>{let s='';let x=(n+1)*2654435761>>>0;for(let k=0;k<17;k++){x^=x<<13;x>>>=0;x^=x>>>17;x^=x<<5;x>>>=0;s+='0123456789abcdef'[x%16]}return s};
+const D=names.map((n,i)=>{const az=regions[i]+['a','b','c'][i%3];const st=stopped.has(i)?'stopped':pending.has(i)?'pending':'running';
+ return {i,name:n+'-'+String(i%4+1).padStart(2,'0'),id:'i-'+hex(i+3),state:st,type:types[i],az,region:regions[i],
+ pip:'10.'+(i<7?0:i<12?1:i<16?2:3)+'.'+(i*7%200+4)+'.'+(i*13%250+3),pub:st==='running'&&i%3!==0?'54.'+(80+i)+'.'+(i*11%250+2)+'.'+(i*17%250+5):'',
+ launched:new Date(Date.UTC(2026,9,8,12)-(i*37+5)*3600e3*(1+i%5)).toISOString().slice(0,16).replace('T',' '),
+ tags:{Environment:i===19?'staging':'production',Team:['platform','payments','search','data','infra'][i%5],Owner:['esteban','mira','jonas'][i%3],'aws:cloudformation:stack':names[i]+'-stack'},
+ vpc:'vpc-0'+hex(i+90).slice(0,8),subnet:'subnet-0'+hex(i+40).slice(0,8),sg:'sg-0'+hex(i+7).slice(0,8),ami:'ami-0'+hex(i+55).slice(0,8),key:'ops-'+(i%2?'rsa':'ed25519')}});
+
+const cols=[['name','Name',170],['id','Instance ID',165],['state','State',92],['type','Type',100],['az','AZ',92],['pip','Private IP',104],['pub','Public IP',112],['launched','Launched',130]];
+const stT={running:'run-t',stopped:'stp-t',pending:'pen-t'},stD={running:'run',stopped:'stp',pending:'pen'};
+const cap=s=>s[0].toUpperCase()+s.slice(1);
+const stateCell=(d,dotOnly)=>`<span class="st ${stT[d.state]}"><span class="dot ${stD[d.state]}"></span>${dotOnly?cap(d.state):cap(d.state)}</span>`;
+
+const PROFILES=[['prod-readonly','1111-2222-3333 · us-east-1','PR'],['staging-admin','1111-2222-4444 · us-west-2','SA'],['sandbox','7777-8888-9999 · eu-west-1','SB'],['data-platform','1010-1010-1010 · us-east-1','DP'],['security-audit','1904-5521-8812 · eu-central-1','SE'],['legacy-2019','3056-7741-0098 · us-east-1','L9']];
+const pk=(p,cur)=>`<div class="pk${cur?' cur':''}" tabindex="0"><span class="bdg">${p[2]}</span><span><div class="t">${p[0]}</div><div class="u">${p[1]}</div></span>${cur?`<span style="margin-left:auto">${I('check')}</span>`:''}</div>`;
+function tb(v,F){F=F||{state:'',type:''};return `<div class="tb"><div class="lights"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></div>
+ <button class="btn" title="Toggle sidebar (⌘B)" aria-label="Toggle sidebar">${I('sidebar')}</button>
+ <span class="title" style="margin-left:6px">EC2 Instances</span><span class="sp"></span>
+ <button class="btn menu" aria-label="Filters" title="Filters live in the sidebar" style="${(F.state||F.type)?'color:var(--accent)':''}">${I('filter')}${(F.state?1:0)+(F.type?1:0)?`${(F.state?1:0)+(F.type?1:0)} filter${(F.state&&F.type)?'s':''}`:'Filters'}</button>
+ <div class="search">${I('search')}<input data-search placeholder="Search" aria-label="Search instances"><kbd>⌘F</kbd><div class="recent"><div class="h">Recent</div>${["billing prod","10.0.25","owner esteban","stopped g5"].map(t=>`<div data-r="${t}">${I("search","width:13px;height:13px")}${t}</div>`).join("")}<div class="h" style="margin-top:2px">Matches name, ID, IP, AZ, type, tags</div></div></div></div>`}
+
+function sideA(F,q,tAll){
+ const match=d=>!q||(Object.values(d).join(' ')+' '+Object.entries(d.tags).map(([k,v])=>k+' '+v).join(' ')).toLowerCase().split(/\s+/).length&&q.trim().split(/\s+/).every(w=>(Object.values(d).join(' ')+' '+Object.entries(d.tags).map(([k,v])=>k+' '+v).join(' ')).toLowerCase().includes(w));
+ const cs=v=>D.filter(d=>(!F.type||d.type===F.type)&&match(d)&&(!v||d.state===v)).length;
+ const ct=t=>D.filter(d=>(!F.state||d.state===F.state)&&match(d)&&d.type===t).length;
+ const ty=[...new Set(D.map(d=>d.type))].sort();
+ const z=n=>n?'':' style="opacity:.45"';
+ const pins=['billing prod','owner esteban','stopped g5'];
+ return `<div class="side"><div class="sb-h" style="padding-top:2px">State</div>
+ <div class="sb-item" tabindex="0" data-fk="state" data-fv="">${I('server')}All<span class="n">${cs('')}</span></div>
+ ${['running','stopped','pending'].map(s=>`<div class="sb-item" tabindex="0" data-fk="state" data-fv="${s}"${z(cs(s))}><span class="dot ${stD[s]}" style="margin:0 4px"></span>${cap(s)}<span class="n">${cs(s)}</span></div>`).join('')}
+ <div class="sb-h">Type</div>
+ ${(tAll?ty:ty.slice().sort((a,b)=>ct(b)-ct(a)||a.localeCompare(b)).slice(0,5).sort()).map(t=>`<div class="sb-item" tabindex="0" data-fk="type" data-fv="${t}"${z(ct(t))}><span class="mono">${t}</span><span class="n">${ct(t)}</span></div>`).join('')}
+ ${ty.length>5?`<div class="sb-item" tabindex="0" data-tall style="color:var(--dim)">${tAll?'Show fewer':'Show all '+ty.length+' types'}</div>`:''}
+ <div class="sb-h">Pinned searches</div>
+ ${pins.map(p=>`<div class="sb-item" tabindex="0" data-ps="${p}">${I('search')}${p}</div>`).join('')}
+ <div class="sb-h">Recent</div>
+ ${[3,0,12].map(i=>`<div class="sb-item" tabindex="0" data-rc="${i}"><span class="dot ${stD[D[i].state]}" style="margin:0 4px"></span>${D[i].name}</div>`).join('')}</div>`}
+
+function inspector(d){if(!d)return '';
+ const kv=(k,v,m,c)=>`<dt>${k}</dt><dd><span class="${m?'mono':''}">${v||'<i style="color:var(--faint)">None</i>'}</span>${c&&v?`<span class="cp">${I('copy','width:13px;height:13px')}</span>`:''}</dd>`;
+ return `<aside class="insp" aria-label="Inspector"><div class="rz" title="Drag to resize (300–420)"></div>
+ <div class="ih"><div class="nm"><span class="dot ${stD[d.state]}"></span>${d.name}<span class="sp"></span><button class="btn" aria-label="Close inspector (Esc)">${I('x')}</button></div>
+ <div class="id mono">${d.id}<span style="color:var(--faint)">${I('copy','width:13px;height:13px')}</span></div></div>
+ <div class="ib"><div class="sec">Instance</div><dl class="kv" style="margin:0">${kv('State',cap(d.state))}${kv('Type',d.type)}${kv('AZ',d.az)}${kv('AMI',d.ami,1,1)}${kv('Key pair',d.key)}${kv('Launched',d.launched+' UTC')}</dl>
+ <div class="sec">Network</div><dl class="kv" style="margin:0">${kv('Private IP',d.pip,1,1)}${kv('Public IP',d.pub,1,1)}${kv('VPC',d.vpc,1,1)}${kv('Subnet',d.subnet,1,1)}${kv('Security group',d.sg,1,1)}</dl>
+ <div class="sec">Tags · ${Object.keys(d.tags).length}</div>${Object.entries(d.tags).map(([k,v])=>`<span class="tag"><i>${k}</i><b>${v}</b></span>`).join('')}
+ <div class="sec">Actions</div><div style="display:flex;gap:6px;flex-wrap:wrap"><span class="sbtn">${I('term')}Copy SSH</span><span class="sbtn">${I('ext')}Open in Console</span></div></div></aside>`}
+
+function sbar(n,shown,extra,loading){const ch=I('chev','width:11px;height:11px');return `<div class="sbar">
+ <span class="sbb" style="padding:0 4px;cursor:default" title="Provider">${I('cloud','width:14px;height:14px')}AWS</span>
+ <button class="sbb prof" data-pop="profile" title="Switch profile  ⌘P" aria-label="Switch profile (⌘P)">${I('user','width:14px;height:14px')}prod-readonly${ch}</button>
+ <button class="sbb" data-pop="region" title="Switch region  ⌘⇧R" aria-label="Switch region (⌘⇧R)">${I('globe','width:14px;height:14px')}All regions${ch}</button>
+ <span class="sep"></span><span>${n} instances</span><span>·</span><span>${shown} shown</span>
+ <span class="r"><span>Updated 12:04</span><button class="sbb ic" title="Refresh  ⌘R" aria-label="Refresh">${I('refresh','width:14px;height:14px')}</button><button class="sbb ic on" title="Close Inspector  ⌘⌥I" aria-label="Toggle inspector">${I('panelr','width:14px;height:14px')}</button><button class="sbb ic on" title="Close Sidebar  ⌘B" aria-label="Toggle sidebar">${I('sidebar','width:14px;height:14px')}</button><span class="sep"></span>${extra||(loading?`<span class="sbb" style="padding:0 4px"><span class="spin"></span>Loading prod-readonly…</span>`:`<span class="sbb" style="padding:0 4px"><span class="dot run"></span>Ready</span>`)}</span></div>`}
+
+function mount(el,v){
+ let sort={k:'name',dir:1},sel=3,q='',ctx=null,pop=null,loading=false,failed=true,pq='',pi=0,tAll=false,F={state:'',type:''};
+ const draw=()=>{
+  let rows=D.filter(d=>(!F.state||d.state===F.state)&&(!F.type||d.type===F.type)).filter(d=>!q||(Object.values(d).join(' ')+' '+Object.entries(d.tags).map(([k,v])=>k+' '+v).join(' ')).toLowerCase().split(/\s+/).length&&q.trim().split(/\s+/).every(w=>(Object.values(d).join(' ')+' '+Object.entries(d.tags).map(([k,v])=>k+' '+v).join(' ')).toLowerCase().includes(w)));
+  rows=rows.slice().sort(cmp);
+  function cmp(a,b){return (a[sort.k]>b[sort.k]?1:a[sort.k]<b[sort.k]?-1:0)*sort.dir}
+  const head=cols.map(([k,l,w])=>`<th tabindex="0" data-k="${k}" style="width:${w}px" class="${sort.k===k?'sorted':''}" aria-sort="${sort.k===k?(sort.dir>0?'ascending':'descending'):'none'}"><span class="s">${l}${sort.k===k?I(sort.dir>0?'up':'down','width:12px;height:12px'):''}</span></th>`).join('');
+  let body='',last='';
+  rows.forEach(d=>{
+   body+=`<tr class="row ${d.i===sel?'sel':''}${failed&&d.region==='eu-central-1'?' stale':''}" tabindex="0" data-i="${d.i}"><td>${d.name}</td><td class="mono dim">${d.id}</td><td>${stateCell(d)}</td><td>${d.type}</td><td class="dim">${d.az}</td><td class="mono dim num">${d.pip}</td><td class="mono dim num">${d.pub||'—'}</td><td class="dim num">${d.launched}</td></tr>`});
+  const d=D[sel];
+  el.innerHTML=tb(v,F)+`<div class="main">${sideA(F,q,tAll)}<div class="center">
+   <div class="tbl"><table><thead><tr>${head}</tr></thead><tbody>${body||`<tr><td colspan="8" style="height:120px;text-align:center;color:var(--dim)">${q?`No instances match “${q}”. Press Esc to clear.`:'No instances match these filters. Select All under State, or click the active type to clear it.'}</td></tr>`}</tbody></table></div></div>
+   ${d&&rows.includes(d)?inspector(d):''}</div>`+sbar(20,rows.length,loading||!failed?'':`<button class="sbb warn${pop==='fail'?' on':''}" data-fail title="Show details" aria-label="1 region failed, show details">${I('warn','width:14px;height:14px')}eu-central-1 failed</button>`,loading);
+  el.querySelector('[data-search]').value=q;
+  if(ctx){el.insertAdjacentHTML('beforeend',`<div class="ctx" style="left:${ctx.x}px;top:${ctx.y}px">${[['copy','Copy Instance ID','⌘C'],['copy','Copy Private IP'],['copy','Copy Public IP'],['term','Copy SSH Command'],['ext','Open in Console','⌘O']].map(([ic,t,k],n)=>`<div>${I(ic)}${t}${k?`<kbd>${k}</kbd>`:''}</div>${n===2?'<hr>':''}`).join('')}</div>`)}
+  const pitems=pop==='profile'?PROFILES.filter(p=>!pq||(p[0]+' '+p[1]).toLowerCase().includes(pq.toLowerCase())).map(p=>({t:p[0],u:p[1],b:p[2]})):pop==='region'?[['All regions','20'],['us-east-1','7'],['us-west-2','5'],['eu-west-1','4'],['eu-central-1','4']].filter(r=>!pq||r[0].includes(pq.toLowerCase())).map(r=>({t:r[0],k:r[1]})):[];
+  if(pop==='profile'||pop==='region'){pi=Math.min(pi,Math.max(0,pitems.length-1));
+   const rows_=pitems.map((p,n)=>pop==='profile'?`<div class="pk${n===pi?' hl':''}${p.t==='prod-readonly'?' cur':''}" data-pi="${n}"><span class="bdg">${p.b}</span><span><div class="t">${p.t}</div><div class="u">${p.u}</div></span>${p.t==='prod-readonly'?`<span style="margin-left:auto">${I('check')}</span>`:''}</div>`:`<div class="pk rg${n===pi?' hl':''}" data-pi="${n}" style="min-height:28px"><span class="t">${p.t}</span><span style="margin-left:auto;opacity:.7">${p.k}</span></div>`).join('')||`<div style="padding:10px;color:var(--dim)">No ${pop==='profile'?'profiles':'regions'} match “${pq}”.</div>`;
+   el.insertAdjacentHTML('beforeend',`<div class="pop pp" style="left:${pop==='profile'?8:150}px" onclick="event.stopPropagation()"><div class="srch">${I('search','width:13px;height:13px')}<input data-pq placeholder="${pop==='profile'?'Search profiles':'Search regions'}" aria-label="Search" value="${pq}" style="border:0;outline:0;background:transparent;font:inherit;width:100%"></div>${rows_}${pop==='profile'?`<div class="ft"><div class="pk" data-connect>${I('plus')}Connect to AWS…</div></div>`:''}</div>`);
+   const inp=el.querySelector('[data-pq]');inp.focus();inp.setSelectionRange(pq.length,pq.length);
+   const pick=()=>{pop=null;pq='';pi=0;loading=true;draw();setTimeout(()=>{loading=false;draw()},1200)};
+   inp.oninput=()=>{pq=inp.value;pi=0;draw()};
+   inp.onkeydown=e=>{if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();pi=Math.max(0,Math.min(pitems.length-1,pi+(e.key==='ArrowDown'?1:-1)));draw()}
+    else if(e.key==='Enter'){e.preventDefault();if(pitems.length)pick()}
+    else if(e.key==='Escape'){e.stopPropagation();const w=pop;pop=null;pq='';pi=0;draw();el.querySelector(`[data-pop="${w}"]`)?.focus()}};
+   el.querySelectorAll('.pop .pk').forEach(x=>x.onclick=e=>{e.stopPropagation();pick()});}
+  if(pop==='fail'){el.insertAdjacentHTML('beforeend',`<div class="pop failpop" onclick="event.stopPropagation()" role="dialog" aria-label="Region failure details"><div class="h2">${I('warn')}eu-central-1 couldn’t be loaded</div><p>4 instances from this region are from the 12:01 refresh and may be out of date. The other three regions are current.</p><code>AccessDenied: ec2:DescribeInstances is not allowed for prod-readonly in eu-central-1</code><div class="a"><button class="sbtn" data-copyerr>${I('copy')}Copy error</button><button class="pbtn" data-retry>${I('refresh')}Retry region</button></div></div>`);el.querySelector('.failpop [data-retry]').focus()}
+  el.querySelectorAll('[data-pop]').forEach(b=>{b.onclick=e=>{e.stopPropagation();pop=pop===b.dataset.pop?null:b.dataset.pop;pq='';pi=0;ctx=null;draw();if(!pop)el.querySelector(`[data-pop="${b.dataset.pop}"]`)?.focus()}});
+  el.querySelectorAll('th').forEach(h=>{h.onclick=()=>{const k=h.dataset.k;sort=sort.k===k?{k,dir:-sort.dir}:{k,dir:1};draw()}});
+  el.querySelectorAll('tr.row').forEach(r=>{r.onclick=()=>{sel=+r.dataset.i;ctx=null;draw();el.querySelector('tr.sel').focus()};
+   r.oncontextmenu=e=>{e.preventDefault();sel=+r.dataset.i;const b=el.getBoundingClientRect();ctx={x:e.clientX-b.left,y:e.clientY-b.top};draw()}});
+  const s=el.querySelector('[data-search]');s.oninput=()=>{q=s.value.toLowerCase();draw();const n=el.querySelector('[data-search]');n.focus();n.setSelectionRange(q.length,q.length)};
+  el.querySelectorAll('[data-r]').forEach(r=>r.onmousedown=e=>{e.preventDefault();q=r.dataset.r.toLowerCase();draw()});
+  s.onkeydown=e=>{if(e.key==='Escape'){q='';draw()}};
+  el.querySelectorAll('[data-fk]').forEach(it=>{const k=it.dataset.fk,v_=it.dataset.fv;it.classList.toggle('on',F[k]===v_);it.onclick=()=>{F[k]=(F[k]===v_&&v_)?'':v_;draw()}});
+  el.querySelectorAll('[data-tall]').forEach(it=>it.onclick=()=>{tAll=!tAll;draw()});
+  el.querySelectorAll('[data-ps]').forEach(it=>it.onclick=()=>{q=it.dataset.ps;draw()});
+  el.querySelectorAll('[data-rc]').forEach(it=>it.onclick=()=>{sel=+it.dataset.rc;F={state:'',type:''};q='';draw()});
+  const bd=el.querySelector('[data-dismiss]');if(bd)bd.onclick=e=>{e.stopPropagation();pop=null;draw()};
+  const br=el.querySelector('[data-retry]');if(br)br.onclick=e=>{e.stopPropagation();pop=null;loading=true;draw();setTimeout(()=>{loading=false;failed=false;draw()},1200)};
+  const bf=el.querySelector('[data-fail]');if(bf)bf.onclick=e=>{e.stopPropagation();pop=pop==='fail'?null:'fail';ctx=null;draw();if(!pop)el.querySelector('[data-fail]')?.focus()};
+  const x=el.querySelector('.ih .btn');if(x)x.onclick=()=>{sel=-1;draw()};
+ };
+ el.tabIndex=-1;
+ el.addEventListener('keydown',e=>{const m=e.metaKey||e.ctrlKey;if(m&&e.key.toLowerCase()==='p'){e.preventDefault();pop='profile';pq='';pi=0;draw();return}if(m&&e.shiftKey&&e.key.toLowerCase()==='r'){e.preventDefault();pop='region';pq='';pi=0;draw();return}if(m&&!e.shiftKey&&e.key.toLowerCase()==='r'){e.preventDefault();loading=true;draw();setTimeout(()=>{loading=false;draw()},1200);return}if(e.target.matches('input'))return;
+  const dn=e.key==='ArrowDown'||e.key==='j',up=e.key==='ArrowUp'||e.key==='k';
+  if(dn||up){e.preventDefault();const r=[...el.querySelectorAll('tr.row')];const c=r.findIndex(x=>+x.dataset.i===sel);const n=r[Math.max(0,Math.min(r.length-1,c+(dn?1:-1)))];if(n){sel=+n.dataset.i;draw();el.querySelector('tr.sel').focus()}}
+  if(e.key==='Escape'){ctx=null;pop=null;if(!e.target.matches('input')){sel=-1}draw()}
+  if((e.metaKey||e.ctrlKey)&&e.key==='f'||e.key==='/'){e.preventDefault();el.querySelector('[data-search]').focus()}});
+ document.addEventListener('click',()=>{if(ctx||pop){ctx=null;pop=null;draw()}});
+ draw();
+}
+mount(document.getElementById('A'),'A');
+
+// other states
+const mini=(cap,inner)=>`<div class="mini"><div class="cap">${cap}</div><div class="bd">${inner}</div></div>`;
+const skel=[0,1,2,3,4,5,6].map(i=>`<div class="sk"><i style="width:${90+i%3*20}px"></i><i style="width:90px"></i><i style="width:50px"></i><i style="width:60px"></i><i style="flex:1"></i></div>`).join('');
+document.getElementById('onb').innerHTML=`
+<div class="wel"><div class="wl"><div style="margin-top:34px;color:var(--accent)">${I('cloud','width:64px;height:64px;stroke-width:1')}</div>
+ <div style="font:700 28px var(--font);margin-top:6px">CloudDeck</div><div style="color:var(--dim)">Version 0.1.0</div>
+ <div style="flex:1"></div>
+ <div class="big" tabindex="0">${I('plug')}Connect to AWS…</div>
+ <div class="big" tabindex="0">${I('key')}Sign in with SSO…</div>
+ <div class="big" tabindex="0">${I('server')}Explore demo fleet</div></div>
+ <div class="wr"><div style="display:flex;gap:8px;align-items:center"><span style="color:var(--dim)">${I('plus')}</span><div class="search" style="width:100%;height:30px"><span>${I('search')}</span><input placeholder="Search profiles…" aria-label="Search profiles"></div></div>
+ ${PROFILES.map(p=>`<div class="pk" tabindex="0" style="padding:6px 10px"><span class="bdg" style="width:34px;height:34px;font-size:12px">${p[2]}</span><span><div class="t" style="color:#177a42;font-size:13px">${p[0]}</div><div class="u">${p[1]}</div></span></div>`).join('')}
+ <div style="flex:1"></div><div style="color:var(--dim)">Profiles are read from ~/.aws/config. Press ↵ to open the selected profile. Credentials stay with the AWS CLI.</div></div></div>`;
+document.getElementById('states').innerHTML=
+ mini('No AWS profiles',`${I('cloud','width:28px;height:28px;color:var(--faint)')}<h4>No AWS profiles found</h4><p>CloudDeck reads profiles from ~/.aws/config. Connect an account to browse its EC2 fleet.</p><span class="pbtn">Connect to AWS</span><span style="color:var(--dim)">or try the demo from the File menu</span>`)+
+ mini('Loading',`<div class="cloud">${I('cloud','width:56px;height:56px;stroke-width:1;color:var(--accent)')}</div><h4>Loading instances</h4><p>prod-readonly · All regions<span class="dots"><i>.</i><i>.</i><i>.</i></span></p>`)+
+ mini('Error',`${I('alert','width:28px;height:28px;color:var(--err)')}<h4>Couldn’t load instances</h4><p>Your SSO session for prod-readonly has expired. Run <span class="mono">aws sso login --profile prod-readonly</span>, then retry.</p><span class="sbtn">${I('refresh')}Retry</span>`)+
+ mini('Filter matches nothing',`${I('search','width:28px;height:28px;color:var(--faint)')}<h4>No instances match</h4><p>State: Stopped · Type: g5.xlarge · “bastion”</p><span class="sbtn">Clear filters</span>`)+
+ mini('Narrow pane (≤ 760pt): sidebar collapses, inspector overlays',`<p>Below 760pt the sidebar hides (⌘B toggles) and columns drop in this order: Launched, Public IP, Private IP, AZ. The inspector becomes a sheet over the table; Esc dismisses it.</p>`)+
+ mini('Keyboard',`<div class="kv" style="text-align:left;width:300px"><dt>⌘F or /</dt><dd>Focus search</dd><dt>Esc</dt><dd>Clear search, then close inspector</dd><dt>↑ ↓ / j k</dt><dd>Move selection</dd><dt>⌘B</dt><dd>Toggle sidebar</dd><dt>⌘R</dt><dd>Refresh</dd><dt>⌘C</dt><dd>Copy instance ID</dd><dt>⌘O</dt><dd>Open in Console</dd></div>`);
+</script></body></html>
