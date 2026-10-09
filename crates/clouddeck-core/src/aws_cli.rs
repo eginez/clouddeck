@@ -7,25 +7,183 @@ use crate::{
 use serde::Deserialize;
 use std::{path::PathBuf, time::Duration};
 
-const AWS_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub struct AwsCliComputeService {
     pub profile: String,
     pub region: String,
+    /// Optional configured CLI path. `None` means auto-detect fixed locations.
+    pub cli_path: Option<PathBuf>,
+    pub request_timeout: Duration,
 }
 
-pub fn aws_executable() -> PathBuf {
+impl AwsCliComputeService {
+    /// New service with a configured CLI path and request timeout.
+    pub fn new(
+        profile: String,
+        region: String,
+        cli_path: Option<PathBuf>,
+        request_timeout: Duration,
+    ) -> Self {
+        Self {
+            profile,
+            region,
+            cli_path,
+            request_timeout,
+        }
+    }
+
+    /// New service with auto-detected CLI path and the default timeout.
+    pub fn with_defaults(profile: String, region: String) -> Self {
+        Self::new(profile, region, None, DEFAULT_REQUEST_TIMEOUT)
+    }
+}
+
+const AUTO_DETECT_LOCATIONS: [&str; 3] = [
+    "/opt/homebrew/bin/aws",
+    "/usr/local/bin/aws",
+    "/usr/bin/aws",
+];
+
+/// Resolve the CLI executable for this service: the configured path when set,
+/// otherwise the first auto-detected location, otherwise bare `aws` on PATH.
+/// The returned path is always executed as argv[0] via `Command::new`; it is
+/// never interpolated into a shell string.
+fn aws_executable(cli_path: &Option<PathBuf>) -> PathBuf {
+    if let Some(path) = cli_path {
+        return path.clone();
+    }
     // Finder-launched apps do not inherit a shell's Homebrew PATH.
-    for path in [
-        "/opt/homebrew/bin/aws",
-        "/usr/local/bin/aws",
-        "/usr/bin/aws",
-    ] {
+    for path in AUTO_DETECT_LOCATIONS {
         if std::path::Path::new(path).is_file() {
             return path.into();
         }
     }
     "aws".into()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CliVersionError {
+    /// The executable exists but could not be run (e.g. not executable, or
+    /// crashed before printing a version).
+    NotExecutable { path: PathBuf, detail: String },
+    /// The executable ran but its version line did not contain `aws-cli/`.
+    NotAwsCli { path: PathBuf, output: String },
+    /// The executable ran and is AWS CLI v1 (`aws-cli/1.x`), which is not
+    /// supported.
+    V1NotSupported { path: PathBuf, version: String },
+    /// The executable did not finish within the timeout.
+    TimedOut { path: PathBuf },
+}
+
+impl std::fmt::Display for CliVersionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotExecutable { path, detail } => write!(
+                f,
+                "Could not run AWS CLI at {path:?}: {detail}. Check that it is an executable AWS CLI v2 binary."
+            ),
+            Self::NotAwsCli { path, output } => write!(
+                f,
+                "The executable at {path:?} does not look like AWS CLI (output: {output}). Point Settings > AWS & Privacy > AWS CLI path at your aws binary."
+            ),
+            Self::V1NotSupported { path, version } => write!(
+                f,
+                "AWS CLI v1 is not supported at {path:?} ({version}). Install AWS CLI v2: https://aws.amazon.com/cli/"
+            ),
+            Self::TimedOut { path } => write!(
+                f,
+                "AWS CLI at {path:?} did not respond in time. Try again, or point Settings > AWS & Privacy > AWS CLI path at a working aws binary."
+            ),
+        }
+    }
+}
+
+impl std::error::Error for CliVersionError {}
+
+fn extract_version(output: &str) -> Option<String> {
+    let lower = output.to_ascii_lowercase();
+    let start = lower.find("aws-cli/")?;
+    let after = &output[start + "aws-cli/".len()..];
+    let version: String = after
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '.')
+        .collect();
+    if version.is_empty() {
+        return None;
+    }
+    Some(version)
+}
+
+/// Run `aws --version` for the given executable path and return the parsed
+/// version string (e.g. `2.27.36`). Never invokes a shell.
+///
+/// Errors: `CliVersionError` (actionable, names the path), or an `io::Error`
+/// if the file does not exist (surfaced as "not found").
+pub async fn test_aws_cli(
+    path: &PathBuf,
+    timeout: Duration,
+) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    if !path.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("AWS CLI not found at {path:?}. Set the path in Settings > AWS & Privacy or install AWS CLI v2."),
+        )
+        .into());
+    }
+    let mut command = tokio::process::Command::new(path);
+    command
+        .arg("--version")
+        .stdin(std::process::Stdio::null())
+        .kill_on_drop(true);
+    let output = tokio::time::timeout(timeout, command.output())
+        .await
+        .map_err(|_| CliVersionError::TimedOut { path: path.clone() })?;
+    let output = match output {
+        Ok(output) => output,
+        Err(error) => {
+            return Err(CliVersionError::NotExecutable {
+                path: path.clone(),
+                detail: error.to_string(),
+            }
+            .into());
+        }
+    };
+    if !output.status.success() {
+        let detail: String = String::from_utf8_lossy(&output.stderr)
+            .chars()
+            .take(400)
+            .collect();
+        return Err(CliVersionError::NotExecutable {
+            path: path.clone(),
+            detail: if detail.trim().is_empty() {
+                format!("exited with status {}", output.status)
+            } else {
+                detail.trim().to_string()
+            },
+        }
+        .into());
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let version = match extract_version(&stdout) {
+        Some(version) => version,
+        None => {
+            return Err(CliVersionError::NotAwsCli {
+                path: path.clone(),
+                output: stdout.trim().chars().take(200).collect(),
+            }
+            .into());
+        }
+    };
+    let major: Option<u32> = version.split('.').next().and_then(|s| s.parse().ok());
+    if major == Some(1) {
+        return Err(CliVersionError::V1NotSupported {
+            path: path.clone(),
+            version,
+        }
+        .into());
+    }
+    Ok(version)
 }
 
 fn aws_args(profile: &str, region: &str) -> Vec<String> {
@@ -70,18 +228,21 @@ async fn run_describe_instances(
     filters: Option<ComputeInstanceFilters>,
 ) -> Result<ComputeInstanceLoadResult, BoxError> {
     validate_context(profile, region)?;
+    let executable_display = executable.display().to_string();
     let mut command = build_command(executable, profile, region);
     let output = tokio::time::timeout(timeout, command.output())
         .await
         .map_err(|_| {
             std::io::Error::other(format!(
-                "AWS request timed out after {} seconds. Retry or choose one region.",
+                "AWS CLI at {} timed out after {} seconds. Retry or choose one region.",
+                executable_display,
                 timeout.as_secs_f64()
             ))
         })?
         .map_err(|error| {
             std::io::Error::other(format!(
-                "Could not run AWS CLI: {error}. Install AWS CLI v2 and configure an AWS profile."
+                "Could not run AWS CLI at {}: {error}. Install AWS CLI v2 and configure an AWS profile.",
+                executable_display
             ))
         })?;
     if !output.status.success() {
@@ -131,8 +292,8 @@ impl ComputeService for AwsCliComputeService {
         run_describe_instances(
             &self.profile,
             &self.region,
-            aws_executable(),
-            AWS_REQUEST_TIMEOUT,
+            aws_executable(&self.cli_path),
+            self.request_timeout,
             filters,
         )
         .await
@@ -280,17 +441,37 @@ mod tests {
 
     #[cfg(unix)]
     fn fake_cli(body: &str) -> PathBuf {
+        use std::fs::Permissions;
         use std::os::unix::fs::PermissionsExt;
+        // Write the body to a plain data file, then copy it over the target
+        // executable path via `cp --remove-destination` (rename, not
+        // truncate-in-place). An in-flight exec of the previous generation
+        // keeps its own inode open; a rename replaces the directory entry and
+        // leaves that open file untouched. Truncate-rewriting the same path
+        // while it is open-for-exec makes the next exec fail with ETXTBSY
+        // ("Text file busy") — observed under parallel test threads where
+        // each generation only lives ~50-200 ms.
         static NEXT_SCRIPT_ID: AtomicU64 = AtomicU64::new(0);
-        let path = std::env::temp_dir().join(format!(
-            "clouddeck-fake-aws-{}-{}.sh",
-            std::process::id(),
-            NEXT_SCRIPT_ID.fetch_add(1, Ordering::Relaxed)
-        ));
-        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-        let mut permissions = std::fs::metadata(&path).unwrap().permissions();
-        permissions.set_mode(0o700);
-        std::fs::set_permissions(&path, permissions).unwrap();
+        let id = NEXT_SCRIPT_ID.fetch_add(1, Ordering::Relaxed);
+        let pid = std::process::id();
+        let data = std::env::temp_dir().join(format!("clouddeck-fake-aws-data-{pid}-{id}.txt"));
+        let path = std::env::temp_dir().join(format!("clouddeck-fake-aws-{pid}-{id}.sh"));
+        std::fs::write(&data, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&data, Permissions::from_mode(0o700)).unwrap();
+        let status = std::process::Command::new("cp")
+            .args([
+                "--remove-destination",
+                data.to_str().unwrap(),
+                path.to_str().unwrap(),
+            ])
+            .status()
+            .expect("spawn cp for fake CLI script");
+        std::fs::remove_file(&data).ok();
+        assert!(
+            status.success(),
+            "cp --remove-destination into {} failed",
+            path.display()
+        );
         path
     }
 
@@ -393,7 +574,10 @@ mod tests {
             row.iam_instance_profile_arn.as_deref(),
             Some("arn:aws:iam::123:instance-profile/api")
         );
-        assert_eq!(row.private_dns_name.as_deref(), Some("ip-10-0-0-1.ec2.internal"));
+        assert_eq!(
+            row.private_dns_name.as_deref(),
+            Some("ip-10-0-0-1.ec2.internal")
+        );
         assert_eq!(
             row.public_dns_name.as_deref(),
             Some("ec2-1-2-3-4.eu-west-1.compute.amazonaws.com")
@@ -402,7 +586,11 @@ mod tests {
 
     #[test]
     fn missing_inspector_fields_parse_as_none() {
-        let rows = parse_instances(br#"{"Reservations":[{"Instances":[{"InstanceId":"i-2"}]}]}"#, "us-east-1").unwrap();
+        let rows = parse_instances(
+            br#"{"Reservations":[{"Instances":[{"InstanceId":"i-2"}]}]}"#,
+            "us-east-1",
+        )
+        .unwrap();
         let row = &rows[0];
         assert_eq!(row.availability_zone, None);
         assert_eq!(row.image_id, None);
@@ -412,6 +600,140 @@ mod tests {
         assert_eq!(row.iam_instance_profile_arn, None);
         assert_eq!(row.private_dns_name, None);
         assert_eq!(row.public_dns_name, None);
+    }
+
+    #[test]
+    fn extract_version_handles_real_and_fake_cli_output_shapes() {
+        assert_eq!(
+            extract_version("aws-cli/2.27.36 Linux/5.15.0-x86_64"),
+            Some("2.27.36".into())
+        );
+        assert_eq!(
+            extract_version("aws-cli/1.29.9 Python/3.10.4 linux/5.15"),
+            Some("1.29.9".into())
+        );
+        assert_eq!(extract_version("not an aws cli"), None);
+        assert_eq!(extract_version(""), None);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_aws_cli_parses_v2_version_from_configured_path() {
+        let script =
+            fake_cli(r#"printf '%s' 'aws-cli/2.27.36 Linux/5.15.0-x86_64 exec-env/unknown'"#);
+        let version = test_aws_cli(&script, Duration::from_secs(5)).await.unwrap();
+        assert_eq!(version, "2.27.36");
+        let _ = std::fs::remove_file(script);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_aws_cli_rejects_v1_with_actionable_error() {
+        let script = fake_cli(r#"printf '%s' 'aws-cli/1.29.9 Python/3.10.4 linux/5.15'"#);
+        let error = test_aws_cli(&script, Duration::from_secs(5))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(
+                error.downcast_ref::<CliVersionError>(),
+                Some(CliVersionError::V1NotSupported { .. })
+            ),
+            "expected V1NotSupported, got: {error}"
+        );
+        assert!(
+            error.to_string().contains("v1 is not supported"),
+            "error should be actionable: {error}"
+        );
+        let _ = std::fs::remove_file(script);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_aws_cli_rejects_non_aws_executable() {
+        let script = fake_cli(r#"printf '%s' 'hello world'"#);
+        let error = test_aws_cli(&script, Duration::from_secs(5))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(
+                error.downcast_ref::<CliVersionError>(),
+                Some(CliVersionError::NotAwsCli { .. })
+            ),
+            "expected NotAwsCli, got: {error}"
+        );
+        let _ = std::fs::remove_file(script);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_aws_cli_missing_path_is_reported_with_the_path_tried() {
+        let missing = std::env::temp_dir().join("clouddeck-definitely-missing-aws");
+        let error = test_aws_cli(&missing, Duration::from_secs(5))
+            .await
+            .unwrap_err();
+        assert!(
+            error.to_string().contains("not found"),
+            "error should say not found: {error}"
+        );
+        assert!(
+            error.to_string().contains(&missing.display().to_string()),
+            "error should name the path tried: {error}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_aws_cli_times_out_when_the_cli_hangs() {
+        let script = fake_cli("sleep 5");
+        let error = test_aws_cli(&script, Duration::from_secs(1))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(
+                error.downcast_ref::<CliVersionError>(),
+                Some(CliVersionError::TimedOut { .. })
+            ),
+            "expected TimedOut, got: {error}"
+        );
+        let _ = std::fs::remove_file(script);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn describe_instances_uses_configured_cli_path_and_timeout() {
+        // The service must use the configured path (not auto-detect) and the
+        // configured timeout (not the 60s default). A hanging CLI proves the
+        // timeout is honoured; the success path proves the path is used.
+        let good =
+            fake_cli(r#"printf '%s' '{"Reservations":[{"Instances":[{"InstanceId":"i-1"}]}]}'"#);
+        let service = AwsCliComputeService::new(
+            "team".into(),
+            "us-east-1".into(),
+            Some(good.clone()),
+            Duration::from_secs(5),
+        );
+        let result = service.list_instances(None).await.unwrap();
+        assert_eq!(result.instances.len(), 1);
+
+        let hanging = fake_cli("sleep 5");
+        let service = AwsCliComputeService::new(
+            "team".into(),
+            "us-east-1".into(),
+            Some(hanging.clone()),
+            Duration::from_secs(1),
+        );
+        let error = service.list_instances(None).await.unwrap_err();
+        assert!(
+            error.to_string().contains("timed out"),
+            "expected a timeout error, got: {error}"
+        );
+        let _ = std::fs::remove_file(good);
+        let _ = std::fs::remove_file(hanging);
+    }
+
+    #[test]
+    fn default_timeout_is_sixty_seconds() {
+        assert_eq!(DEFAULT_REQUEST_TIMEOUT, Duration::from_secs(60));
     }
 
     #[test]
