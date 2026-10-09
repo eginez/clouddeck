@@ -138,6 +138,11 @@ impl AppShell {
         Self::build_with_scenario(true, DemoScenario::Failure, cx)
     }
 
+    #[cfg(test)]
+    fn new_demo_large(cx: &mut Context<Self>) -> Self {
+        Self::build_with_scenario(true, DemoScenario::Large, cx)
+    }
+
     fn profiles(
         demo: bool,
         demo_scenario: DemoScenario,
@@ -699,6 +704,7 @@ mod tests {
     use crate::test_support::GatedComputeService;
     use clouddeck_core::AwsProfile;
     use gpui::TestAppContext;
+    use gpui::VisualTestContext;
 
     // clouddeck-rs-w6s.18: the adopt-first-profile decision after a rescan,
     // factored into a pure fn so it can be exercised against profile vectors
@@ -755,6 +761,96 @@ mod tests {
             None,
             "an empty rescan means there is nothing to adopt"
         );
+    }
+
+    // clouddeck-rs-mac-ui-fix-ellipsis: the Name and ID cells of the fleet
+    // table are reported to render only an ellipsis ("...") in the running
+    // app at 1280pt. The tests build the real AppShell (the live --demo
+    // mount path, in both the 3-row demo and the 121-row large scenario),
+    // resize to the reported 1280x800, and assert the name cell keeps at
+    // least half the row width (and the ID cell non-zero) once the async
+    // demo load has landed. The headless layout measures healthy, so these
+    // are regression guards for the AppShell-embedded layout; a manual
+    // macOS --demo check at 1280pt is still the ground truth for the
+    // reported symptom.
+    fn assert_appshell_row_widths(cx: &mut VisualTestContext, row_key: &'static str) {
+        let row = cx
+            .debug_bounds(row_key)
+            .unwrap_or_else(|| panic!("row {row_key} should render"));
+        let name_key = format!("{row_key}.name");
+        // `debug_bounds` only accepts `&'static str`; leak a static copy
+        // (tests run in short-lived processes).
+        let name_static: &'static str = Box::leak(name_key.into_boxed_str());
+        let name = cx
+            .debug_bounds(name_static)
+            .unwrap_or_else(|| panic!("name cell {name_static} should render"));
+        let id_key = format!("{row_key}.id");
+        let id_static: &'static str = Box::leak(id_key.into_boxed_str());
+        let id = cx
+            .debug_bounds(id_static)
+            .unwrap_or_else(|| panic!("id cell {id_static} should render"));
+
+        assert!(
+            name.size.width > row.size.width / 2.0,
+            "name cell should be at least half the row width (got {name} of {row})"
+        );
+        assert!(
+            id.size.width > px(0.0),
+            "id cell must not be zero width (got {id})"
+        );
+        // The regression symptom: the first column pinned to the entire row
+        // width, starving the fixed Region/Type/State columns (which total
+        // 240pt plus gaps/padding at this window width).
+        assert!(
+            name.size.width < row.size.width - px(100.0),
+            "name cell must not fill the whole row (the fixed columns are \
+             starved) (got {name} of {row})"
+        );
+    }
+
+    /// Polls `run_until_parked` + short sleeps until `selector` renders,
+    /// mirroring the startup-load pattern the other AppShell tests use
+    /// (the demo load crosses onto the shared tokio runtime, so one
+    /// `run_until_parked()` can return before the rows land).
+    fn wait_for_row(cx: &mut VisualTestContext, selector: &str) {
+        for _ in 0..200 {
+            cx.run_until_parked();
+            let static_selector: &'static str = Box::leak(selector.to_string().into_boxed_str());
+            if cx.debug_bounds(static_selector).is_some() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        panic!("row {selector} did not render within the timeout");
+    }
+
+    #[gpui::test]
+    fn instance_row_name_and_id_cells_keep_readable_width_in_appshell_demo(
+        cx: &mut TestAppContext,
+    ) {
+        let (_view, cx) = cx.add_window_view(|_, cx| AppShell::new_demo(cx));
+        // The reported regression is at 1280pt window width.
+        cx.simulate_resize(gpui::size(px(1280.0), px(800.0)));
+        wait_for_row(cx, "ec2.instance.row.us-east-1:i-scenario-001");
+
+        assert_appshell_row_widths(cx, "ec2.instance.row.us-east-1:i-scenario-001");
+        assert_appshell_row_widths(cx, "ec2.instance.row.us-east-1:i-scenario-002");
+    }
+
+    #[gpui::test]
+    fn instance_row_name_and_id_cells_keep_readable_width_in_appshell_large(
+        cx: &mut TestAppContext,
+    ) {
+        let (_view, cx) = cx.add_window_view(|_, cx| AppShell::new_demo_large(cx));
+        cx.simulate_resize(gpui::size(px(1280.0), px(800.0)));
+        // 121 rows render: the 3 seeded i-scenario rows plus i-demo-004..120
+        // (large_instances clones the seeds, so i-demo-120 carries the
+        // us-east-1 seed's region).
+        wait_for_row(cx, "ec2.instance.row.us-east-1:i-scenario-001");
+        wait_for_row(cx, "ec2.instance.row.us-east-1:i-demo-120");
+
+        assert_appshell_row_widths(cx, "ec2.instance.row.us-east-1:i-scenario-001");
+        assert_appshell_row_widths(cx, "ec2.instance.row.us-east-1:i-demo-120");
     }
 
     #[gpui::test]
