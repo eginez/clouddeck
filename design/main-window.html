@@ -32,6 +32,30 @@
 .tag{border:1px solid var(--line);border-radius:4px;cursor:default;font:inherit;padding:0;background:var(--surf);color:var(--text);max-width:100%}.tag:hover{border-color:var(--accent)}.tag:focus-visible{outline:2px solid var(--accent)}.tag b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:200px;display:inline-block;vertical-align:top}
 .linkb{border:0;background:transparent;color:var(--accent);font:inherit;padding:2px 0;cursor:default}.linkb:hover{text-decoration:underline}
 .kv dd span{min-width:0}
+
+.setw{width:960px;height:620px;background:var(--win);border-radius:10px;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 0 0 .5px #0006,0 18px 50px #0004;position:relative}
+.setw .stb{height:44px;background:var(--chrome);display:flex;align-items:center;gap:8px;padding:0 14px;flex:none}.setw .stb .t{font-weight:600;margin-left:6px}
+.setw .sbody{flex:1;display:flex;min-height:0}
+.setw .tree{width:230px;background:var(--side);padding:8px;display:flex;flex-direction:column;gap:2px;overflow:auto;flex:none}
+.setw .tree .search{width:100%;margin-bottom:8px}
+.setw .cat{height:26px;border-radius:5px;display:flex;align-items:center;gap:8px;padding:0 8px;cursor:default;border:0;background:transparent;color:var(--text);font:inherit;text-align:left;width:100%}.setw .cat:hover{background:var(--hover)}.setw .cat.on{background:var(--sel)}.setw .cat .n{margin-left:auto;color:var(--faint)}.setw .cat .md{width:6px;height:6px;border-radius:50%;background:var(--accent);margin-left:auto}
+.setw .pane{flex:1;overflow:auto;padding:16px 24px 24px}
+.setw .crumb2{color:var(--dim);margin-bottom:2px}.setw h3{margin:0 0 14px;font:600 18px var(--font)}
+.setw .grp{font:600 11px var(--font);color:var(--faint);text-transform:uppercase;letter-spacing:.04em;margin:18px 0 6px}
+.setw .it{display:grid;grid-template-columns:1fr 240px;gap:4px 24px;padding:9px 0 9px 10px;position:relative;align-items:center}
+.setw .it.mod::before{content:"";position:absolute;left:0;top:8px;bottom:8px;width:3px;border-radius:2px;background:var(--accent)}
+.setw .it .l{font-weight:500}.setw .it .d{color:var(--dim);margin-top:2px}.setw .it .rs{color:var(--accent);margin-left:8px;border:0;background:transparent;font:inherit;cursor:default}.setw .it .rs:hover{text-decoration:underline}
+.setw .it.off{opacity:.45;pointer-events:none}
+.setw select,.setw input[type=text]{height:26px;border-radius:6px;border:0;background:var(--surf);box-shadow:0 0 0 .5px var(--line);color:var(--text);font:inherit;padding:0 8px;width:100%}
+.setw input:focus-visible,.setw select:focus-visible,.sw:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.sw{width:34px;height:20px;border-radius:10px;background:var(--k1a);border:0;position:relative;padding:0;cursor:default;justify-self:end}.sw::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;transition:left .12s}.sw.on{background:var(--accent)}.sw.on::after{left:16px}
+.setw mark{background:#f5d76a88;color:inherit;border-radius:2px}
+.setw .foot{height:46px;background:var(--chrome);display:flex;align-items:center;gap:10px;padding:0 14px;flex:none;color:var(--dim)}.setw .foot .sp{flex:1}
+.setw .cbs{display:flex;flex-wrap:wrap;gap:6px 14px;justify-self:end;width:240px}.setw .cbs label{display:flex;gap:6px;align-items:center}
+.setw table.kt{width:100%;border-collapse:collapse}.setw table.kt td,.setw table.kt th{height:28px;padding:0 8px;text-align:left}.setw table.kt th{color:var(--dim);font-weight:500}.setw table.kt tr:nth-child(even) td{background:var(--k04)}
+.setw .keyc{font-family:var(--mono);font-size:11px}.setw .pin{display:flex;align-items:center;gap:8px;height:28px;padding:0 8px;border-radius:5px}.setw .pin:hover{background:var(--hover)}.setw .pin .x{margin-left:auto;border:0;background:transparent;color:var(--faint);cursor:default}
+.setw .info{padding:10px 12px;border-radius:8px;background:var(--k0a);color:var(--dim);margin:6px 0}
+.setw .ok{color:var(--runtext)}
 .strip{height:24px;background:var(--chrome);display:flex;align-items:center;gap:8px;padding:0 10px;color:var(--dim);font-size:11px;flex:none;width:100%}.strip .r{margin-left:auto}
 .mini .bd{overflow:hidden}.mrow{display:flex;align-items:center;gap:8px;width:100%;padding:3px 6px;border-radius:5px;text-align:left}.mrow .sp{flex:1}
 .rgchk{width:14px;height:14px;border-radius:4px;border:1px solid var(--faint);display:inline-flex;align-items:center;justify-content:center;flex:none}.rgchk.on{background:var(--accent);border-color:var(--accent);color:#fff}.rgchk svg{width:11px;height:11px;stroke-width:2}.only{margin-left:8px;opacity:0;color:inherit;text-decoration:underline}.pk:hover .only,.pk.hl .only{opacity:.85}
@@ -128,6 +152,7 @@ tr.grp td .n{font-weight:400;color:var(--faint);margin-left:6px}
 
 <div class="board"><h2>Main window · flat sortable table, facets and pinned searches in the sidebar</h2><div class="win" id="A"></div></div>
 
+<div class="board"><h2>Settings (⌘,) · IntelliJ-style: category tree, settings search, changed-value markers, applies immediately</h2><div id="set" class="setw"></div></div>
 <div class="board"><h2>Onboarding · first run (welcome window)</h2><div id="onb" style="display:flex;flex-direction:column;gap:20px;align-items:flex-start"></div></div>
 <div class="board"><h2>Other states</h2><div class="states" id="states"></div></div>
 
@@ -269,7 +294,7 @@ function mount(el,v){
    ['View: Toggle Sidebar','⌘B',1,()=>{UI.side=!UI.side}],['View: Toggle Inspector','⌘⌥I',1,()=>{UI.insp=!UI.insp}],
    ['Filter: Running Only','',1,()=>{F.state='running'}],['Filter: Stopped Only','',1,()=>{F.state='stopped'}],['Filter: Pending Only','',1,()=>{F.state='pending'}],['Filter: Clear All','',F.state||F.type||q,()=>{F={state:'',type:''};q=''}],
    ['Instance: Copy ID','⌘C',cur&&sel>=0,()=>doFlash('Copied '+cur.id)],['Instance: Copy Private IP','',cur&&sel>=0,()=>doFlash('Copied '+cur.pip)],['Instance: Copy Public IP','',cur&&cur.pub,()=>doFlash('Copied '+cur.pub)],['Instance: Open in Console','⌘O',cur&&sel>=0,()=>doFlash('Opening in AWS Console…')],
-   ['Fleet: Retry Failed Region','',failedNow,()=>{pop=null;doRefresh();setTimeout(()=>{failed=false;draw()},1200)}],['Account: Connect to AWS…','',1,()=>doFlash('Opening AWS setup…')]];
+   ['Fleet: Retry Failed Region','',failedNow,()=>{pop=null;doRefresh();setTimeout(()=>{failed=false;draw()},1200)}],['Account: Connect to AWS…','',1,()=>doFlash('Opening AWS setup…')],['Preferences: Open Settings…','⌘,',1,()=>{document.getElementById('set').scrollIntoView({behavior:'smooth'})}]];
   if(pal){const words=pal.q.toLowerCase().split(/\s+/).filter(Boolean);
    const list=CMDS.filter(c=>words.every(w=>c[0].toLowerCase().includes(w)));
    pal.i=Math.min(pal.i,Math.max(0,list.length-1));
@@ -304,7 +329,7 @@ function mount(el,v){
   const x=el.querySelector('.ih .btn');if(x)x.onclick=()=>{sel=-1;draw()};
  };
  el.tabIndex=-1;
- el.addEventListener('keydown',e=>{const m=e.metaKey||e.ctrlKey;if(m&&e.shiftKey&&e.key.toLowerCase()==='p'){e.preventDefault();pop=null;pal={q:'',i:0};draw();return}if(m&&e.key.toLowerCase()==='b'&&!e.target.matches('input')){e.preventDefault();UI.side=!UI.side;draw();return}if(m&&e.altKey&&e.key.toLowerCase()==='i'){e.preventDefault();UI.insp=!UI.insp;draw();return}if(m&&e.key.toLowerCase()==='c'&&sel>=0&&!e.target.matches('input')){e.preventDefault();doFlash('Copied '+D[sel].id);draw();return}if(m&&e.key.toLowerCase()==='o'&&sel>=0){e.preventDefault();doFlash('Opening in AWS Console…');draw();return}if(m&&!e.shiftKey&&e.key.toLowerCase()==='p'){e.preventDefault();pop='profile';pq='';pi=0;draw();return}if(m&&e.shiftKey&&e.key.toLowerCase()==='r'){e.preventDefault();pop='region';pq='';pi=0;draw();return}if(m&&!e.shiftKey&&e.key.toLowerCase()==='r'){e.preventDefault();loading=true;draw();setTimeout(()=>{loading=false;draw()},1200);return}if(e.target.matches('input'))return;
+ el.addEventListener('keydown',e=>{const m=e.metaKey||e.ctrlKey;if(m&&e.key===','){e.preventDefault();document.getElementById('set').scrollIntoView({behavior:'smooth'});return}if(m&&e.shiftKey&&e.key.toLowerCase()==='p'){e.preventDefault();pop=null;pal={q:'',i:0};draw();return}if(m&&e.key.toLowerCase()==='b'&&!e.target.matches('input')){e.preventDefault();UI.side=!UI.side;draw();return}if(m&&e.altKey&&e.key.toLowerCase()==='i'){e.preventDefault();UI.insp=!UI.insp;draw();return}if(m&&e.key.toLowerCase()==='c'&&sel>=0&&!e.target.matches('input')){e.preventDefault();doFlash('Copied '+D[sel].id);draw();return}if(m&&e.key.toLowerCase()==='o'&&sel>=0){e.preventDefault();doFlash('Opening in AWS Console…');draw();return}if(m&&!e.shiftKey&&e.key.toLowerCase()==='p'){e.preventDefault();pop='profile';pq='';pi=0;draw();return}if(m&&e.shiftKey&&e.key.toLowerCase()==='r'){e.preventDefault();pop='region';pq='';pi=0;draw();return}if(m&&!e.shiftKey&&e.key.toLowerCase()==='r'){e.preventDefault();loading=true;draw();setTimeout(()=>{loading=false;draw()},1200);return}if(e.target.matches('input'))return;
   const dn=e.key==='ArrowDown'||e.key==='j',up=e.key==='ArrowUp'||e.key==='k';
   if(dn||up){e.preventDefault();const r=[...el.querySelectorAll('tr.row')];const c=r.findIndex(x=>+x.dataset.i===sel);const n=r[Math.max(0,Math.min(r.length-1,c+(dn?1:-1)))];if(n){sel=+n.dataset.i;draw();el.querySelector('tr.sel').focus()}}
   if(e.key==='Escape'){ctx=null;pop=null;if(!e.target.matches('input')){if(el.offsetWidth<760&&UI.side){UI.side=false}else{sel=-1}}draw()}
@@ -318,6 +343,103 @@ mount(document.getElementById('A'),'A');
 const tgl=(a,b,fn)=>{[a,b].forEach(id=>document.getElementById(id).onclick=()=>{document.getElementById(a).classList.toggle('on',id===a);document.getElementById(b).classList.toggle('on',id===b);fn(id)})};
 tgl('thL','thD',id=>document.body.dataset.theme=id==='thD'?'dark':'light');
 document.querySelectorAll('.szb').forEach(b=>b.onclick=()=>{document.querySelectorAll('.szb').forEach(x=>x.classList.toggle('on',x===b));const w=+b.dataset.w,h=+b.dataset.h,A=document.getElementById('A');A.style.width=w+'px';A.style.height=h+'px';UI.side=w>=760;UI.insp=w>=760;window.SEL0=w>=760?3:-1;remountA()});
+
+// ---------------- Settings window
+const SET_DEF={theme:'Follow system',density:'Compact (28pt rows)',side:true,insp:true,upd:true,auto:true,interval:'5 minutes',focus:true,launch:'Remember last profile and regions',regions:REG.slice(),sort:'Name',unnamed:true,recent:'10',tags:true,cli:'Auto-detect',cfg:'~/.aws/config',timeout:'30 seconds',demo:false,log:'Errors only'};
+const SET_ITEMS=[
+ ['Appearance',[
+  ['Window',null],
+  {id:'theme',l:'Theme',d:'Follows macOS appearance by default.',t:'select',o:['Follow system','Light','Dark']},
+  {id:'density',l:'Table density',d:'Row height in the instance table.',t:'select',o:['Compact (28pt rows)','Comfortable (34pt rows)']},
+  ['Panels',null],
+  {id:'side',l:'Show sidebar on launch',d:'Facets, pinned searches and recent instances.',t:'toggle'},
+  {id:'insp',l:'Open the inspector when selecting an instance',d:'Turn off to keep the table full width until you ask for details (⌘⌥I).',t:'toggle'},
+  {id:'upd',l:'Show “Updated” time in the status bar',d:'Hidden automatically in narrow windows.',t:'toggle'}]],
+ ['Fleet',[
+  ['Loading',null],
+  {id:'auto',l:'Refresh automatically',d:'Only while the window is active. Old rows stay visible while loading.',t:'toggle'},
+  {id:'interval',l:'Refresh interval',d:'Data older than twice this interval is marked stale.',t:'select',o:['1 minute','2 minutes','5 minutes','10 minutes','15 minutes'],dep:'auto'},
+  {id:'focus',l:'Refresh when the window regains focus',d:'After more than one interval away.',t:'toggle'},
+  ['Scope',null],
+  {id:'launch',l:'On launch',d:'Product bet: reopen into your last context.',t:'select',o:['Remember last profile and regions','Always ask']},
+  {id:'regions',l:'Regions to load',d:'Region list the picker offers. At least one.',t:'regions'}]],
+ ['Table',[
+  ['Display',null],
+  {id:'sort',l:'Default sort',d:'Applied until you click a column header.',t:'select',o:['Name','Launched (newest first)','State']},
+  {id:'unnamed',l:'Show instances without a Name tag as “unnamed”',d:'Otherwise they show their instance ID in the Name column.',t:'toggle'},
+  ['Columns',null],
+  {id:'cols',l:'Columns and column sets',d:'Choose which fields and tags appear, and save sets such as Networking or Ownership. Planned (bead .32); until then use the table header menu.',t:'button',b:'Customize columns…',dis:true}]],
+ ['Search',[
+  ['Behaviour',null],
+  {id:'recent',l:'Remember recent searches',d:'Shown when you focus an empty search field.',t:'select',o:['0','5','10','20']},
+  {id:'tags',l:'Match tag keys and values',d:'Search also looks at name, ID, IPs, zone and type.',t:'toggle'},
+  ['Pinned searches',null],
+  {id:'pins',l:'',t:'pins'}]],
+ ['Keymap',[{id:'keys',l:'',t:'keys'}]],
+ ['AWS & Privacy',[
+  ['AWS CLI',null],
+  {id:'cli',l:'AWS CLI',d:'CloudDeck runs the AWS CLI (v2) read-only; it handles SSO and credentials.',t:'cli',o:['Auto-detect','/opt/homebrew/bin/aws','/usr/local/bin/aws','Choose…']},
+  {id:'cfg',l:'AWS config file',d:'Where profiles are read from.',t:'text'},
+  {id:'timeout',l:'Request timeout',d:'Per region, per request.',t:'select',o:['15 seconds','30 seconds','60 seconds']},
+  ['Stored data',null],
+  {id:'priv',l:'',t:'privacy'}]],
+ ['Advanced',[
+  ['Developer',null],
+  {id:'demo',l:'Demo mode',d:'Simulated fleet, no AWS calls. A DEMO tag stays in the status bar.',t:'toggle'},
+  {id:'log',l:'Log level',d:'Written to ~/.config/clouddeck/logs.',t:'select',o:['Errors only','Info','Debug']}]],
+ ['About',[{id:'about',l:'',t:'about'}]]];
+function mountSettings(el){
+ const S=JSON.parse(JSON.stringify(SET_DEF));let cur='Appearance',q='',note='',pins=['billing prod','owner esteban','stopped g5'];
+ const mod=id=>JSON.stringify(S[id])!==JSON.stringify(SET_DEF[id]);
+ const items=c=>SET_ITEMS.find(x=>x[0]===c)[1].filter(i=>!Array.isArray(i));
+ const catMod=c=>items(c).some(i=>i.id in SET_DEF&&mod(i.id));
+ const hi=t=>q?t.replace(new RegExp('('+q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+')','ig'),'<mark>$1</mark>'):t;
+ const matches=i=>!q||((i.l||'')+' '+(i.d||'')).toLowerCase().includes(q.toLowerCase());
+ const KEYS=[['Switch Profile…','⌘P'],['Switch Region…','⌘⇧R'],['Refresh','⌘R'],['Command Palette','⌘⇧P'],['Toggle Sidebar','⌘B'],['Toggle Inspector','⌘⌥I'],['Focus Search','⌘F'],['Copy Instance ID','⌘C'],['Open in Console','⌘O'],['Settings','⌘,']];
+ const ctrl=i=>{
+  if(i.t==='toggle')return `<button class="sw${S[i.id]?' on':''}" role="switch" aria-checked="${S[i.id]}" aria-label="${i.l}" data-sw="${i.id}"></button>`;
+  if(i.t==='select')return `<select data-sel="${i.id}" aria-label="${i.l}">${i.o.map(o=>`<option${S[i.id]===o?' selected':''}>${o}</option>`).join('')}</select>`;
+  if(i.t==='text')return `<input type="text" data-txt="${i.id}" value="${S[i.id]}" aria-label="${i.l}">`;
+  if(i.t==='regions')return `<div class="cbs">${REG.map(r=>`<label><input type="checkbox" data-reg="${r}"${S.regions.includes(r)?' checked':''}>${r}</label>`).join('')}</div>`;
+  if(i.t==='button')return `<button class="sbtn" ${i.dis?'disabled style="opacity:.5"':''}>${i.b}</button>`;
+  if(i.t==='cli')return `<div style="display:flex;gap:6px"><select data-sel="cli" aria-label="AWS CLI">${i.o.map(o=>`<option${S.cli===o?' selected':''}>${o}</option>`).join('')}</select><button class="sbtn" data-test>Test</button></div>`;
+  return '';};
+ const row=i=>{
+  if(i.t==='pins')return pins.length?pins.map((p,n)=>`<div class="pin">${I('search','width:14px;height:14px')}${p}<button class="x" data-unpin="${n}" aria-label="Unpin ${p}">${I('x','width:14px;height:14px')}</button></div>`).join(''):'<div class="info">No pinned searches. Pin one from the search field.</div>';
+  if(i.t==='keys')return `<div class="info">Shortcuts shown here match the tooltips and the command palette. Click a shortcut to change it (not in this mockup).</div><table class="kt"><thead><tr><th>Action</th><th>Shortcut</th></tr></thead><tbody>${KEYS.filter(k=>!q||(k[0]+k[1]).toLowerCase().includes(q.toLowerCase())).map(k=>`<tr><td>${hi(k[0])}</td><td class="keyc">${k[1]}</td></tr>`).join('')}</tbody></table>`;
+  if(i.t==='privacy')return `<div class="info">CloudDeck never stores credentials. It keeps profile and region names, pinned and recent searches, and window layout in <span class="mono">~/.config/clouddeck</span>. Instance data is never written to disk.</div><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="sbtn" data-act="Opened data folder">Reveal data folder</button><button class="sbtn" data-act="Recent searches cleared">Clear recent searches</button><button class="sbtn" data-act="Remembered scope forgotten">Forget remembered scope</button></div>`;
+  if(i.t==='about')return `<dl class="kv" style="margin:0"><dt>Version</dt><dd>0.1.0 (build 656)</dd><dt>AWS CLI</dt><dd class="mono">aws-cli/2.17.1</dd><dt>Config file</dt><dd class="mono">${S.cfg}</dd><dt>Data folder</dt><dd class="mono">~/.config/clouddeck</dd><dt>Platform</dt><dd>macOS 15 · gpui</dd></dl>`;
+  const off=i.dep&&!S[i.dep];
+  return `<div class="it${mod(i.id)?' mod':''}${off?' off':''}"><div><span class="l">${hi(i.l)}</span>${mod(i.id)?`<button class="rs" data-reset="${i.id}">Reset</button>`:''}<div class="d">${hi(i.d||'')}</div></div><div>${ctrl(i)}</div></div>`;};
+ const pane=()=>{
+  if(q){const out=SET_ITEMS.map(([c,list])=>({c,m:list.filter(i=>!Array.isArray(i)&&(c.toLowerCase().includes(q.toLowerCase())||matches(i)||(i.t==='keys'&&KEYS.some(k=>(k[0]+k[1]).toLowerCase().includes(q.toLowerCase())))))})).filter(x=>x.m.length);
+   return `<div class="crumb2">Settings › Search results for “${q}”</div><h3>${out.reduce((n,x)=>n+x.m.length,0)} result${out.length===1&&out[0].m.length===1?'':'s'}</h3>`+(out.map(x=>`<div class="grp">${x.c}</div>${x.m.map(row).join('')}`).join('')||`<div class="info">Nothing matches “${q}”. Try a shorter word.</div>`)}
+  const list=SET_ITEMS.find(x=>x[0]===cur)[1];
+  return `<div class="crumb2">Settings › ${cur}</div><h3>${cur}</h3>`+list.map(i=>Array.isArray(i)?`<div class="grp">${i[0]}</div>`:row(i)).join('');};
+ const draw=()=>{
+  const vis=SET_ITEMS.filter(([c,list])=>!q||c.toLowerCase().includes(q.toLowerCase())||list.some(i=>!Array.isArray(i)&&(matches(i)||(i.t==='keys'&&KEYS.some(k=>(k[0]+k[1]).toLowerCase().includes(q.toLowerCase()))))));
+  const ic={Appearance:'sidebar',Fleet:'server',Table:'filter',Search:'search',Keymap:'key','AWS & Privacy':'cloud',Advanced:'bug',About:'alert'};
+  el.innerHTML=`<div class="stb"><div class="lights"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></div><span class="t">Settings</span></div>
+  <div class="sbody"><nav class="tree" aria-label="Settings categories"><div class="search">${I('search')}<input data-sq placeholder="Search settings" aria-label="Search settings" value="${q}"></div>
+  ${vis.map(([c])=>`<button class="cat${(!q&&c===cur)?' on':''}" data-cat="${c}">${I(ic[c]||'server','width:14px;height:14px')}${c}${catMod(c)?'<span class="md" title="Contains changed settings"></span>':''}</button>`).join('')||'<div style="color:var(--dim);padding:8px">No categories match.</div>'}</nav>
+  <section class="pane" aria-live="polite">${pane()}</section></div>
+  <div class="foot"><span>${note?`<span class="ok">${I('check','width:13px;height:13px')} ${note}</span>`:'Changes apply immediately. A blue bar marks values that differ from the default.'}</span><span class="sp"></span><button class="sbtn" data-restore>Restore Defaults</button><button class="pbtn">Done</button></div>`;
+  const sq=el.querySelector('[data-sq]');sq.oninput=()=>{q=sq.value;draw();const n=el.querySelector('[data-sq]');n.focus();n.setSelectionRange(q.length,q.length)};sq.onkeydown=e=>{if(e.key==='Escape'&&q){q='';draw();el.querySelector('[data-sq]').focus()}};
+  el.querySelectorAll('[data-cat]').forEach(b=>b.onclick=()=>{cur=b.dataset.cat;q='';note='';draw()});
+  el.querySelectorAll('[data-sw]').forEach(b=>b.onclick=()=>{S[b.dataset.sw]=!S[b.dataset.sw];note='';draw()});
+  el.querySelectorAll('[data-sel]').forEach(b=>b.onchange=()=>{S[b.dataset.sel]=b.value;note='';if(b.dataset.sel==='theme'&&document.getElementById(b.value==='Dark'?'thD':b.value==='Light'?'thL':'thL'))document.getElementById(b.value==='Dark'?'thD':'thL').click();draw()});
+  el.querySelectorAll('[data-txt]').forEach(b=>b.oninput=()=>{S[b.dataset.txt]=b.value});
+  el.querySelectorAll('[data-txt]').forEach(b=>b.onchange=()=>{note='';draw()});
+  el.querySelectorAll('[data-reg]').forEach(b=>b.onchange=()=>{const r=b.dataset.reg;const set=new Set(S.regions);if(b.checked)set.add(r);else if(set.size>1)set.delete(r);S.regions=REG.filter(x=>set.has(x));draw()});
+  el.querySelectorAll('[data-reset]').forEach(b=>b.onclick=()=>{S[b.dataset.reset]=JSON.parse(JSON.stringify(SET_DEF[b.dataset.reset]));note='Reset to default';draw()});
+  el.querySelectorAll('[data-unpin]').forEach(b=>b.onclick=()=>{pins.splice(+b.dataset.unpin,1);note='Unpinned';draw()});
+  el.querySelectorAll('[data-act]').forEach(b=>b.onclick=()=>{note=b.dataset.act;draw()});
+  el.querySelectorAll('[data-test]').forEach(b=>b.onclick=()=>{note='aws-cli/2.17.1 found and working';draw()});
+  el.querySelector('[data-restore]').onclick=()=>{Object.keys(SET_DEF).forEach(k=>S[k]=JSON.parse(JSON.stringify(SET_DEF[k])));pins=['billing prod','owner esteban','stopped g5'];note='Defaults restored';draw()};
+ };
+ draw();
+}
+mountSettings(document.getElementById('set'));
 tgl('dmL','dmD',id=>{window.DEMO=id==='dmD';remountA()});
 
 // other states
