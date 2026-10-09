@@ -92,7 +92,7 @@ kbd{font:10px var(--font);color:var(--faint);border:1px solid var(--line);border
 .side{width:210px;background:var(--side);padding:8px 8px;overflow:auto;flex:none}
 .side.rail{width:48px;padding:8px 6px;display:flex;flex-direction:column;gap:4px;align-items:center}
 .sb-h{font:600 10px var(--font);letter-spacing:.04em;color:var(--faint);padding:10px 8px 4px;text-transform:uppercase}
-.sb-item{height:24px;border-radius:5px;display:flex;align-items:center;gap:7px;padding:0 8px;color:var(--text)}
+.sb-item .tr{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}.sb-item{height:24px;border-radius:5px;display:flex;align-items:center;gap:7px;padding:0 8px;color:var(--text)}
 .sb-item:hover{background:var(--hover)}.sb-item.on{background:var(--sel)}
 .sb-item .n{margin-left:auto;color:var(--faint);font-variant-numeric:tabular-nums}
 .sb-item.sub{padding-left:26px}
@@ -144,7 +144,7 @@ tr.grp td .n{font-weight:400;color:var(--faint);margin-left:6px}
 .ctx hr{border:0;border-top:1px solid var(--line2);margin:4px 6px}
 /* states strip (other states) */
 .states{display:flex;gap:16px;width:1280px;flex-wrap:wrap}
-.mini{width:408px;height:250px;background:var(--win);border-radius:8px;box-shadow:0 0 0 .5px #0005,0 6px 20px #0002;overflow:hidden;display:flex;flex-direction:column}
+.mini{width:408px;height:280px;background:var(--win);border-radius:8px;box-shadow:0 0 0 .5px #0005,0 6px 20px #0002;overflow:hidden;display:flex;flex-direction:column}
 .mini .cap{height:22px;background:var(--chrome);border-bottom:1px solid var(--line);font-size:10px;color:var(--dim);display:flex;align-items:center;padding:0 10px}
 .mini .bd{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;text-align:center;padding:12px;position:relative}
 .mini .bd h4{margin:0;font:600 13px var(--font)}.mini .bd p{margin:0;color:var(--dim);max-width:280px}
@@ -297,9 +297,9 @@ function sideA(F,q,tAll,R){
  ${(tAll?ty:ty.slice().sort((a,b)=>ct(b)-ct(a)||a.localeCompare(b)).slice(0,5).sort()).map(t=>`<div class="sb-item" tabindex="0" data-fk="type" data-fv="${t}"${z(ct(t))}><span class="mono">${t}</span><span class="n">${ct(t)}</span></div>`).join('')}
  ${ty.length>5?`<div class="sb-item" tabindex="0" data-tall style="color:var(--dim)">${tAll?'Show fewer':'Show all '+ty.length+' types'}</div>`:''}
  <div class="sb-h">Pinned searches</div>
- ${pins.map(p=>`<div class="sb-item" tabindex="0" data-ps="${p}">${I('search')}${p}</div>`).join('')}
+ ${pins.map(p=>`<div class="sb-item" tabindex="0" data-ps="${p}" title="${p}">${I('search')}<span class="tr">${p}</span></div>`).join('')}
  <div class="sb-h">Recent</div>
- ${[3,0,12].map(i=>`<div class="sb-item" tabindex="0" data-rc="${i}"><span class="dot ${stD[D[i].state]}" style="margin:0 4px"></span>${D[i].name}</div>`).join('')}</div>`}
+ ${[3,0,12].map(i=>`<div class="sb-item" tabindex="0" data-rc="${i}"><span class="dot ${stD[D[i].state]}" style="margin:0 4px"></span><span class="tr">${D[i].name||'unnamed'}</span></div>`).join('')}</div>`}
 
 function inspector(d,o){o=o||{};if(!d)return '';
  const cp=v=>v?`<button class="cp" data-copy="${v}" title="Copy" aria-label="Copy ${v}">${I('copy','width:13px;height:13px')}</button>`:'';
@@ -313,7 +313,7 @@ function inspector(d,o){o=o||{};if(!d)return '';
  <div class="ih"><div class="nm"><span class="dot ${stD[d.state]}"></span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${d.name}">${d.name||'<i style="color:var(--faint);font-weight:400">unnamed</i>'}</span><span class="sp"></span><button class="btn" aria-label="Close inspector (Esc)">${I('x')}</button></div>
  <div class="id mono">${d.id}${cp(d.id)}</div><div class="sum${stp?' stopd':''}">${summary}</div></div>
  <div class="ib">${o.stale?`<div class="stalebox">${I('warn','width:14px;height:14px')}From the 12:01 refresh. ${d.region} failed to load.</div>`:''}
- <div class="sec">Instance</div><dl class="kv" style="margin:0">${kv('State',cap(d.state)+(stp&&d.reason?' · '+d.reason:''))}${kv('Type',d.type)}${kv('Zone',d.az)}${kv('AMI',d.ami,1,1)}${kv('Key pair',d.key)}${kv('Launched',d.launched+' UTC')}</dl>
+ <div class="sec">Instance</div><dl class="kv" style="margin:0">${kv('State',cap(d.state))}${kv('Type',d.type)}${kv('Zone',d.az)}${kv('AMI',d.ami,1,1)}${kv('Key pair',d.key)}${kv('Launched',d.launched+' UTC')}</dl>
  <div class="sec">Network</div><dl class="kv" style="margin:0">${kv('Private IP',d.pip,1,1)}${kv('Public IP',d.pub,1,1,noPub)}${kv('Private DNS',d.dnsP,1,1)}${kv('VPC',d.vpc,1,1)}${kv('Subnet',d.subnet,1,1)}</dl>
  <div class="sec">Security groups · ${d.sgs.length}</div>${d.sgs.map(g=>`<div class="sgrow"><span>${g.n}</span><span class="mono dimt">${g.id}</span>${cp(g.id)}</div>`).join('')}
  <div class="sec">Tags · ${tg.length}</div>${tg.length?shown.map(([k,v])=>`<button class="tag" data-tag="${v}" title="${k} = ${v}. Click to search for this value"><i>${k}</i><b>${v}</b></button>`).join(''):'<div style="color:var(--faint)">This instance has no tags. Names come from the Name tag, so it shows as unnamed.</div>'}
@@ -542,7 +542,6 @@ document.getElementById('onb').innerHTML=`
  ${PROFILES.map(p=>`<div class="pk" tabindex="0" style="padding:6px 10px"><span class="bdg" style="width:34px;height:34px;font-size:12px">${p[2]}</span><span><div class="t" style="color:var(--runtext);font-size:13px">${p[0]}</div><div class="u">${p[1]}</div></span></div>`).join('')}
  <div style="flex:1"></div><div style="color:var(--dim)">Profiles are read from ~/.aws/config. Press ↵ to open the selected profile. Credentials stay with the AWS CLI.</div></div></div>`;
 document.getElementById('states').innerHTML=
- mini('No AWS profiles',`${I('cloud','width:28px;height:28px;color:var(--faint)')}<h4>No AWS profiles found</h4><p>CloudDeck reads profiles from ~/.aws/config. Connect an account to browse its EC2 fleet.</p><span class="pbtn">Connect to AWS</span><span style="color:var(--dim)">or try the demo from the File menu</span>`)+
 
  mini('Several regions failed',`<div style="width:100%;text-align:left"><div style="font-weight:600;color:var(--warntext);display:flex;gap:6px;align-items:center;margin-bottom:6px">${I('warn')}3 regions couldn’t be loaded</div>${[['us-west-2','Throttled · retrying in 8s'],['eu-west-1','AccessDenied'],['eu-central-1','AccessDenied']].map(r=>`<div class="mrow"><span class="mono">${r[0]}</span><span style="color:var(--dim)">${r[1]}</span><span class="sp"></span><span class="sbtn" style="height:22px;padding:0 8px">Retry</span></div>`).join('')}<div style="display:flex;justify-content:flex-end;margin-top:8px;gap:6px"><span class="sbtn">Copy errors</span><span class="pbtn">Retry all</span></div></div>`,sb_('<span style="color:var(--warntext)">3 regions failed</span>','Updated 12:04'))+
  mini('Throttled (automatic retry)',`${I('refresh','width:28px;height:28px;color:var(--warntext)')}<h4>AWS is rate limiting requests</h4><p>CloudDeck will retry on its own, with a growing delay. The data shown is from 12:04.</p><span class="sbtn">Retry now</span>`,sb_('<span style="color:var(--warntext)">Throttled · retry in 8s</span>','Updated 12:04'))+
@@ -550,10 +549,9 @@ document.getElementById('states').innerHTML=
  mini('Signed out (SSO expired)',`${I('key','width:28px;height:28px;color:var(--faint)')}<h4>Sign in to prod-readonly</h4><p>Your AWS SSO session expired. Signing in opens your browser; credentials stay with the AWS CLI.</p><span class="pbtn">Sign in</span><span class="mono" style="color:var(--dim)">aws sso login --profile prod-readonly</span>`,sb_('<span style="color:var(--warntext)">Sign-in required</span>','Updated 09:12'))+
  mini('Demo mode',`<span class="chip" style="height:20px;font-size:11px;padding:0 10px">DEMO</span><h4>You’re looking at simulated data</h4><p>No AWS account is connected. Nothing here exists. The DEMO tag stays in the status bar the whole time.</p><span class="sbtn">Exit demo</span>`,sb_('<span class="chip">DEMO</span> simulated fleet','Updated 12:04'))+
  mini('Empty fleet',`${I('server','width:28px;height:28px;color:var(--faint)')}<h4>No instances in us-east-1</h4><p>prod-readonly has no EC2 instances in this region. Try other regions.</p><span class="sbtn">Select all regions</span>`,sb_('0 instances','Updated 12:04'))+
- mini('Search syntax',`<div class="kv" style="text-align:left;width:360px;grid-template-columns:130px 1fr"><dt class="mono">state:stopped</dt><dd>field filter (name, id, state, type, az, region, ip, vpc, subnet, sg, ami, key)</dd><dt class="mono">owner:esteban</dt><dd>any tag key works as a field</dd><dt class="mono">tag:Team=data</dt><dd>explicit tag, tag:Owner = has tag</dd><dt class="mono">-state:stopped</dt><dd>not</dd><dt class="mono">state:running,pending</dt><dd>either</dd><dt class="mono">type:t3.*</dt><dd>wildcard</dd><dt class="mono">age:>30d</dt><dd>launched over 30 days ago</dd><dt class="mono">has:public-ip</dt><dd>has a public address</dd><dt class="mono">"api gateway"</dt><dd>exact phrase; plain words must all match</dd></div>`)+
- mini('Loading',`<div class="cloud">${I('cloud','width:56px;height:56px;stroke-width:1;color:var(--accent)')}</div><h4>Loading instances</h4><p>prod-readonly · All regions<span class="dots"><i>.</i><i>.</i><i>.</i></span></p>`)+
- mini('Error',`${I('alert','width:28px;height:28px;color:var(--err)')}<h4>Couldn’t load instances</h4><p>Your SSO session for prod-readonly has expired. Run <span class="mono">aws sso login --profile prod-readonly</span>, then retry.</p><span class="sbtn">${I('refresh')}Retry</span>`)+
- mini('Filter matches nothing',`${I('search','width:28px;height:28px;color:var(--faint)')}<h4>No instances match</h4><p>State: Stopped · Type: g5.xlarge · “bastion”</p><span class="sbtn">Clear filters</span>`)+
- mini('Narrow pane (≤ 760pt): sidebar collapses, inspector overlays',`<p>Below 760pt the sidebar hides (⌘B toggles) and columns drop in this order: Launched, Public IP, Private IP, AZ. The inspector becomes a sheet over the table; Esc dismisses it.</p>`)+
+ mini('Search syntax',`<div class="kv" style="text-align:left;width:380px;grid-template-columns:172px 1fr"><dt class="mono">state:stopped</dt><dd>field filter (name, id, state, type, az, region, ip, vpc, subnet, sg, ami, key)</dd><dt class="mono">owner:esteban</dt><dd>any tag key works as a field</dd><dt class="mono">tag:Team=data</dt><dd>explicit tag, tag:Owner = has tag</dd><dt class="mono">-state:stopped</dt><dd>not</dd><dt class="mono">state:running,pending</dt><dd>either</dd><dt class="mono">type:t3.*</dt><dd>wildcard</dd><dt class="mono">age:>30d</dt><dd>launched over 30 days ago</dd><dt class="mono">has:public-ip</dt><dd>has a public address</dd><dt class="mono">"api gateway"</dt><dd>exact phrase; plain words must all match</dd></div>`)+
+ mini('Loading',`<div class="cloud">${I('cloud','width:56px;height:56px;stroke-width:1;color:var(--accent)')}</div><h4>Loading instances</h4><p>prod-readonly · All regions<span class="dots"><i>.</i><i>.</i><i>.</i></span></p>`,sb_('<span class="spin"></span> Loading prod-readonly…','—'))+
+ mini('Error',`${I('alert','width:28px;height:28px;color:var(--err)')}<h4>Couldn’t load instances</h4><p>Your SSO session for prod-readonly has expired. Run <span class="mono">aws sso login --profile prod-readonly</span>, then retry.</p><span class="sbtn">${I('refresh')}Retry</span>`,sb_('<span style=\"color:var(--err)\">Couldn’t load</span>','Updated 09:12'))+
+ mini('Filter matches nothing',`${I('search','width:28px;height:28px;color:var(--faint)')}<h4>No instances match</h4><p>State: Stopped · Type: g5.xlarge · “bastion”</p><span class="sbtn">Clear filters</span>`,sb_('20 instances · 0 shown','Updated 12:04'))+
  mini('Keyboard',`<div class="kv" style="text-align:left;width:300px"><dt>⌘F or /</dt><dd>Focus search</dd><dt>Esc</dt><dd>Clear search, then close inspector</dd><dt>↑ ↓ / j k</dt><dd>Move selection</dd><dt>⌘B</dt><dd>Toggle sidebar</dd><dt>⌘R</dt><dd>Refresh</dd><dt>⌘C</dt><dd>Copy instance ID</dd><dt>⌘O</dt><dd>Open in Console</dd></div>`);
 </script></body></html>
