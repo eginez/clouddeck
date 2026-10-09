@@ -721,6 +721,14 @@ mod tests {
                 key: "Name".to_string(),
                 value: name.to_string(),
             }],
+            availability_zone: None,
+            image_id: None,
+            key_name: None,
+            architecture: None,
+            state_transition_reason: None,
+            iam_instance_profile_arn: None,
+            private_dns_name: None,
+            public_dns_name: None,
         }
     }
 

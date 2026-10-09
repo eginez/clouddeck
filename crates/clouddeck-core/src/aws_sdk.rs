@@ -259,6 +259,25 @@ fn map_instance(instance: &aws_sdk_ec2::types::Instance, region: &str) -> Option
                 })
             })
             .collect(),
+        availability_zone: instance
+            .placement()
+            .and_then(|p| p.availability_zone())
+            .map(str::to_owned),
+        image_id: instance.image_id().map(str::to_owned),
+        key_name: instance.key_name().map(str::to_owned),
+        architecture: instance.architecture().map(|value| value.as_str().to_owned()),
+        // The SDK pre-combines StateTransitionReason code and message into
+        // one string ("Client.StopInstance User requested stop").
+        state_transition_reason: instance
+            .state_transition_reason()
+            .map(str::to_owned)
+            .filter(|value| !value.is_empty()),
+        iam_instance_profile_arn: instance
+            .iam_instance_profile()
+            .and_then(|profile| profile.arn())
+            .map(str::to_owned),
+        private_dns_name: instance.private_dns_name().map(str::to_owned),
+        public_dns_name: instance.public_dns_name().map(str::to_owned),
     })
 }
 
@@ -298,6 +317,14 @@ mod tests {
                 key: "Name".into(),
                 value: name.into(),
             }],
+            availability_zone: None,
+            image_id: None,
+            key_name: None,
+            architecture: None,
+            state_transition_reason: None,
+            iam_instance_profile_arn: None,
+            private_dns_name: None,
+            public_dns_name: None,
         }
     }
 

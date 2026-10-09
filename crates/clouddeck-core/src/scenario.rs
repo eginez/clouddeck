@@ -147,6 +147,21 @@ struct RawInstance {
     #[serde(rename = "securityGroups")]
     security_groups: Option<Vec<RawSecurityGroup>>,
     tags: Option<Vec<RawTag>>,
+    #[serde(rename = "availabilityZone")]
+    availability_zone: Option<String>,
+    #[serde(rename = "imageID")]
+    image_id: Option<String>,
+    #[serde(rename = "keyName")]
+    key_name: Option<String>,
+    architecture: Option<String>,
+    #[serde(rename = "stateTransitionReason")]
+    state_transition_reason: Option<String>,
+    #[serde(rename = "iamInstanceProfileARN")]
+    iam_instance_profile_arn: Option<String>,
+    #[serde(rename = "privateDNSName")]
+    private_dns_name: Option<String>,
+    #[serde(rename = "publicDNSName")]
+    public_dns_name: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -358,6 +373,14 @@ fn map_instance(raw: RawInstance, region: &str) -> EC2Instance {
             })
             .collect(),
         tags,
+        availability_zone: blankable(raw.availability_zone),
+        image_id: blankable(raw.image_id),
+        key_name: blankable(raw.key_name),
+        architecture: blankable(raw.architecture),
+        state_transition_reason: blankable(raw.state_transition_reason),
+        iam_instance_profile_arn: blankable(raw.iam_instance_profile_arn),
+        private_dns_name: blankable(raw.private_dns_name),
+        public_dns_name: blankable(raw.public_dns_name),
     }
 }
 
@@ -431,6 +454,15 @@ mod tests {
         assert_eq!(first.tags.len(), 3);
         assert_eq!(first.name(), Some("prod-api-1"));
         assert!(first.launch_time.is_some());
+        // Fields the vendored fixture predates must parse as absent, not fail.
+        assert_eq!(first.availability_zone, None);
+        assert_eq!(first.image_id, None);
+        assert_eq!(first.key_name, None);
+        assert_eq!(first.architecture, None);
+        assert_eq!(first.state_transition_reason, None);
+        assert_eq!(first.iam_instance_profile_arn, None);
+        assert_eq!(first.private_dns_name, None);
+        assert_eq!(first.public_dns_name, None);
 
         let second = &instances[1];
         assert_eq!(second.instance_type.as_deref(), Some("m6i.large"));
@@ -502,6 +534,52 @@ mod tests {
         assert_eq!(instance.public_ip_address, None);
         assert!(instance.tags.is_empty());
         assert_eq!(instance.name(), None);
+    }
+
+    #[test]
+    fn inspector_fields_parse_from_scenario_json() {
+        let contents = r#"{
+            "name": "t",
+            "profiles": [{
+                "name": "p",
+                "regions": [{
+                    "name": "us-east-1",
+                    "instances": [{
+                        "instanceID": "i-1",
+                        "availabilityZone": "us-east-1a",
+                        "imageID": "ami-0abc",
+                        "keyName": "deploy",
+                        "architecture": "x86_64",
+                        "stateTransitionReason": "Client.StopInstance User requested stop",
+                        "iamInstanceProfileARN": "arn:aws:iam::123:instance-profile/api",
+                        "privateDNSName": "ip-10-0-0-1.ec2.internal",
+                        "publicDNSName": "ec2-1-2-3-4.us-east-1.compute.amazonaws.com"
+                    }]
+                }]
+            }]
+        }"#;
+        let scenario = parse_scenario(contents).unwrap();
+        let instance = &scenario.profiles[0].regions[0].instances[0];
+        assert_eq!(instance.availability_zone.as_deref(), Some("us-east-1a"));
+        assert_eq!(instance.image_id.as_deref(), Some("ami-0abc"));
+        assert_eq!(instance.key_name.as_deref(), Some("deploy"));
+        assert_eq!(instance.architecture.as_deref(), Some("x86_64"));
+        assert_eq!(
+            instance.state_transition_reason.as_deref(),
+            Some("Client.StopInstance User requested stop")
+        );
+        assert_eq!(
+            instance.iam_instance_profile_arn.as_deref(),
+            Some("arn:aws:iam::123:instance-profile/api")
+        );
+        assert_eq!(
+            instance.private_dns_name.as_deref(),
+            Some("ip-10-0-0-1.ec2.internal")
+        );
+        assert_eq!(
+            instance.public_dns_name.as_deref(),
+            Some("ec2-1-2-3-4.us-east-1.compute.amazonaws.com")
+        );
     }
 
     #[test]

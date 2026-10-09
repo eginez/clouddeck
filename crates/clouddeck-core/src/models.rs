@@ -1,4 +1,4 @@
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct EC2InstanceTag {
@@ -25,6 +25,23 @@ pub struct EC2Instance {
     pub subnet_id: Option<String>,
     pub security_groups: Vec<EC2SecurityGroup>,
     pub tags: Vec<EC2InstanceTag>,
+    /// Placement.AvailabilityZone from describe-instances.
+    pub availability_zone: Option<String>,
+    /// ImageId from describe-instances.
+    pub image_id: Option<String>,
+    /// KeyName from describe-instances.
+    pub key_name: Option<String>,
+    /// Architecture from describe-instances.
+    pub architecture: Option<String>,
+    /// StateTransitionReason ("code message"), why the instance is in its
+    /// state (e.g. stopped).
+    pub state_transition_reason: Option<String>,
+    /// IamInstanceProfile.Arn from describe-instances.
+    pub iam_instance_profile_arn: Option<String>,
+    /// PrivateDnsName from describe-instances.
+    pub private_dns_name: Option<String>,
+    /// PublicDnsName from describe-instances.
+    pub public_dns_name: Option<String>,
 }
 
 impl EC2Instance {
@@ -42,6 +59,49 @@ impl EC2Instance {
             .iter()
             .find(|tag| tag.key.eq_ignore_ascii_case("Name"))
             .map(|tag| tag.value.as_str())
+    }
+
+    /// Time elapsed since `launch_time`, when launch time is in the past
+    /// and known; `None` when launch time is absent or in the future.
+    ///
+    /// Note: EC2 preserves `LaunchTime` across stop/start, so for a stopped
+    /// instance this reports time since the *original* launch, not since the
+    /// most recent start. Callers wiring this into UI should display it
+    /// alongside the state (or gate it on `state == running`).
+    pub fn uptime(&self) -> Option<Duration> {
+        let launch_time = self.launch_time?;
+        SystemTime::now()
+            .duration_since(launch_time)
+            .ok()
+    }
+
+    /// Human-readable uptime like "3d 4h 5m" (zero higher units omitted),
+    /// or `"—"` when launch time is absent or not in the past.
+    pub fn uptime_description(&self) -> String {
+        match self.uptime() {
+            Some(uptime) => {
+                let total = uptime.as_secs();
+                let days = total / 86_400;
+                let hours = (total % 86_400) / 3_600;
+                let minutes = (total % 3_600) / 60;
+                let seconds = total % 60;
+                let mut parts = Vec::new();
+                if days > 0 {
+                    parts.push(format!("{days}d"));
+                }
+                if days > 0 || hours > 0 {
+                    parts.push(format!("{hours}h"));
+                }
+                if days > 0 || hours > 0 || minutes > 0 {
+                    parts.push(format!("{minutes}m"));
+                }
+                if days == 0 && hours == 0 && minutes == 0 {
+                    parts.push(format!("{seconds}s"));
+                }
+                parts.join(" ")
+            }
+            None => "—".to_string(),
+        }
     }
 }
 
@@ -163,6 +223,14 @@ mod tests {
                 key: "Name".to_string(),
                 value: name.to_string(),
             }],
+            availability_zone: None,
+            image_id: None,
+            key_name: None,
+            architecture: None,
+            state_transition_reason: None,
+            iam_instance_profile_arn: None,
+            private_dns_name: None,
+            public_dns_name: None,
         }
     }
 
@@ -256,6 +324,26 @@ mod tests {
         let filtered = filters.apply(&[target, distractor]);
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].instance_id, "i-frontend");
+    }
+
+    #[test]
+    fn uptime_and_description_require_a_past_launch_time() {
+        let mut inst = instance("i-1", "t3.micro", "running", "api");
+        assert_eq!(inst.uptime(), None);
+        assert_eq!(inst.uptime_description(), "—");
+        inst.launch_time = Some(SystemTime::now());
+        assert!(inst.uptime().is_some());
+        // Below one minute the description is seconds.
+        assert!(inst.uptime_description().ends_with('s'));
+    }
+
+    #[test]
+    fn uptime_description_omits_zero_higher_units() {
+        let mut inst = instance("i-1", "t3.micro", "running", "api");
+        inst.launch_time = Some(
+            SystemTime::now() - Duration::from_secs(86_400 * 3 + 3_600 * 4 + 60 * 5),
+        );
+        assert_eq!(inst.uptime_description(), "3d 4h 5m");
     }
 
     #[test]
