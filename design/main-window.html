@@ -1,18 +1,68 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8">
-<title>CloudDeck main window (light)</title>
+<title>CloudDeck main window</title>
 <style>
-:root{
+:root{--k04:#00000004;--k0a:#0000000a;--k0d:#0000000d;--k0f:#0000000f;--k10:#00000010;--k1a:#0000001a;--surf:#fff;--popbg:#fffffff2;--tagbg:#f3f3f6;--skel:#e6e6ea;--ihbg:#f0f0f4;--warntext:#8a5a0a;--runtext:#177a42;--page:#c9c9cf;--badge:#8b93a1;
   --win:#fbfbfc; --chrome:#ececef; --side:#f1f1f4; --panel:#f7f7f9; --line:#dcdce1; --line2:#e8e8ec;
   --text:#1c1c1f; --dim:#6b6b73; --faint:#6f6f79; --hover:#ececf0; --sel:#dfe6f5; --selbar:#2f6fdb;
   --accent:#2f6fdb; --run:#1f9d55; --stop:#8a8a93; --warn:#b7791f; --err:#c4372c;
   --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif;
   --mono:ui-monospace,"SF Mono",Menlo,monospace;
 }
+[data-theme=dark]{--k04:#ffffff04;--k0a:#ffffff0a;--k0d:#ffffff0d;--k0f:#ffffff0f;--k10:#ffffff10;--k1a:#ffffff1a;--surf:#2a2b30;--popbg:#2f3036f2;--tagbg:#33343a;--skel:#33343a;--ihbg:#2a2b30;--warntext:#e3b04b;--runtext:#5fd391;--page:#101012;--badge:#5b6272;
+ --win:#1e1f23;--chrome:#2b2c31;--side:#25262a;--panel:#222327;--line:#3a3b41;--line2:#32333a;--text:#ececf0;--dim:#a0a0aa;--faint:#8e8e99;--hover:#32333a;--sel:#2b3a5c;--selbar:#5b8def;--accent:#5b8def;--run:#3ecf7a;--stop:#8a8a93;--warn:#e3b04b;--err:#ff6b5e}
+[data-theme=dark] .win,[data-theme=dark] .wel,[data-theme=dark] .mini{box-shadow:0 0 0 .5px #000a,0 18px 50px #000a}
+[data-theme=dark] body,body[data-theme=dark]{color:var(--text)}
+.ctrls{display:flex;gap:6px;margin-bottom:8px}.ctrls button{height:26px;padding:0 12px;border-radius:6px;border:0;background:var(--surf);color:var(--text);font:inherit;box-shadow:0 0 0 .5px var(--line)}.ctrls button.on{background:var(--accent);color:#fff}
+.chip{height:16px;padding:0 6px;border-radius:8px;background:var(--accent);color:#fff;font:600 9px var(--font);letter-spacing:.05em;display:inline-flex;align-items:center}
+.palwrap{position:absolute;inset:0;background:var(--k1a);display:flex;justify-content:center;align-items:flex-start;padding-top:70px;z-index:20}.palette{width:540px;background:var(--popbg);backdrop-filter:blur(24px);border-radius:10px;box-shadow:0 0 0 .5px #0005,0 16px 50px #0005;overflow:hidden}.palin{display:flex;align-items:center;gap:8px;padding:0 12px;height:40px;color:var(--faint)}.palin input:focus-visible{outline:0!important}.palin input{flex:1;border:0;outline:0;background:transparent;font:14px var(--font);color:var(--text)}.pallist{max-height:300px;overflow:auto;padding:4px;border-top:1px solid var(--line2)}.palrow{height:28px;border-radius:5px;display:flex;align-items:center;padding:0 10px;gap:8px}.palrow kbd{margin-left:auto;background:transparent;border:0;color:inherit;opacity:.7}.palrow.off{color:var(--faint)}.palrow.hl{background:var(--accent);color:#fff}.palrow.hl.off{background:var(--k1a);color:var(--dim)}.palft{padding:6px 12px;color:var(--faint);font-size:11px;border-top:1px solid var(--line2)}
+.scrim{position:absolute;left:0;right:0;top:44px;bottom:24px;background:var(--k1a);z-index:11}
+.narrow .side{position:absolute;left:0;top:44px;bottom:24px;z-index:12;box-shadow:6px 0 24px #0003}
+.narrow .insp{position:absolute;right:0;top:44px;bottom:24px;z-index:12;box-shadow:-6px 0 24px #0003;width:min(340px,92%)}
+.cl1 tr>:nth-child(8),.cl2 tr>:nth-child(7),.cl3 tr>:nth-child(6),.cl4 tr>:nth-child(5){display:none}
+.h2x .h2,.h1x .h1{display:none}
+.compact .title{display:none}.compact .search{width:30px;padding:0 6px}.compact .search input,.compact .search kbd{width:0;padding:0;opacity:0;overflow:hidden;border:0}.compact .search:focus-within{width:190px}.compact .search:focus-within input{width:130px;opacity:1}
+.compact .tb{gap:4px}.compact .failpop{width:calc(100% - 16px)!important}.compact .sbb.prof,.compact .sbb{max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.short .pop{max-height:calc(100% - 56px);overflow:auto}.short .pallist{max-height:130px}.short .palwrap{padding-top:16px}
+.ctrls .sz{margin-left:12px}
+.ih .nm span:first-of-type{min-width:0}.sum{margin-top:6px;color:var(--dim)}.sum.stopd{color:var(--text)}
+.stalebox{margin-top:10px;padding:6px 8px;border-radius:6px;background:var(--k0a);color:var(--warntext);display:flex;gap:6px;align-items:center}
+.cp{border:0;background:transparent;color:var(--faint);padding:0;margin-left:6px;display:inline-flex;opacity:0;cursor:default}.kv dd:hover .cp,.sgrow:hover .cp,.id:hover .cp,.cp:focus-visible{opacity:1}.cp:focus-visible{outline:2px solid var(--accent);border-radius:3px}
+.sgrow{display:flex;align-items:center;gap:8px;height:22px}.dimt{color:var(--dim)}
+.tag{border:1px solid var(--line);border-radius:4px;cursor:default;font:inherit;padding:0;background:var(--surf);color:var(--text);max-width:100%}.tag:hover{border-color:var(--accent)}.tag:focus-visible{outline:2px solid var(--accent)}.tag b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:200px;display:inline-block;vertical-align:top}
+.linkb{border:0;background:transparent;color:var(--accent);font:inherit;padding:2px 0;cursor:default}.linkb:hover{text-decoration:underline}
+.kv dd span{min-width:0}
+
+.setw{width:960px;height:620px;background:var(--win);border-radius:10px;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 0 0 .5px #0006,0 18px 50px #0004;position:relative}
+.setw .stb{height:44px;background:var(--chrome);display:flex;align-items:center;gap:8px;padding:0 14px;flex:none}.setw .stb .t{font-weight:600;margin-left:6px}
+.setw .sbody{flex:1;display:flex;min-height:0}
+.setw .tree{width:230px;background:var(--side);padding:8px;display:flex;flex-direction:column;gap:2px;overflow:auto;flex:none}
+.setw .tree .search{width:100%;margin-bottom:8px}
+.setw .cat{height:26px;border-radius:5px;display:flex;align-items:center;gap:8px;padding:0 8px;cursor:default;border:0;background:transparent;color:var(--text);font:inherit;text-align:left;width:100%}.setw .cat:hover{background:var(--hover)}.setw .cat.on{background:var(--sel)}.setw .cat .n{margin-left:auto;color:var(--faint)}.setw .cat .md{width:6px;height:6px;border-radius:50%;background:var(--accent);margin-left:auto}
+.setw .pane{flex:1;overflow:auto;padding:16px 24px 24px}
+.setw .crumb2{color:var(--dim);margin-bottom:2px}.setw h3{margin:0 0 14px;font:600 18px var(--font)}
+.setw .grp{font:600 11px var(--font);color:var(--faint);text-transform:uppercase;letter-spacing:.04em;margin:18px 0 6px}
+.setw .it{display:grid;grid-template-columns:1fr 240px;gap:4px 24px;padding:9px 0 9px 10px;position:relative;align-items:center}
+.setw .it.mod::before{content:"";position:absolute;left:0;top:8px;bottom:8px;width:3px;border-radius:2px;background:var(--accent)}
+.setw .it .l{font-weight:500}.setw .it .d{color:var(--dim);margin-top:2px}.setw .it .rs{color:var(--accent);margin-left:8px;border:0;background:transparent;font:inherit;cursor:default}.setw .it .rs:hover{text-decoration:underline}
+.setw .it.off{opacity:.45;pointer-events:none}
+.setw select,.setw input[type=text]{height:26px;border-radius:6px;border:0;background:var(--surf);box-shadow:0 0 0 .5px var(--line);color:var(--text);font:inherit;padding:0 8px;width:100%}
+.setw input:focus-visible,.setw select:focus-visible,.sw:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.sw{width:34px;height:20px;border-radius:10px;background:var(--k1a);border:0;position:relative;padding:0;cursor:default;justify-self:end}.sw::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;transition:left .12s}.sw.on{background:var(--accent)}.sw.on::after{left:16px}
+.setw mark{background:#f5d76a88;color:inherit;border-radius:2px}
+.setw .foot{height:46px;background:var(--chrome);display:flex;align-items:center;gap:10px;padding:0 14px;flex:none;color:var(--dim)}.setw .foot .sp{flex:1}
+.setw .cbs{display:flex;flex-wrap:wrap;gap:6px 14px;justify-self:end;width:240px}.setw .cbs label{display:flex;gap:6px;align-items:center}
+.setw table.kt{width:100%;border-collapse:collapse}.setw table.kt td,.setw table.kt th{height:28px;padding:0 8px;text-align:left}.setw table.kt th{color:var(--dim);font-weight:500}.setw table.kt tr:nth-child(even) td{background:var(--k04)}
+.setw .keyc{font-family:var(--mono);font-size:11px}.setw .pin{display:flex;align-items:center;gap:8px;height:28px;padding:0 8px;border-radius:5px}.setw .pin:hover{background:var(--hover)}.setw .pin .x{margin-left:auto;border:0;background:transparent;color:var(--faint);cursor:default}
+.setw .info{padding:10px 12px;border-radius:8px;background:var(--k0a);color:var(--dim);margin:6px 0}
+.setw .ok{color:var(--runtext)}
+.strip{height:24px;background:var(--chrome);display:flex;align-items:center;gap:8px;padding:0 10px;color:var(--dim);font-size:11px;flex:none;width:100%}.strip .r{margin-left:auto}
+.mini .bd{overflow:hidden}.mrow{display:flex;align-items:center;gap:8px;width:100%;padding:3px 6px;border-radius:5px;text-align:left}.mrow .sp{flex:1}
+.rgchk{width:14px;height:14px;border-radius:4px;border:1px solid var(--faint);display:inline-flex;align-items:center;justify-content:center;flex:none}.rgchk.on{background:var(--accent);border-color:var(--accent);color:#fff}.rgchk svg{width:11px;height:11px;stroke-width:2}.only{margin-left:8px;opacity:0;color:inherit;text-decoration:underline}.pk:hover .only,.pk.hl .only{opacity:.85}
 *{box-sizing:border-box}
-body{margin:0;background:#c9c9cf;font:12px/1.3 var(--font);color:var(--text);padding:24px;display:flex;flex-direction:column;gap:28px;align-items:center}
-h2{margin:0 0 8px;font:600 13px var(--font);color:#333}
-.note{font-size:12px;color:#444;max-width:1280px;margin:0 0 8px}
+body{margin:0;background:var(--page);font:12px/1.3 var(--font);color:var(--text);padding:24px;display:flex;flex-direction:column;gap:28px;align-items:center}
+h2{margin:0 0 8px;font:600 13px var(--font);color:var(--text)}
+.note{font-size:12px;color:var(--text);max-width:1280px;margin:0 0 8px}
 .board{width:1280px}
 .win{width:1280px;height:760px;background:var(--win);border-radius:10px;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 0 0 .5px #0006,0 18px 50px #0004;position:relative}
 svg.i{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.2;stroke-linecap:round;stroke-linejoin:round;flex:none}
@@ -20,15 +70,15 @@ svg.i{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.2;stro
 .tb{height:44px;background:var(--chrome);display:flex;align-items:center;gap:8px;padding:0 10px 0 14px;flex:none}
 .lights{display:flex;gap:8px;margin-right:6px}.lights i{width:12px;height:12px;border-radius:50%;display:block}
 .btn{height:26px;min-width:26px;padding:0 7px;border:0;border-radius:6px;background:transparent;color:var(--text);display:inline-flex;align-items:center;gap:5px;font:inherit;cursor:default}
-.btn:hover{background:#0000000d}.btn:focus-visible,.row:focus-visible,.sb-item:focus-visible,th:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
-.btn.menu{background:#fff;box-shadow:0 0 0 .5px var(--line),0 1px 0 #0000000a}
-.btn .c{color:var(--faint)}.sep{width:1px;height:12px;background:#0000001a;margin:0 4px}
+.btn:hover{background:var(--k0d)}.btn:focus-visible,.row:focus-visible,.sb-item:focus-visible,th:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.btn.menu{background:var(--surf);box-shadow:0 0 0 .5px var(--line),0 1px 0 var(--k0a)}
+.btn .c{color:var(--faint)}.sep{width:1px;height:12px;background:var(--k1a);margin:0 4px}
 .crumb{display:flex;align-items:center;gap:2px;color:var(--dim)}.crumb b{color:var(--text);font-weight:500}
 .title{font-weight:600;margin-left:4px}
 .sp{flex:1}
-.search{width:220px;height:26px;border-radius:6px;background:#fff;box-shadow:0 0 0 .5px var(--line);display:flex;align-items:center;gap:6px;padding:0 7px;color:var(--faint)}
-.recent{display:none;position:absolute;top:30px;right:0;width:260px;background:#fffffff2;backdrop-filter:blur(20px);border-radius:8px;box-shadow:0 0 0 .5px #0004,0 10px 30px #0003;padding:4px;z-index:9;color:var(--text)}.search{position:relative}.search input:placeholder-shown:focus~.recent{display:block}.recent div{height:24px;border-radius:4px;display:flex;align-items:center;gap:8px;padding:0 8px}.recent div:not(.h):hover{background:var(--accent);color:#fff}.recent .h{height:20px;font:600 10px var(--font);color:var(--faint);text-transform:uppercase;letter-spacing:.04em}.search input{border:0;outline:0;background:transparent;font:inherit;color:var(--text);width:100%;min-width:0}
-kbd{font:10px var(--font);color:var(--faint);border:1px solid var(--line);border-radius:4px;padding:0 4px;background:#fff}
+.search{width:220px;height:26px;border-radius:6px;background:var(--surf);box-shadow:0 0 0 .5px var(--line);display:flex;align-items:center;gap:6px;padding:0 7px;color:var(--faint)}
+.recent{display:none;position:absolute;top:30px;right:0;width:260px;background:var(--popbg);backdrop-filter:blur(20px);border-radius:8px;box-shadow:0 0 0 .5px #0004,0 10px 30px #0003;padding:4px;z-index:9;color:var(--text)}.search{position:relative}.search input:placeholder-shown:focus~.recent{display:block}.recent div{height:24px;border-radius:4px;display:flex;align-items:center;gap:8px;padding:0 8px}.recent div:not(.h):hover{background:var(--accent);color:var(--surf)}.recent .h{height:20px;font:600 10px var(--font);color:var(--faint);text-transform:uppercase;letter-spacing:.04em}.search input{border:0;outline:0;background:transparent;font:inherit;color:var(--text);width:100%;min-width:0}
+kbd{font:10px var(--font);color:var(--faint);border:1px solid var(--line);border-radius:4px;padding:0 4px;background:var(--surf)}
 /* body */
 .main{flex:1;display:flex;min-height:0}
 .side{width:210px;background:var(--side);padding:8px 8px;overflow:auto;flex:none}
@@ -49,18 +99,18 @@ thead th{position:sticky;top:0;background:var(--panel);height:24px;text-align:le
 thead th .s{display:inline-flex;align-items:center;gap:3px}
 thead th.sorted{color:var(--text)}
 tbody td{height:28px;padding:0 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-tbody tr.row:nth-child(even){background:#00000004}tbody tr.row:hover{background:#0000000a}
+tbody tr.row:nth-child(even){background:var(--k04)}tbody tr.row:hover{background:var(--k0a)}
 tbody tr.row.sel{background:var(--sel);box-shadow:inset 2px 0 0 var(--selbar)}
 td.mono,.mono{font-family:var(--mono);font-size:11px;letter-spacing:-.1px}
 td.dim{color:var(--dim)}td.num{font-variant-numeric:tabular-nums}
-.st{display:inline-flex;align-items:center;gap:6px}.st.run-t{color:#177a42}.st.stp-t{color:var(--dim)}.st.pen-t{color:var(--warn)}
+.st{display:inline-flex;align-items:center;gap:6px}.st.run-t{color:var(--runtext)}.st.stp-t{color:var(--dim)}.st.pen-t{color:var(--warn)}
 tr.grp td{height:22px;background:var(--side);font-weight:600;color:var(--dim);font-size:11px}
 tr.grp td .n{font-weight:400;color:var(--faint);margin-left:6px}
 /* inspector */
 .insp{width:340px;background:var(--panel);display:flex;flex-direction:column;flex:none;position:relative}
 .insp .rz{position:absolute;left:-3px;top:0;bottom:0;width:6px;cursor:col-resize}
 .insp .rz:hover{background:#2f6fdb33}
-.ih{padding:12px 14px 10px;background:#f0f0f4}
+.ih{padding:12px 14px 10px;background:var(--ihbg)}
 .ih .nm{font:600 14px var(--font);display:flex;align-items:center;gap:8px}
 .ih .id{color:var(--dim);margin-top:3px;display:flex;align-items:center;gap:6px}
 .ib{overflow:auto;flex:1;padding:4px 14px 14px}
@@ -69,20 +119,20 @@ tr.grp td .n{font-weight:400;color:var(--faint);margin-left:6px}
 .kv dt{color:var(--dim)}.kv dd{margin:0;display:flex;align-items:center;gap:6px;min-width:0}
 .kv dd span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cp{color:var(--faint);opacity:0}.kv dd:hover .cp{opacity:1}
-.tag{display:inline-flex;gap:0;border:1px solid var(--line);border-radius:4px;overflow:hidden;background:#fff;margin:0 4px 4px 0;font-size:11px}
-.tag i{font-style:normal;padding:1px 6px;color:var(--dim);background:#f3f3f6}.tag b{font-weight:400;padding:1px 6px}
+.tag{display:inline-flex;gap:0;border:1px solid var(--line);border-radius:4px;overflow:hidden;background:var(--surf);margin:0 4px 4px 0;font-size:11px}
+.tag i{font-style:normal;padding:1px 6px;color:var(--dim);background:var(--tagbg)}.tag b{font-weight:400;padding:1px 6px}
 .sbar{height:24px;background:var(--chrome);display:flex;align-items:center;padding:0 12px;gap:10px;color:var(--dim);font-size:11px;flex:none}
-.sbb{height:20px;padding:0 6px;border:0;border-radius:4px;background:transparent;color:inherit;font:inherit;display:inline-flex;align-items:center;gap:5px;cursor:default}.sbb.warn{color:#8a5a0a}.sbb.warn:hover{color:#6b4608}.stale td{color:var(--faint)}.failpop{width:380px!important;padding:12px!important;right:8px;left:auto!important}.failpop .h2{font-weight:600;display:flex;align-items:center;gap:6px;margin-bottom:6px;color:#8a5a0a}.failpop p{margin:0 0 8px;color:var(--dim)}.failpop code{font:11px var(--mono);background:#0000000a;border-radius:4px;padding:6px 8px;display:block;margin-bottom:10px;color:var(--text)}.failpop .a .sbtn,.failpop .a .pbtn{white-space:nowrap}.failpop .a{display:flex;gap:6px;justify-content:flex-end}.sbb.ic{width:22px;padding:0;justify-content:center}.sbb.on{background:#0000001a;color:var(--text)}.sbb.prof{color:var(--text)}
-.pk{display:flex;align-items:center;gap:10px;padding:5px 8px;border-radius:6px}.pk:hover{background:var(--hover)}.pk.cur{background:var(--sel)}.bdg{width:28px;height:28px;border-radius:50%;background:#8b93a1;color:#fff;font:600 11px var(--font);display:flex;align-items:center;justify-content:center;flex:none}.pk.cur .bdg,.bdg.acc{background:var(--accent)}.pk .t{font-weight:500}.pk .u{color:var(--dim);font-size:11px}
-.pp{width:300px!important;padding:6px!important}.pp .pk{height:auto;min-height:40px;padding:5px 8px}.pp .pk div,.pp .pk div:hover{height:auto;display:block;padding:0;background:none;border-radius:0;color:inherit}.pp .pk .u{color:var(--dim)}.pp .pk:hover .u{color:#ffffffcc}.pp .ft .pk{min-height:28px;display:flex;align-items:center;gap:8px}.pp .ft{border-radius:0}.pp .srch{height:26px;border-radius:6px;background:#fff;box-shadow:0 0 0 .5px var(--line);display:flex;align-items:center;gap:6px;padding:0 7px;color:var(--faint);margin-bottom:4px}.pp .pk:hover{background:var(--accent);color:#fff}.pp .pk:hover .u{color:#ffffffcc}
+.sbb{height:20px;padding:0 6px;border:0;border-radius:4px;background:transparent;color:inherit;font:inherit;display:inline-flex;align-items:center;gap:5px;cursor:default}.sbb.warn{color:var(--warntext)}.sbb.warn:hover{color:var(--warntext)}.stale td{color:var(--faint)}.failpop{width:380px!important;padding:12px!important;right:8px;left:auto!important}.failpop .h2{font-weight:600;display:flex;align-items:center;gap:6px;margin-bottom:6px;color:var(--warntext)}.failpop p{margin:0 0 8px;color:var(--dim)}.failpop code{font:11px var(--mono);background:var(--k0a);border-radius:4px;padding:6px 8px;display:block;margin-bottom:10px;color:var(--text)}.failpop .a .sbtn,.failpop .a .pbtn{white-space:nowrap}.failpop .a{display:flex;gap:6px;justify-content:flex-end}.sbb.ic{width:22px;padding:0;justify-content:center}.sbb.on{background:var(--k1a);color:var(--text)}.sbb.prof{color:var(--text)}
+.pk{display:flex;align-items:center;gap:10px;padding:5px 8px;border-radius:6px}.pk:hover{background:var(--hover)}.pk.cur{background:var(--sel)}.bdg{width:28px;height:28px;border-radius:50%;background:var(--badge);color:var(--surf);font:600 11px var(--font);display:flex;align-items:center;justify-content:center;flex:none}.pk.cur .bdg,.bdg.acc{background:var(--accent)}.pk .t{font-weight:500}.pk .u{color:var(--dim);font-size:11px}
+.pp{width:300px!important;padding:6px!important}.pp .pk{height:auto;min-height:40px;padding:5px 8px}.pp .pk div,.pp .pk div:hover{height:auto;display:block;padding:0;background:none;border-radius:0;color:inherit}.pp .pk .u{color:var(--dim)}.pp .pk:hover .u{color:#ffffffcc}.pp .ft .pk{min-height:28px;display:flex;align-items:center;gap:8px}.pp .ft{border-radius:0}.pp .srch{height:26px;border-radius:6px;background:var(--surf);box-shadow:0 0 0 .5px var(--line);display:flex;align-items:center;gap:6px;padding:0 7px;color:var(--faint);margin-bottom:4px}.pp .pk:hover{background:var(--accent);color:var(--surf)}.pp .pk:hover .u{color:#ffffffcc}
 .ft{margin-top:4px;padding-top:4px;color:var(--dim)}
-.wel{display:flex;width:1000px;height:560px;background:var(--win);border-radius:10px;overflow:hidden;box-shadow:0 0 0 .5px #0006,0 18px 50px #0004}.wl{width:300px;background:var(--side);padding:22px 20px;display:flex;flex-direction:column;align-items:center;gap:6px}.wl .big{width:100%;height:40px;border-radius:7px;background:#00000010;display:flex;align-items:center;gap:10px;padding:0 12px;color:var(--text)}.wl .big:hover{background:#0000001a}.wr{flex:1;padding:20px 22px;display:flex;flex-direction:column;gap:10px}.sheet{width:760px;height:470px;background:var(--side);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:12px;box-shadow:0 0 0 .5px #0006,0 18px 50px #0004}.grid{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;flex:1;align-content:start}.cell{display:flex;flex-direction:column;align-items:center;gap:6px;padding:12px 4px;border-radius:6px;text-align:center}.cell .bdg{width:44px;height:44px;font-size:14px}.cell.f{outline:2px solid var(--accent);outline-offset:-2px;background:#2f6fdb12}.cell .u{color:var(--dim);font-size:11px}.spin{width:10px;height:10px;border-radius:50%;border:1.5px solid #bbb;border-top-color:var(--accent);animation:sp .7s linear infinite}@keyframes sp{to{transform:rotate(360deg)}}.sbb:hover{background:#0000000f;color:var(--text)}.pk:focus-visible,.cell:focus-visible,.sbtn:focus-visible,.pbtn:focus-visible,.big:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}.hl{background:var(--accent)!important;color:#fff!important}.hl .u{color:#ffffffcc!important}.sbb:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
-.pop{position:absolute;bottom:28px;left:8px;width:220px;background:#fffffff2;backdrop-filter:blur(20px);border-radius:8px;box-shadow:0 0 0 .5px #0004,0 10px 30px #0003;padding:4px;z-index:9}.pop div{height:24px;border-radius:4px;display:flex;align-items:center;gap:8px;padding:0 8px}.pop div:hover{background:var(--accent);color:#fff}.pop .h{height:20px;font:600 10px var(--font);color:var(--faint);text-transform:uppercase;letter-spacing:.04em}.pop .h:hover{background:none;color:var(--faint)}.pop kbd{margin-left:auto;background:transparent;border:0;color:inherit;opacity:.6}
+.wel{display:flex;width:1000px;height:560px;background:var(--win);border-radius:10px;overflow:hidden;box-shadow:0 0 0 .5px #0006,0 18px 50px #0004}.wl{width:300px;background:var(--side);padding:22px 20px;display:flex;flex-direction:column;align-items:center;gap:6px}.wl .big{width:100%;height:40px;border-radius:7px;background:var(--k10);display:flex;align-items:center;gap:10px;padding:0 12px;color:var(--text)}.wl .big:hover{background:var(--k1a)}.wr{flex:1;padding:20px 22px;display:flex;flex-direction:column;gap:10px}.sheet{width:760px;height:470px;background:var(--side);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:12px;box-shadow:0 0 0 .5px #0006,0 18px 50px #0004}.grid{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;flex:1;align-content:start}.cell{display:flex;flex-direction:column;align-items:center;gap:6px;padding:12px 4px;border-radius:6px;text-align:center}.cell .bdg{width:44px;height:44px;font-size:14px}.cell.f{outline:2px solid var(--accent);outline-offset:-2px;background:#2f6fdb12}.cell .u{color:var(--dim);font-size:11px}.spin{width:10px;height:10px;border-radius:50%;border:1.5px solid #bbb;border-top-color:var(--accent);animation:sp .7s linear infinite}@keyframes sp{to{transform:rotate(360deg)}}.sbb:hover{background:var(--k0f);color:var(--text)}.pk:focus-visible,.cell:focus-visible,.sbtn:focus-visible,.pbtn:focus-visible,.big:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}.hl{background:var(--accent)!important;color:var(--surf)!important}.hl .u{color:#ffffffcc!important}.sbb:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.pop{position:absolute;bottom:28px;left:8px;width:220px;background:var(--popbg);backdrop-filter:blur(20px);border-radius:8px;box-shadow:0 0 0 .5px #0004,0 10px 30px #0003;padding:4px;z-index:9}.pop div{height:24px;border-radius:4px;display:flex;align-items:center;gap:8px;padding:0 8px}.pop div:hover{background:var(--accent);color:var(--surf)}.pop .h{height:20px;font:600 10px var(--font);color:var(--faint);text-transform:uppercase;letter-spacing:.04em}.pop .h:hover{background:none;color:var(--faint)}.pop kbd{margin-left:auto;background:transparent;border:0;color:inherit;opacity:.6}
 .sbar .r{margin-left:auto;display:flex;align-items:center;gap:6px}
 /* context menu */
-.ctx{position:absolute;width:236px;background:#fffffff2;backdrop-filter:blur(20px);border-radius:8px;box-shadow:0 0 0 .5px #0004,0 10px 30px #0003;padding:4px;z-index:9}
+.ctx{position:absolute;width:236px;background:var(--popbg);backdrop-filter:blur(20px);border-radius:8px;box-shadow:0 0 0 .5px #0004,0 10px 30px #0003;padding:4px;z-index:9}
 .ctx div{height:24px;border-radius:4px;display:flex;align-items:center;gap:8px;padding:0 8px}
-.ctx div:first-child{background:var(--accent);color:#fff}.ctx kbd{margin-left:auto;background:transparent;border:0;color:inherit;opacity:.6}
+.ctx div:first-child{background:var(--accent);color:var(--surf)}.ctx kbd{margin-left:auto;background:transparent;border:0;color:inherit;opacity:.6}
 .ctx hr{border:0;border-top:1px solid var(--line2);margin:4px 6px}
 /* states strip (other states) */
 .states{display:flex;gap:16px;width:1280px;flex-wrap:wrap}
@@ -90,17 +140,19 @@ tr.grp td .n{font-weight:400;color:var(--faint);margin-left:6px}
 .mini .cap{height:22px;background:var(--chrome);border-bottom:1px solid var(--line);font-size:10px;color:var(--dim);display:flex;align-items:center;padding:0 10px}
 .mini .bd{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;text-align:center;padding:12px;position:relative}
 .mini .bd h4{margin:0;font:600 13px var(--font)}.mini .bd p{margin:0;color:var(--dim);max-width:280px}
-.pbtn{height:26px;padding:0 12px;border-radius:6px;background:var(--accent);color:#fff;display:inline-flex;align-items:center;gap:6px}
-.sbtn,.pbtn{border:0;font:inherit;cursor:default}.sbtn{height:26px;padding:0 12px;border-radius:6px;background:#fff;box-shadow:0 0 0 .5px var(--line);display:inline-flex;align-items:center;gap:6px}
+.pbtn{height:26px;padding:0 12px;border-radius:6px;background:var(--accent);color:var(--surf);display:inline-flex;align-items:center;gap:6px}
+.sbtn,.pbtn{border:0;font:inherit;cursor:default}.sbtn{height:26px;padding:0 12px;border-radius:6px;background:var(--surf);box-shadow:0 0 0 .5px var(--line);display:inline-flex;align-items:center;gap:6px}
 .cloud{animation:bob 2.4s ease-in-out infinite}@keyframes bob{0%,100%{transform:translateY(3px);opacity:.55}50%{transform:translateY(-4px);opacity:1}}.dots i{font-style:normal;animation:bl 1.2s infinite}.dots i:nth-child(2){animation-delay:.2s}.dots i:nth-child(3){animation-delay:.4s}@keyframes bl{0%,60%,100%{opacity:.15}30%{opacity:1}}@media(prefers-reduced-motion:reduce){.cloud,.dots i,.spin{animation:none}}
 .sk{display:flex;gap:10px;width:100%;align-items:center;padding:0 4px}
-.sk i{height:8px;border-radius:4px;background:linear-gradient(90deg,#e6e6ea,#f3f3f6,#e6e6ea);display:block}
+.sk i{height:8px;border-radius:4px;background:linear-gradient(90deg,var(--skel),var(--tagbg),var(--skel));display:block}
 </style></head><body>
 
-<div class="note"><b>CloudDeck main window, light mode, 20 instances.</b> Profile and region live in the status bar (click to switch). Click rows, click column headers to sort, use ↑/↓ or j/k to move, ⌘F (or /) to focus search, Esc to clear, right-click a row for the context menu. State and type facets in the sidebar are live (counts follow the other filters); pinned searches and recent instances sit below them. Icons are inline 16px / 1.2px-stroke Lucide-style paths.</div>
+<div class="ctrls"><button id="thL" class="on">Light</button><button id="thD">Dark</button><span style="width:12px"></span><button id="dmL" class="on">Live data</button><button id="dmD">Demo data</button><span style="width:16px"></span><button class="szb on" data-w="1280" data-h="760">Wide 1280×760</button><button class="szb" data-w="960" data-h="760">Medium 960</button><button class="szb" data-w="700" data-h="760">Narrow 700</button><button class="szb" data-w="520" data-h="760">Compact 520</button><button class="szb" data-w="1280" data-h="480">Short 1280×480</button></div>
+<div class="note"><b>CloudDeck main window, 20 instances.</b> Use the toggles for light/dark and live/demo. Profile and region live in the status bar (click to switch). Click rows, click column headers to sort, use ↑/↓ or j/k to move, ⌘F (or /) to focus search, Esc to clear, right-click a row for the context menu. State and type facets in the sidebar are live (counts follow the other filters); pinned searches and recent instances sit below them. Icons are inline 16px / 1.2px-stroke Lucide-style paths.</div>
 
 <div class="board"><h2>Main window · flat sortable table, facets and pinned searches in the sidebar</h2><div class="win" id="A"></div></div>
 
+<div class="board"><h2>Settings (⌘,) · IntelliJ-style: category tree, settings search, changed-value markers, applies immediately</h2><div id="set" class="setw"></div></div>
 <div class="board"><h2>Onboarding · first run (welcome window)</h2><div id="onb" style="display:flex;flex-direction:column;gap:20px;align-items:flex-start"></div></div>
 <div class="board"><h2>Other states</h2><div class="states" id="states"></div></div>
 
@@ -129,11 +181,16 @@ const types=['t3.medium','t3.medium','t3.small','m6i.large','m6i.large','t3.smal
 const regions=['us-east-1','us-east-1','us-east-1','us-east-1','us-east-1','us-east-1','us-east-1','us-west-2','us-west-2','us-west-2','us-west-2','us-west-2','eu-west-1','eu-west-1','eu-west-1','eu-west-1','eu-central-1','eu-central-1','eu-central-1','eu-central-1'];
 const stopped=new Set([4,9,12,14,18]), pending=new Set([7]);
 const hex=(n)=>{let s='';let x=(n+1)*2654435761>>>0;for(let k=0;k<17;k++){x^=x<<13;x>>>=0;x^=x>>>17;x^=x<<5;x>>>=0;s+='0123456789abcdef'[x%16]}return s};
+const REG=['us-east-1','us-west-2','eu-west-1','eu-central-1'];
 const D=names.map((n,i)=>{const az=regions[i]+['a','b','c'][i%3];const st=stopped.has(i)?'stopped':pending.has(i)?'pending':'running';
- return {i,name:n+'-'+String(i%4+1).padStart(2,'0'),id:'i-'+hex(i+3),state:st,type:types[i],az,region:regions[i],
+ return {i,name:i===11?'':n+'-'+String(i%4+1).padStart(2,'0'),id:'i-'+hex(i+3),state:st,type:types[i],az,region:regions[i],
  pip:'10.'+(i<7?0:i<12?1:i<16?2:3)+'.'+(i*7%200+4)+'.'+(i*13%250+3),pub:st==='running'&&i%3!==0?'54.'+(80+i)+'.'+(i*11%250+2)+'.'+(i*17%250+5):'',
  launched:new Date(Date.UTC(2026,9,8,12)-(i*37+5)*3600e3*(1+i%5)).toISOString().slice(0,16).replace('T',' '),
- tags:{Environment:i===19?'staging':'production',Team:['platform','payments','search','data','infra'][i%5],Owner:['esteban','mira','jonas'][i%3],'aws:cloudformation:stack':names[i]+'-stack'},
+ reason:st==='stopped'?(i%2?'User initiated (2026-10-03 09:12 UTC)':'Instance initiated shutdown'):'',
+ stoppedDays:3+i%9,upDays:Math.max(1,Math.round((i*37+5)*(1+i%5)/24)),
+ sgs:[{n:['web-sg','api-sg','data-sg','bastion-sg'][i%4],id:'sg-0'+hex(i+7).slice(0,8)}].concat(i%3===0?[{n:'monitoring-sg',id:'sg-0'+hex(i+70).slice(0,8)}]:[]).concat(i%5===0?[{n:'office-vpn-sg',id:'sg-0'+hex(i+71).slice(0,8)}]:[]),
+ dnsP:'ip-10-'+(i<7?0:i<12?1:i<16?2:3)+'-'+(i*7%200+4)+'-'+(i*13%250+3)+'.ec2.internal',
+ tags:i===11?{}:Object.assign({Name:names[i]+'-'+String(i%4+1).padStart(2,'0'),Environment:i===19?'staging':'production',Team:['platform','payments','search','data','infra'][i%5],Owner:['esteban','mira','jonas'][i%3],'aws:cloudformation:stack':names[i]+'-stack'},i%4===0?{CostCenter:'cc-'+(1000+i),Backup:'daily',Compliance:'pci',Version:'2026.09.'+i,Role:'service',Project:'fleet-'+(i%3),Tier:'backend',ManagedBy:'terraform'}:{}),
  vpc:'vpc-0'+hex(i+90).slice(0,8),subnet:'subnet-0'+hex(i+40).slice(0,8),sg:'sg-0'+hex(i+7).slice(0,8),ami:'ami-0'+hex(i+55).slice(0,8),key:'ops-'+(i%2?'rsa':'ed25519')}});
 
 const cols=[['name','Name',170],['id','Instance ID',165],['state','State',92],['type','Type',100],['az','AZ',92],['pip','Private IP',104],['pub','Public IP',112],['launched','Launched',130]];
@@ -144,15 +201,15 @@ const stateCell=(d,dotOnly)=>`<span class="st ${stT[d.state]}"><span class="dot 
 const PROFILES=[['prod-readonly','1111-2222-3333 · us-east-1','PR'],['staging-admin','1111-2222-4444 · us-west-2','SA'],['sandbox','7777-8888-9999 · eu-west-1','SB'],['data-platform','1010-1010-1010 · us-east-1','DP'],['security-audit','1904-5521-8812 · eu-central-1','SE'],['legacy-2019','3056-7741-0098 · us-east-1','L9']];
 const pk=(p,cur)=>`<div class="pk${cur?' cur':''}" tabindex="0"><span class="bdg">${p[2]}</span><span><div class="t">${p[0]}</div><div class="u">${p[1]}</div></span>${cur?`<span style="margin-left:auto">${I('check')}</span>`:''}</div>`;
 function tb(v,F){F=F||{state:'',type:''};return `<div class="tb"><div class="lights"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></div>
- <button class="btn" title="Toggle sidebar (⌘B)" aria-label="Toggle sidebar">${I('sidebar')}</button>
+ <button class="btn" data-tsb title="Toggle sidebar (⌘B)" aria-label="Toggle sidebar">${I('sidebar')}</button>
  <span class="title" style="margin-left:6px">EC2 Instances</span><span class="sp"></span>
  <button class="btn menu" aria-label="Filters" title="Filters live in the sidebar" style="${(F.state||F.type)?'color:var(--accent)':''}">${I('filter')}${(F.state?1:0)+(F.type?1:0)?`${(F.state?1:0)+(F.type?1:0)} filter${(F.state&&F.type)?'s':''}`:'Filters'}</button>
  <div class="search">${I('search')}<input data-search placeholder="Search" aria-label="Search instances"><kbd>⌘F</kbd><div class="recent"><div class="h">Recent</div>${["billing prod","10.0.25","owner esteban","stopped g5"].map(t=>`<div data-r="${t}">${I("search","width:13px;height:13px")}${t}</div>`).join("")}<div class="h" style="margin-top:2px">Matches name, ID, IP, AZ, type, tags</div></div></div></div>`}
 
-function sideA(F,q,tAll){
+function sideA(F,q,tAll,R){
  const match=d=>!q||(Object.values(d).join(' ')+' '+Object.entries(d.tags).map(([k,v])=>k+' '+v).join(' ')).toLowerCase().split(/\s+/).length&&q.trim().split(/\s+/).every(w=>(Object.values(d).join(' ')+' '+Object.entries(d.tags).map(([k,v])=>k+' '+v).join(' ')).toLowerCase().includes(w));
- const cs=v=>D.filter(d=>(!F.type||d.type===F.type)&&match(d)&&(!v||d.state===v)).length;
- const ct=t=>D.filter(d=>(!F.state||d.state===F.state)&&match(d)&&d.type===t).length;
+ const cs=v=>D.filter(d=>R.has(d.region)&&(!F.type||d.type===F.type)&&match(d)&&(!v||d.state===v)).length;
+ const ct=t=>D.filter(d=>R.has(d.region)&&(!F.state||d.state===F.state)&&match(d)&&d.type===t).length;
  const ty=[...new Set(D.map(d=>d.type))].sort();
  const z=n=>n?'':' style="opacity:.45"';
  const pins=['billing prod','owner esteban','stopped g5'];
@@ -167,54 +224,97 @@ function sideA(F,q,tAll){
  <div class="sb-h">Recent</div>
  ${[3,0,12].map(i=>`<div class="sb-item" tabindex="0" data-rc="${i}"><span class="dot ${stD[D[i].state]}" style="margin:0 4px"></span>${D[i].name}</div>`).join('')}</div>`}
 
-function inspector(d){if(!d)return '';
- const kv=(k,v,m,c)=>`<dt>${k}</dt><dd><span class="${m?'mono':''}">${v||'<i style="color:var(--faint)">None</i>'}</span>${c&&v?`<span class="cp">${I('copy','width:13px;height:13px')}</span>`:''}</dd>`;
+function inspector(d,o){o=o||{};if(!d)return '';
+ const cp=v=>v?`<button class="cp" data-copy="${v}" title="Copy" aria-label="Copy ${v}">${I('copy','width:13px;height:13px')}</button>`:'';
+ const kv=(k,v,m,c,none)=>`<dt>${k}</dt><dd><span class="${m?'mono':''}" title="${v||''}">${v||`<i style="color:var(--faint)">${none||'None'}</i>`}</span>${c?cp(v):''}</dd>`;
+ const run=d.state==='running',stp=d.state==='stopped';
+ const summary=run?`${d.type} · ${d.az} · up ${d.upDays} day${d.upDays>1?'s':''}`:stp?`Stopped ${d.stoppedDays} days ago · ${d.reason}`:`${d.type} · ${d.az} · starting`;
+ const tg=Object.entries(d.tags).sort((a,b)=>a[0]==='Name'?-1:b[0]==='Name'?1:a[0].localeCompare(b[0]));
+ const shown=o.tagsAll?tg:tg.slice(0,8);
+ const noPub=stp?'Released while stopped':run?'No public address':'Not assigned yet';
  return `<aside class="insp" aria-label="Inspector"><div class="rz" title="Drag to resize (300–420)"></div>
- <div class="ih"><div class="nm"><span class="dot ${stD[d.state]}"></span>${d.name}<span class="sp"></span><button class="btn" aria-label="Close inspector (Esc)">${I('x')}</button></div>
- <div class="id mono">${d.id}<span style="color:var(--faint)">${I('copy','width:13px;height:13px')}</span></div></div>
- <div class="ib"><div class="sec">Instance</div><dl class="kv" style="margin:0">${kv('State',cap(d.state))}${kv('Type',d.type)}${kv('AZ',d.az)}${kv('AMI',d.ami,1,1)}${kv('Key pair',d.key)}${kv('Launched',d.launched+' UTC')}</dl>
- <div class="sec">Network</div><dl class="kv" style="margin:0">${kv('Private IP',d.pip,1,1)}${kv('Public IP',d.pub,1,1)}${kv('VPC',d.vpc,1,1)}${kv('Subnet',d.subnet,1,1)}${kv('Security group',d.sg,1,1)}</dl>
- <div class="sec">Tags · ${Object.keys(d.tags).length}</div>${Object.entries(d.tags).map(([k,v])=>`<span class="tag"><i>${k}</i><b>${v}</b></span>`).join('')}
- <div class="sec">Actions</div><div style="display:flex;gap:6px;flex-wrap:wrap"><span class="sbtn">${I('term')}Copy SSH</span><span class="sbtn">${I('ext')}Open in Console</span></div></div></aside>`}
+ <div class="ih"><div class="nm"><span class="dot ${stD[d.state]}"></span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${d.name}">${d.name||'<i style="color:var(--faint);font-weight:400">unnamed</i>'}</span><span class="sp"></span><button class="btn" aria-label="Close inspector (Esc)">${I('x')}</button></div>
+ <div class="id mono">${d.id}${cp(d.id)}</div><div class="sum${stp?' stopd':''}">${summary}</div></div>
+ <div class="ib">${o.stale?`<div class="stalebox">${I('warn','width:14px;height:14px')}From the 12:01 refresh. ${d.region} failed to load.</div>`:''}
+ <div class="sec">Instance</div><dl class="kv" style="margin:0">${kv('State',cap(d.state)+(stp&&d.reason?' · '+d.reason:''))}${kv('Type',d.type)}${kv('Zone',d.az)}${kv('AMI',d.ami,1,1)}${kv('Key pair',d.key)}${kv('Launched',d.launched+' UTC')}</dl>
+ <div class="sec">Network</div><dl class="kv" style="margin:0">${kv('Private IP',d.pip,1,1)}${kv('Public IP',d.pub,1,1,noPub)}${kv('Private DNS',d.dnsP,1,1)}${kv('VPC',d.vpc,1,1)}${kv('Subnet',d.subnet,1,1)}</dl>
+ <div class="sec">Security groups · ${d.sgs.length}</div>${d.sgs.map(g=>`<div class="sgrow"><span>${g.n}</span><span class="mono dimt">${g.id}</span>${cp(g.id)}</div>`).join('')}
+ <div class="sec">Tags · ${tg.length}</div>${tg.length?shown.map(([k,v])=>`<button class="tag" data-tag="${v}" title="${k} = ${v}. Click to search for this value"><i>${k}</i><b>${v}</b></button>`).join(''):'<div style="color:var(--faint)">This instance has no tags. Names come from the Name tag, so it shows as unnamed.</div>'}
+ ${tg.length>8?`<div><button class="linkb" data-tagsall>${o.tagsAll?'Show fewer':'Show all '+tg.length+' tags'}</button></div>`:''}
+ <div class="sec">Actions</div><div style="display:flex;gap:6px;flex-wrap:wrap"><button class="sbtn" data-copy="${d.id}">${I('copy')}Copy ID</button><button class="sbtn" data-console>${I('ext')}Open in Console</button></div></div></aside>`}
 
-function sbar(n,shown,extra,loading){const ch=I('chev','width:11px;height:11px');return `<div class="sbar">
- <span class="sbb" style="padding:0 4px;cursor:default" title="Provider">${I('cloud','width:14px;height:14px')}AWS</span>
+window.UI=window.UI||{side:true,insp:true};
+function sbar(n,shown,extra,loading,rl,rsz){rl=rl||'All regions';const ch=I('chev','width:11px;height:11px');return `<div class="sbar">
+ <span class="sbb" style="padding:0 4px;cursor:default" title="Provider">${I('cloud','width:14px;height:14px')}AWS${window.DEMO?' <span class="chip">DEMO</span>':''}</span>
  <button class="sbb prof" data-pop="profile" title="Switch profile  ⌘P" aria-label="Switch profile (⌘P)">${I('user','width:14px;height:14px')}prod-readonly${ch}</button>
- <button class="sbb" data-pop="region" title="Switch region  ⌘⇧R" aria-label="Switch region (⌘⇧R)">${I('globe','width:14px;height:14px')}All regions${ch}</button>
- <span class="sep"></span><span>${n} instances</span><span>·</span><span>${shown} shown</span>
- <span class="r"><span>Updated 12:04</span><button class="sbb ic" title="Refresh  ⌘R" aria-label="Refresh">${I('refresh','width:14px;height:14px')}</button><button class="sbb ic on" title="Close Inspector  ⌘⌥I" aria-label="Toggle inspector">${I('panelr','width:14px;height:14px')}</button><button class="sbb ic on" title="Close Sidebar  ⌘B" aria-label="Toggle sidebar">${I('sidebar','width:14px;height:14px')}</button><span class="sep"></span>${extra||(loading?`<span class="sbb" style="padding:0 4px"><span class="spin"></span>Loading prod-readonly…</span>`:`<span class="sbb" style="padding:0 4px"><span class="dot run"></span>Ready</span>`)}</span></div>`}
+ <button class="sbb" data-pop="region" title="Switch region  ⌘⇧R" aria-label="Switch region (⌘⇧R)">${I('globe','width:14px;height:14px')}${rl}${ch}</button>
+ <span class="sep"></span><span>${n} instances</span><span class="h1">·</span><span class="h1">${shown} shown</span>
+ <span class="r"><span class="h2">Updated 12:04</span><button class="sbb ic" title="Refresh  ⌘R" aria-label="Refresh">${I('refresh','width:14px;height:14px')}</button><button class="sbb ic${UI.insp?' on':''}" data-tin title="${UI.insp?'Close':'Open'} Inspector  ⌘⌥I" aria-label="Toggle inspector">${I('panelr','width:14px;height:14px')}</button><button class="sbb ic${UI.side?' on':''}" data-tsb title="${UI.side?'Close':'Open'} Sidebar  ⌘B" aria-label="Toggle sidebar">${I('sidebar','width:14px;height:14px')}</button><span class="sep"></span>${extra||(loading?`<span class="sbb" style="padding:0 4px"><span class="spin"></span>Loading prod-readonly…</span>`:`<span class="sbb" style="padding:0 4px"><span class="dot run"></span>Ready</span>`)}</span></div>`}
 
 function mount(el,v){
- let sort={k:'name',dir:1},sel=3,q='',ctx=null,pop=null,loading=false,failed=true,pq='',pi=0,tAll=false,F={state:'',type:''};
+ let sort={k:'name',dir:1},sel=(window.SEL0!==undefined?window.SEL0:3),q='',ctx=null,pop=null,loading=false,failed=true,R=new Set(REG),flash='',pal=null,pq='',pi=0,tAll=false,tagsAll=false,F={state:'',type:''};
  const draw=()=>{
-  let rows=D.filter(d=>(!F.state||d.state===F.state)&&(!F.type||d.type===F.type)).filter(d=>!q||(Object.values(d).join(' ')+' '+Object.entries(d.tags).map(([k,v])=>k+' '+v).join(' ')).toLowerCase().split(/\s+/).length&&q.trim().split(/\s+/).every(w=>(Object.values(d).join(' ')+' '+Object.entries(d.tags).map(([k,v])=>k+' '+v).join(' ')).toLowerCase().includes(w)));
+  let rows=D.filter(d=>R.has(d.region)&&(!F.state||d.state===F.state)&&(!F.type||d.type===F.type)).filter(d=>!q||(Object.values(d).join(' ')+' '+Object.entries(d.tags).map(([k,v])=>k+' '+v).join(' ')).toLowerCase().split(/\s+/).length&&q.trim().split(/\s+/).every(w=>(Object.values(d).join(' ')+' '+Object.entries(d.tags).map(([k,v])=>k+' '+v).join(' ')).toLowerCase().includes(w)));
   rows=rows.slice().sort(cmp);
   function cmp(a,b){return (a[sort.k]>b[sort.k]?1:a[sort.k]<b[sort.k]?-1:0)*sort.dir}
   const head=cols.map(([k,l,w])=>`<th tabindex="0" data-k="${k}" style="width:${w}px" class="${sort.k===k?'sorted':''}" aria-sort="${sort.k===k?(sort.dir>0?'ascending':'descending'):'none'}"><span class="s">${l}${sort.k===k?I(sort.dir>0?'up':'down','width:12px;height:12px'):''}</span></th>`).join('');
+  const failedNow=failed&&R.has('eu-central-1');const scopeN=D.filter(x=>R.has(x.region)).length;const rl=R.size===REG.length?'All regions':R.size===1?[...R][0]:R.size+' regions';
   let body='',last='';
   rows.forEach(d=>{
-   body+=`<tr class="row ${d.i===sel?'sel':''}${failed&&d.region==='eu-central-1'?' stale':''}" tabindex="0" data-i="${d.i}"><td>${d.name}</td><td class="mono dim">${d.id}</td><td>${stateCell(d)}</td><td>${d.type}</td><td class="dim">${d.az}</td><td class="mono dim num">${d.pip}</td><td class="mono dim num">${d.pub||'—'}</td><td class="dim num">${d.launched}</td></tr>`});
+   body+=`<tr class="row ${d.i===sel?'sel':''}${failedNow&&d.region==='eu-central-1'?' stale':''}" tabindex="0" data-i="${d.i}"><td>${d.name||'<i style="color:var(--faint)">unnamed</i>'}</td><td class="mono dim">${d.id}</td><td>${stateCell(d)}</td><td>${d.type}</td><td class="dim">${d.az}</td><td class="mono dim num">${d.pip}</td><td class="mono dim num">${d.pub||'—'}</td><td class="dim num">${d.launched}</td></tr>`});
   const d=D[sel];
-  el.innerHTML=tb(v,F)+`<div class="main">${sideA(F,q,tAll)}<div class="center">
+  const W=el.offsetWidth,H=el.offsetHeight;el.className='win'+(W<760?' narrow':'')+(W<600?' compact':'')+(H<600?' short':'')+(W<1100?' cl1':'')+(W<960?' cl2':'')+(W<840?' cl3':'')+(W<720?' cl4 h2x':'')+(W<640?' h1x':'');const overlayOpen=W<760&&(UI.side||(UI.insp&&sel>=0));
+  el.innerHTML=tb(v,F)+`<div class="main">${overlayOpen?'<div class="scrim" data-scrim></div>':''}${UI.side?sideA(F,q,tAll,R):''}<div class="center">
    <div class="tbl"><table><thead><tr>${head}</tr></thead><tbody>${body||`<tr><td colspan="8" style="height:120px;text-align:center;color:var(--dim)">${q?`No instances match “${q}”. Press Esc to clear.`:'No instances match these filters. Select All under State, or click the active type to clear it.'}</td></tr>`}</tbody></table></div></div>
-   ${d&&rows.includes(d)?inspector(d):''}</div>`+sbar(20,rows.length,loading||!failed?'':`<button class="sbb warn${pop==='fail'?' on':''}" data-fail title="Show details" aria-label="1 region failed, show details">${I('warn','width:14px;height:14px')}eu-central-1 failed</button>`,loading);
+   ${UI.insp&&d&&rows.includes(d)?inspector(d,{stale:failedNow&&d.region==='eu-central-1',tagsAll}):''}</div>`+sbar(scopeN,rows.length,flash?`<span class="sbb" style="padding:0 4px" role="status">${I('check','width:12px;height:12px')}${flash}</span>`:loading||!failedNow?'':`<button class="sbb warn${pop==='fail'?' on':''}" data-fail title="Show details" aria-label="region failed, show details">${I('warn','width:14px;height:14px')}eu-central-1 failed</button>`,loading,rl);
   el.querySelector('[data-search]').value=q;
-  if(ctx){el.insertAdjacentHTML('beforeend',`<div class="ctx" style="left:${ctx.x}px;top:${ctx.y}px">${[['copy','Copy Instance ID','⌘C'],['copy','Copy Private IP'],['copy','Copy Public IP'],['term','Copy SSH Command'],['ext','Open in Console','⌘O']].map(([ic,t,k],n)=>`<div>${I(ic)}${t}${k?`<kbd>${k}</kbd>`:''}</div>${n===2?'<hr>':''}`).join('')}</div>`)}
-  const pitems=pop==='profile'?PROFILES.filter(p=>!pq||(p[0]+' '+p[1]).toLowerCase().includes(pq.toLowerCase())).map(p=>({t:p[0],u:p[1],b:p[2]})):pop==='region'?[['All regions','20'],['us-east-1','7'],['us-west-2','5'],['eu-west-1','4'],['eu-central-1','4']].filter(r=>!pq||r[0].includes(pq.toLowerCase())).map(r=>({t:r[0],k:r[1]})):[];
+  if(ctx){el.insertAdjacentHTML('beforeend',`<div class="ctx" style="left:${ctx.x}px;top:${ctx.y}px">${[['copy','Copy Instance ID','⌘C'],['copy','Copy Private IP'],['copy','Copy Public IP'],['ext','Open in Console','⌘O']].map(([ic,t,k],n)=>`<div>${I(ic)}${t}${k?`<kbd>${k}</kbd>`:''}</div>${n===2?'<hr>':''}`).join('')}</div>`)}
+  const rcount=r=>D.filter(d=>d.region===r).length;
+  const pitems=pop==='profile'?PROFILES.filter(p=>!pq||(p[0]+' '+p[1]).toLowerCase().includes(pq.toLowerCase())).map(p=>({t:p[0],u:p[1],b:p[2]})):pop==='region'?[{t:'All regions',k:20,all:1},...REG.map(r=>({t:r,k:rcount(r)}))].filter(r=>!pq||r.t.includes(pq.toLowerCase())).map(r=>r):[];
   if(pop==='profile'||pop==='region'){pi=Math.min(pi,Math.max(0,pitems.length-1));
-   const rows_=pitems.map((p,n)=>pop==='profile'?`<div class="pk${n===pi?' hl':''}${p.t==='prod-readonly'?' cur':''}" data-pi="${n}"><span class="bdg">${p.b}</span><span><div class="t">${p.t}</div><div class="u">${p.u}</div></span>${p.t==='prod-readonly'?`<span style="margin-left:auto">${I('check')}</span>`:''}</div>`:`<div class="pk rg${n===pi?' hl':''}" data-pi="${n}" style="min-height:28px"><span class="t">${p.t}</span><span style="margin-left:auto;opacity:.7">${p.k}</span></div>`).join('')||`<div style="padding:10px;color:var(--dim)">No ${pop==='profile'?'profiles':'regions'} match “${pq}”.</div>`;
-   el.insertAdjacentHTML('beforeend',`<div class="pop pp" style="left:${pop==='profile'?8:150}px" onclick="event.stopPropagation()"><div class="srch">${I('search','width:13px;height:13px')}<input data-pq placeholder="${pop==='profile'?'Search profiles':'Search regions'}" aria-label="Search" value="${pq}" style="border:0;outline:0;background:transparent;font:inherit;width:100%"></div>${rows_}${pop==='profile'?`<div class="ft"><div class="pk" data-connect>${I('plus')}Connect to AWS…</div></div>`:''}</div>`);
+   const chk=on=>`<span class="rgchk${on?' on':''}">${on?I('check'):''}</span>`;
+   const rows_=pitems.map((p,n)=>pop==='profile'?`<div class="pk${n===pi?' hl':''}${p.t==='prod-readonly'?' cur':''}" data-pi="${n}"><span class="bdg">${p.b}</span><span><div class="t">${p.t}</div><div class="u">${p.u}</div></span>${p.t==='prod-readonly'?`<span style="margin-left:auto">${I('check')}</span>`:''}</div>`:`<div class="pk rg${n===pi?' hl':''}" data-pi="${n}" style="min-height:28px">${chk(p.all?R.size===REG.length:R.has(p.t))}<span class="t">${p.t}</span>${p.all?'':`<span class="only" data-only="${p.t}">only</span>`}<span style="margin-left:auto;opacity:.7">${p.k}</span></div>`).join('')||`<div style="padding:10px;color:var(--dim)">No ${pop==='profile'?'profiles':'regions'} match “${pq}”.</div>`;
+   el.insertAdjacentHTML('beforeend',`<div class="pop pp" style="left:${pop==='profile'?8:150}px" onclick="event.stopPropagation()"><div class="srch">${I('search','width:13px;height:13px')}<input data-pq placeholder="${pop==='profile'?'Search profiles':'Search regions'}" aria-label="Search" value="${pq}" style="border:0;outline:0;background:transparent;font:inherit;width:100%"></div>${rows_}${pop==='profile'?`<div class="ft"><div class="pk" data-connect>${I('plus')}Connect to AWS…</div></div>`:`<div class="ft" style="padding:4px 8px">Space or click toggles · Enter applies and closes</div>`}</div>`);
    const inp=el.querySelector('[data-pq]');inp.focus();inp.setSelectionRange(pq.length,pq.length);
-   const pick=()=>{pop=null;pq='';pi=0;loading=true;draw();setTimeout(()=>{loading=false;draw()},1200)};
+   const switchProfile=()=>{pop=null;pq='';pi=0;loading=true;draw();setTimeout(()=>{loading=false;draw()},1200)};
+   const toggle=n=>{const it=pitems[n];if(!it)return;if(it.all){REG.forEach(r=>R.add(r))}else if(R.has(it.t)){if(R.size>1)R.delete(it.t)}else R.add(it.t);draw()};
+   const act=n=>pop==='profile'?switchProfile():toggle(n);
    inp.oninput=()=>{pq=inp.value;pi=0;draw()};
    inp.onkeydown=e=>{if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();pi=Math.max(0,Math.min(pitems.length-1,pi+(e.key==='ArrowDown'?1:-1)));draw()}
-    else if(e.key==='Enter'){e.preventDefault();if(pitems.length)pick()}
+    else if(e.key==='Enter'){e.preventDefault();if(pop==='profile'){if(pitems.length)switchProfile()}else{const w=pop;pop=null;pq='';pi=0;draw();el.querySelector(`[data-pop="${w}"]`)?.focus()}}
+    else if(e.key===' '&&pop==='region'&&!pq){e.preventDefault();toggle(pi)}
     else if(e.key==='Escape'){e.stopPropagation();const w=pop;pop=null;pq='';pi=0;draw();el.querySelector(`[data-pop="${w}"]`)?.focus()}};
-   el.querySelectorAll('.pop .pk').forEach(x=>x.onclick=e=>{e.stopPropagation();pick()});}
+   el.querySelectorAll('.pop .pk').forEach(x=>x.onclick=e=>{e.stopPropagation();if(x.dataset.pi!==undefined){pi=+x.dataset.pi;act(pi)}else switchProfile()});
+   el.querySelectorAll('[data-only]').forEach(o=>o.onclick=e=>{e.stopPropagation();R=new Set([o.dataset.only]);draw()});}
   if(pop==='fail'){el.insertAdjacentHTML('beforeend',`<div class="pop failpop" onclick="event.stopPropagation()" role="dialog" aria-label="Region failure details"><div class="h2">${I('warn')}eu-central-1 couldn’t be loaded</div><p>4 instances from this region are from the 12:01 refresh and may be out of date. The other three regions are current.</p><code>AccessDenied: ec2:DescribeInstances is not allowed for prod-readonly in eu-central-1</code><div class="a"><button class="sbtn" data-copyerr>${I('copy')}Copy error</button><button class="pbtn" data-retry>${I('refresh')}Retry region</button></div></div>`);el.querySelector('.failpop [data-retry]').focus()}
+  const doFlash=t=>{flash=t;setTimeout(()=>{flash='';draw()},1800)};
+  const doRefresh=()=>{loading=true;setTimeout(()=>{loading=false;draw()},1200)};
+  const cur=D[sel];
+  const CMDS=[['View: Switch Profile…','⌘P',1,()=>{pop='profile';pq='';pi=0}],['View: Switch Region…','⌘⇧R',1,()=>{pop='region';pq='';pi=0}],['Fleet: Refresh','⌘R',1,doRefresh],
+   ['View: Toggle Sidebar','⌘B',1,()=>{UI.side=!UI.side}],['View: Toggle Inspector','⌘⌥I',1,()=>{UI.insp=!UI.insp}],
+   ['Filter: Running Only','',1,()=>{F.state='running'}],['Filter: Stopped Only','',1,()=>{F.state='stopped'}],['Filter: Pending Only','',1,()=>{F.state='pending'}],['Filter: Clear All','',F.state||F.type||q,()=>{F={state:'',type:''};q=''}],
+   ['Instance: Copy ID','⌘C',cur&&sel>=0,()=>doFlash('Copied '+cur.id)],['Instance: Copy Private IP','',cur&&sel>=0,()=>doFlash('Copied '+cur.pip)],['Instance: Copy Public IP','',cur&&cur.pub,()=>doFlash('Copied '+cur.pub)],['Instance: Open in Console','⌘O',cur&&sel>=0,()=>doFlash('Opening in AWS Console…')],
+   ['Fleet: Retry Failed Region','',failedNow,()=>{pop=null;doRefresh();setTimeout(()=>{failed=false;draw()},1200)}],['Account: Connect to AWS…','',1,()=>doFlash('Opening AWS setup…')],['Preferences: Open Settings…','⌘,',1,()=>{document.getElementById('set').scrollIntoView({behavior:'smooth'})}]];
+  if(pal){const words=pal.q.toLowerCase().split(/\s+/).filter(Boolean);
+   const list=CMDS.filter(c=>words.every(w=>c[0].toLowerCase().includes(w)));
+   pal.i=Math.min(pal.i,Math.max(0,list.length-1));
+   el.insertAdjacentHTML('beforeend',`<div class="palwrap" onclick="event.stopPropagation()"><div class="palette" role="dialog" aria-label="Command palette"><div class="palin">${I('search')}<input data-pal placeholder="Type a command" aria-label="Command" value="${pal.q}"></div><div class="pallist">${list.map((c,n)=>`<div class="palrow${n===pal.i?' hl':''}${c[2]?'':' off'}" data-pn="${n}"><span>${c[0]}</span>${c[1]?`<kbd>${c[1]}</kbd>`:''}</div>`).join('')||'<div class="palrow off">No matching commands</div>'}</div><div class="palft">↑↓ navigate · ↵ run · esc close</div></div></div>`);
+   const pin=el.querySelector('[data-pal]');pin.focus();pin.setSelectionRange(pal.q.length,pal.q.length);
+   const run=n=>{const c=list[n];if(!c||!c[2])return;pal=null;c[3]();draw()};
+   pin.oninput=()=>{pal.q=pin.value;pal.i=0;draw()};
+   pin.onkeydown=e=>{if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();pal.i=Math.max(0,Math.min(list.length-1,pal.i+(e.key==='ArrowDown'?1:-1)));draw()}else if(e.key==='Enter'){e.preventDefault();run(pal.i)}else if(e.key==='Escape'){e.stopPropagation();pal=null;draw()}};
+   el.querySelectorAll('.palrow[data-pn]').forEach(r=>r.onclick=e=>{e.stopPropagation();run(+r.dataset.pn)});
+   el.querySelector('.palwrap').onclick=e=>{pal=null;draw()};}
+  const sc=el.querySelector('[data-scrim]');if(sc)sc.onclick=e=>{e.stopPropagation();UI.side=false;UI.insp=false;draw()};
+  el.querySelectorAll('[data-tsb]').forEach(b=>b.onclick=e=>{e.stopPropagation();UI.side=!UI.side;draw()});
+  el.querySelectorAll('[data-copy]').forEach(b=>b.onclick=e=>{e.stopPropagation();doFlash('Copied '+b.dataset.copy);draw()});
+  el.querySelectorAll('[data-console]').forEach(b=>b.onclick=e=>{e.stopPropagation();doFlash('Opening in AWS Console…');draw()});
+  el.querySelectorAll('[data-tag]').forEach(b=>b.onclick=e=>{e.stopPropagation();q=b.dataset.tag.toLowerCase();draw()});
+  el.querySelectorAll('[data-tagsall]').forEach(b=>b.onclick=e=>{e.stopPropagation();tagsAll=!tagsAll;draw()});
+  el.querySelectorAll('[data-tin]').forEach(b=>b.onclick=e=>{e.stopPropagation();UI.insp=!UI.insp;draw()});
   el.querySelectorAll('[data-pop]').forEach(b=>{b.onclick=e=>{e.stopPropagation();pop=pop===b.dataset.pop?null:b.dataset.pop;pq='';pi=0;ctx=null;draw();if(!pop)el.querySelector(`[data-pop="${b.dataset.pop}"]`)?.focus()}});
   el.querySelectorAll('th').forEach(h=>{h.onclick=()=>{const k=h.dataset.k;sort=sort.k===k?{k,dir:-sort.dir}:{k,dir:1};draw()}});
-  el.querySelectorAll('tr.row').forEach(r=>{r.onclick=()=>{sel=+r.dataset.i;ctx=null;draw();el.querySelector('tr.sel').focus()};
+  el.querySelectorAll('tr.row').forEach(r=>{r.onclick=()=>{sel=+r.dataset.i;tagsAll=false;UI.insp=true;ctx=null;draw();el.querySelector('tr.sel').focus()};
    r.oncontextmenu=e=>{e.preventDefault();sel=+r.dataset.i;const b=el.getBoundingClientRect();ctx={x:e.clientX-b.left,y:e.clientY-b.top};draw()}});
   const s=el.querySelector('[data-search]');s.oninput=()=>{q=s.value.toLowerCase();draw();const n=el.querySelector('[data-search]');n.focus();n.setSelectionRange(q.length,q.length)};
   el.querySelectorAll('[data-r]').forEach(r=>r.onmousedown=e=>{e.preventDefault();q=r.dataset.r.toLowerCase();draw()});
@@ -229,18 +329,122 @@ function mount(el,v){
   const x=el.querySelector('.ih .btn');if(x)x.onclick=()=>{sel=-1;draw()};
  };
  el.tabIndex=-1;
- el.addEventListener('keydown',e=>{const m=e.metaKey||e.ctrlKey;if(m&&e.key.toLowerCase()==='p'){e.preventDefault();pop='profile';pq='';pi=0;draw();return}if(m&&e.shiftKey&&e.key.toLowerCase()==='r'){e.preventDefault();pop='region';pq='';pi=0;draw();return}if(m&&!e.shiftKey&&e.key.toLowerCase()==='r'){e.preventDefault();loading=true;draw();setTimeout(()=>{loading=false;draw()},1200);return}if(e.target.matches('input'))return;
+ el.addEventListener('keydown',e=>{const m=e.metaKey||e.ctrlKey;if(m&&e.key===','){e.preventDefault();document.getElementById('set').scrollIntoView({behavior:'smooth'});return}if(m&&e.shiftKey&&e.key.toLowerCase()==='p'){e.preventDefault();pop=null;pal={q:'',i:0};draw();return}if(m&&e.key.toLowerCase()==='b'&&!e.target.matches('input')){e.preventDefault();UI.side=!UI.side;draw();return}if(m&&e.altKey&&e.key.toLowerCase()==='i'){e.preventDefault();UI.insp=!UI.insp;draw();return}if(m&&e.key.toLowerCase()==='c'&&sel>=0&&!e.target.matches('input')){e.preventDefault();doFlash('Copied '+D[sel].id);draw();return}if(m&&e.key.toLowerCase()==='o'&&sel>=0){e.preventDefault();doFlash('Opening in AWS Console…');draw();return}if(m&&!e.shiftKey&&e.key.toLowerCase()==='p'){e.preventDefault();pop='profile';pq='';pi=0;draw();return}if(m&&e.shiftKey&&e.key.toLowerCase()==='r'){e.preventDefault();pop='region';pq='';pi=0;draw();return}if(m&&!e.shiftKey&&e.key.toLowerCase()==='r'){e.preventDefault();loading=true;draw();setTimeout(()=>{loading=false;draw()},1200);return}if(e.target.matches('input'))return;
   const dn=e.key==='ArrowDown'||e.key==='j',up=e.key==='ArrowUp'||e.key==='k';
   if(dn||up){e.preventDefault();const r=[...el.querySelectorAll('tr.row')];const c=r.findIndex(x=>+x.dataset.i===sel);const n=r[Math.max(0,Math.min(r.length-1,c+(dn?1:-1)))];if(n){sel=+n.dataset.i;draw();el.querySelector('tr.sel').focus()}}
-  if(e.key==='Escape'){ctx=null;pop=null;if(!e.target.matches('input')){sel=-1}draw()}
+  if(e.key==='Escape'){ctx=null;pop=null;if(!e.target.matches('input')){if(el.offsetWidth<760&&UI.side){UI.side=false}else{sel=-1}}draw()}
   if((e.metaKey||e.ctrlKey)&&e.key==='f'||e.key==='/'){e.preventDefault();el.querySelector('[data-search]').focus()}});
  document.addEventListener('click',()=>{if(ctx||pop){ctx=null;pop=null;draw()}});
  draw();
 }
+window.DEMO=false;window.UI={side:true,insp:true};
+function remountA(){const old=document.getElementById('A');const n=old.cloneNode(false);n.innerHTML='';old.replaceWith(n);mount(n,'A')}
 mount(document.getElementById('A'),'A');
+const tgl=(a,b,fn)=>{[a,b].forEach(id=>document.getElementById(id).onclick=()=>{document.getElementById(a).classList.toggle('on',id===a);document.getElementById(b).classList.toggle('on',id===b);fn(id)})};
+tgl('thL','thD',id=>document.body.dataset.theme=id==='thD'?'dark':'light');
+document.querySelectorAll('.szb').forEach(b=>b.onclick=()=>{document.querySelectorAll('.szb').forEach(x=>x.classList.toggle('on',x===b));const w=+b.dataset.w,h=+b.dataset.h,A=document.getElementById('A');A.style.width=w+'px';A.style.height=h+'px';UI.side=w>=760;UI.insp=w>=760;window.SEL0=w>=760?3:-1;remountA()});
+
+// ---------------- Settings window
+const SET_DEF={theme:'Follow system',density:'Compact (28pt rows)',side:true,insp:true,upd:true,auto:true,interval:'5 minutes',focus:true,launch:'Remember last profile and regions',regions:REG.slice(),sort:'Name',unnamed:true,recent:'10',tags:true,cli:'Auto-detect',cfg:'~/.aws/config',timeout:'30 seconds',demo:false,log:'Errors only'};
+const SET_ITEMS=[
+ ['Appearance',[
+  ['Window',null],
+  {id:'theme',l:'Theme',d:'Follows macOS appearance by default.',t:'select',o:['Follow system','Light','Dark']},
+  {id:'density',l:'Table density',d:'Row height in the instance table.',t:'select',o:['Compact (28pt rows)','Comfortable (34pt rows)']},
+  ['Panels',null],
+  {id:'side',l:'Show sidebar on launch',d:'Facets, pinned searches and recent instances.',t:'toggle'},
+  {id:'insp',l:'Open the inspector when selecting an instance',d:'Turn off to keep the table full width until you ask for details (⌘⌥I).',t:'toggle'},
+  {id:'upd',l:'Show “Updated” time in the status bar',d:'Hidden automatically in narrow windows.',t:'toggle'}]],
+ ['Fleet',[
+  ['Loading',null],
+  {id:'auto',l:'Refresh automatically',d:'Only while the window is active. Old rows stay visible while loading.',t:'toggle'},
+  {id:'interval',l:'Refresh interval',d:'Data older than twice this interval is marked stale.',t:'select',o:['1 minute','2 minutes','5 minutes','10 minutes','15 minutes'],dep:'auto'},
+  {id:'focus',l:'Refresh when the window regains focus',d:'After more than one interval away.',t:'toggle'},
+  ['Scope',null],
+  {id:'launch',l:'On launch',d:'Product bet: reopen into your last context.',t:'select',o:['Remember last profile and regions','Always ask']},
+  {id:'regions',l:'Regions to load',d:'Region list the picker offers. At least one.',t:'regions'}]],
+ ['Table',[
+  ['Display',null],
+  {id:'sort',l:'Default sort',d:'Applied until you click a column header.',t:'select',o:['Name','Launched (newest first)','State']},
+  {id:'unnamed',l:'Show instances without a Name tag as “unnamed”',d:'Otherwise they show their instance ID in the Name column.',t:'toggle'},
+  ['Columns',null],
+  {id:'cols',l:'Columns and column sets',d:'Choose which fields and tags appear, and save sets such as Networking or Ownership. Planned (bead .32); until then use the table header menu.',t:'button',b:'Customize columns…',dis:true}]],
+ ['Search',[
+  ['Behaviour',null],
+  {id:'recent',l:'Remember recent searches',d:'Shown when you focus an empty search field.',t:'select',o:['0','5','10','20']},
+  {id:'tags',l:'Match tag keys and values',d:'Search also looks at name, ID, IPs, zone and type.',t:'toggle'},
+  ['Pinned searches',null],
+  {id:'pins',l:'',t:'pins'}]],
+ ['Keymap',[{id:'keys',l:'',t:'keys'}]],
+ ['AWS & Privacy',[
+  ['AWS CLI',null],
+  {id:'cli',l:'AWS CLI',d:'CloudDeck runs the AWS CLI (v2) read-only; it handles SSO and credentials.',t:'cli',o:['Auto-detect','/opt/homebrew/bin/aws','/usr/local/bin/aws','Choose…']},
+  {id:'cfg',l:'AWS config file',d:'Where profiles are read from.',t:'text'},
+  {id:'timeout',l:'Request timeout',d:'Per region, per request.',t:'select',o:['15 seconds','30 seconds','60 seconds']},
+  ['Stored data',null],
+  {id:'priv',l:'',t:'privacy'}]],
+ ['Advanced',[
+  ['Developer',null],
+  {id:'demo',l:'Demo mode',d:'Simulated fleet, no AWS calls. A DEMO tag stays in the status bar.',t:'toggle'},
+  {id:'log',l:'Log level',d:'Written to ~/.config/clouddeck/logs.',t:'select',o:['Errors only','Info','Debug']}]],
+ ['About',[{id:'about',l:'',t:'about'}]]];
+function mountSettings(el){
+ const S=JSON.parse(JSON.stringify(SET_DEF));let cur='Appearance',q='',note='',pins=['billing prod','owner esteban','stopped g5'];
+ const mod=id=>JSON.stringify(S[id])!==JSON.stringify(SET_DEF[id]);
+ const items=c=>SET_ITEMS.find(x=>x[0]===c)[1].filter(i=>!Array.isArray(i));
+ const catMod=c=>items(c).some(i=>i.id in SET_DEF&&mod(i.id));
+ const hi=t=>q?t.replace(new RegExp('('+q.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+')','ig'),'<mark>$1</mark>'):t;
+ const matches=i=>!q||((i.l||'')+' '+(i.d||'')).toLowerCase().includes(q.toLowerCase());
+ const KEYS=[['Switch Profile…','⌘P'],['Switch Region…','⌘⇧R'],['Refresh','⌘R'],['Command Palette','⌘⇧P'],['Toggle Sidebar','⌘B'],['Toggle Inspector','⌘⌥I'],['Focus Search','⌘F'],['Copy Instance ID','⌘C'],['Open in Console','⌘O'],['Settings','⌘,']];
+ const ctrl=i=>{
+  if(i.t==='toggle')return `<button class="sw${S[i.id]?' on':''}" role="switch" aria-checked="${S[i.id]}" aria-label="${i.l}" data-sw="${i.id}"></button>`;
+  if(i.t==='select')return `<select data-sel="${i.id}" aria-label="${i.l}">${i.o.map(o=>`<option${S[i.id]===o?' selected':''}>${o}</option>`).join('')}</select>`;
+  if(i.t==='text')return `<input type="text" data-txt="${i.id}" value="${S[i.id]}" aria-label="${i.l}">`;
+  if(i.t==='regions')return `<div class="cbs">${REG.map(r=>`<label><input type="checkbox" data-reg="${r}"${S.regions.includes(r)?' checked':''}>${r}</label>`).join('')}</div>`;
+  if(i.t==='button')return `<button class="sbtn" ${i.dis?'disabled style="opacity:.5"':''}>${i.b}</button>`;
+  if(i.t==='cli')return `<div style="display:flex;gap:6px"><select data-sel="cli" aria-label="AWS CLI">${i.o.map(o=>`<option${S.cli===o?' selected':''}>${o}</option>`).join('')}</select><button class="sbtn" data-test>Test</button></div>`;
+  return '';};
+ const row=i=>{
+  if(i.t==='pins')return pins.length?pins.map((p,n)=>`<div class="pin">${I('search','width:14px;height:14px')}${p}<button class="x" data-unpin="${n}" aria-label="Unpin ${p}">${I('x','width:14px;height:14px')}</button></div>`).join(''):'<div class="info">No pinned searches. Pin one from the search field.</div>';
+  if(i.t==='keys')return `<div class="info">Shortcuts shown here match the tooltips and the command palette. Click a shortcut to change it (not in this mockup).</div><table class="kt"><thead><tr><th>Action</th><th>Shortcut</th></tr></thead><tbody>${KEYS.filter(k=>!q||(k[0]+k[1]).toLowerCase().includes(q.toLowerCase())).map(k=>`<tr><td>${hi(k[0])}</td><td class="keyc">${k[1]}</td></tr>`).join('')}</tbody></table>`;
+  if(i.t==='privacy')return `<div class="info">CloudDeck never stores credentials. It keeps profile and region names, pinned and recent searches, and window layout in <span class="mono">~/.config/clouddeck</span>. Instance data is never written to disk.</div><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="sbtn" data-act="Opened data folder">Reveal data folder</button><button class="sbtn" data-act="Recent searches cleared">Clear recent searches</button><button class="sbtn" data-act="Remembered scope forgotten">Forget remembered scope</button></div>`;
+  if(i.t==='about')return `<dl class="kv" style="margin:0"><dt>Version</dt><dd>0.1.0 (build 656)</dd><dt>AWS CLI</dt><dd class="mono">aws-cli/2.17.1</dd><dt>Config file</dt><dd class="mono">${S.cfg}</dd><dt>Data folder</dt><dd class="mono">~/.config/clouddeck</dd><dt>Platform</dt><dd>macOS 15 · gpui</dd></dl>`;
+  const off=i.dep&&!S[i.dep];
+  return `<div class="it${mod(i.id)?' mod':''}${off?' off':''}"><div><span class="l">${hi(i.l)}</span>${mod(i.id)?`<button class="rs" data-reset="${i.id}">Reset</button>`:''}<div class="d">${hi(i.d||'')}</div></div><div>${ctrl(i)}</div></div>`;};
+ const pane=()=>{
+  if(q){const out=SET_ITEMS.map(([c,list])=>({c,m:list.filter(i=>!Array.isArray(i)&&(c.toLowerCase().includes(q.toLowerCase())||matches(i)||(i.t==='keys'&&KEYS.some(k=>(k[0]+k[1]).toLowerCase().includes(q.toLowerCase())))))})).filter(x=>x.m.length);
+   return `<div class="crumb2">Settings › Search results for “${q}”</div><h3>${out.reduce((n,x)=>n+x.m.length,0)} result${out.length===1&&out[0].m.length===1?'':'s'}</h3>`+(out.map(x=>`<div class="grp">${x.c}</div>${x.m.map(row).join('')}`).join('')||`<div class="info">Nothing matches “${q}”. Try a shorter word.</div>`)}
+  const list=SET_ITEMS.find(x=>x[0]===cur)[1];
+  return `<div class="crumb2">Settings › ${cur}</div><h3>${cur}</h3>`+list.map(i=>Array.isArray(i)?`<div class="grp">${i[0]}</div>`:row(i)).join('');};
+ const draw=()=>{
+  const vis=SET_ITEMS.filter(([c,list])=>!q||c.toLowerCase().includes(q.toLowerCase())||list.some(i=>!Array.isArray(i)&&(matches(i)||(i.t==='keys'&&KEYS.some(k=>(k[0]+k[1]).toLowerCase().includes(q.toLowerCase()))))));
+  const ic={Appearance:'sidebar',Fleet:'server',Table:'filter',Search:'search',Keymap:'key','AWS & Privacy':'cloud',Advanced:'bug',About:'alert'};
+  el.innerHTML=`<div class="stb"><div class="lights"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></div><span class="t">Settings</span></div>
+  <div class="sbody"><nav class="tree" aria-label="Settings categories"><div class="search">${I('search')}<input data-sq placeholder="Search settings" aria-label="Search settings" value="${q}"></div>
+  ${vis.map(([c])=>`<button class="cat${(!q&&c===cur)?' on':''}" data-cat="${c}">${I(ic[c]||'server','width:14px;height:14px')}${c}${catMod(c)?'<span class="md" title="Contains changed settings"></span>':''}</button>`).join('')||'<div style="color:var(--dim);padding:8px">No categories match.</div>'}</nav>
+  <section class="pane" aria-live="polite">${pane()}</section></div>
+  <div class="foot"><span>${note?`<span class="ok">${I('check','width:13px;height:13px')} ${note}</span>`:'Changes apply immediately. A blue bar marks values that differ from the default.'}</span><span class="sp"></span><button class="sbtn" data-restore>Restore Defaults</button><button class="pbtn">Done</button></div>`;
+  const sq=el.querySelector('[data-sq]');sq.oninput=()=>{q=sq.value;draw();const n=el.querySelector('[data-sq]');n.focus();n.setSelectionRange(q.length,q.length)};sq.onkeydown=e=>{if(e.key==='Escape'&&q){q='';draw();el.querySelector('[data-sq]').focus()}};
+  el.querySelectorAll('[data-cat]').forEach(b=>b.onclick=()=>{cur=b.dataset.cat;q='';note='';draw()});
+  el.querySelectorAll('[data-sw]').forEach(b=>b.onclick=()=>{S[b.dataset.sw]=!S[b.dataset.sw];note='';draw()});
+  el.querySelectorAll('[data-sel]').forEach(b=>b.onchange=()=>{S[b.dataset.sel]=b.value;note='';if(b.dataset.sel==='theme'&&document.getElementById(b.value==='Dark'?'thD':b.value==='Light'?'thL':'thL'))document.getElementById(b.value==='Dark'?'thD':'thL').click();draw()});
+  el.querySelectorAll('[data-txt]').forEach(b=>b.oninput=()=>{S[b.dataset.txt]=b.value});
+  el.querySelectorAll('[data-txt]').forEach(b=>b.onchange=()=>{note='';draw()});
+  el.querySelectorAll('[data-reg]').forEach(b=>b.onchange=()=>{const r=b.dataset.reg;const set=new Set(S.regions);if(b.checked)set.add(r);else if(set.size>1)set.delete(r);S.regions=REG.filter(x=>set.has(x));draw()});
+  el.querySelectorAll('[data-reset]').forEach(b=>b.onclick=()=>{S[b.dataset.reset]=JSON.parse(JSON.stringify(SET_DEF[b.dataset.reset]));note='Reset to default';draw()});
+  el.querySelectorAll('[data-unpin]').forEach(b=>b.onclick=()=>{pins.splice(+b.dataset.unpin,1);note='Unpinned';draw()});
+  el.querySelectorAll('[data-act]').forEach(b=>b.onclick=()=>{note=b.dataset.act;draw()});
+  el.querySelectorAll('[data-test]').forEach(b=>b.onclick=()=>{note='aws-cli/2.17.1 found and working';draw()});
+  el.querySelector('[data-restore]').onclick=()=>{Object.keys(SET_DEF).forEach(k=>S[k]=JSON.parse(JSON.stringify(SET_DEF[k])));pins=['billing prod','owner esteban','stopped g5'];note='Defaults restored';draw()};
+ };
+ draw();
+}
+mountSettings(document.getElementById('set'));
+tgl('dmL','dmD',id=>{window.DEMO=id==='dmD';remountA()});
 
 // other states
-const mini=(cap,inner)=>`<div class="mini"><div class="cap">${cap}</div><div class="bd">${inner}</div></div>`;
+const mini=(cap,inner,strip)=>`<div class="mini"><div class="cap">${cap}</div><div class="bd">${inner}</div>${strip?`<div class="strip">${strip}</div>`:''}</div>`;
+const sb_=(l,r)=>`${I('cloud','width:13px;height:13px')}AWS<span>·</span><b style="color:var(--text);font-weight:600">prod-readonly</b><span>·</span>${l}<span class="r">${r}</span>`;
 const skel=[0,1,2,3,4,5,6].map(i=>`<div class="sk"><i style="width:${90+i%3*20}px"></i><i style="width:90px"></i><i style="width:50px"></i><i style="width:60px"></i><i style="flex:1"></i></div>`).join('');
 document.getElementById('onb').innerHTML=`
 <div class="wel"><div class="wl"><div style="margin-top:34px;color:var(--accent)">${I('cloud','width:64px;height:64px;stroke-width:1')}</div>
@@ -250,10 +454,17 @@ document.getElementById('onb').innerHTML=`
  <div class="big" tabindex="0">${I('key')}Sign in with SSO…</div>
  <div class="big" tabindex="0">${I('server')}Explore demo fleet</div></div>
  <div class="wr"><div style="display:flex;gap:8px;align-items:center"><span style="color:var(--dim)">${I('plus')}</span><div class="search" style="width:100%;height:30px"><span>${I('search')}</span><input placeholder="Search profiles…" aria-label="Search profiles"></div></div>
- ${PROFILES.map(p=>`<div class="pk" tabindex="0" style="padding:6px 10px"><span class="bdg" style="width:34px;height:34px;font-size:12px">${p[2]}</span><span><div class="t" style="color:#177a42;font-size:13px">${p[0]}</div><div class="u">${p[1]}</div></span></div>`).join('')}
+ ${PROFILES.map(p=>`<div class="pk" tabindex="0" style="padding:6px 10px"><span class="bdg" style="width:34px;height:34px;font-size:12px">${p[2]}</span><span><div class="t" style="color:var(--runtext);font-size:13px">${p[0]}</div><div class="u">${p[1]}</div></span></div>`).join('')}
  <div style="flex:1"></div><div style="color:var(--dim)">Profiles are read from ~/.aws/config. Press ↵ to open the selected profile. Credentials stay with the AWS CLI.</div></div></div>`;
 document.getElementById('states').innerHTML=
  mini('No AWS profiles',`${I('cloud','width:28px;height:28px;color:var(--faint)')}<h4>No AWS profiles found</h4><p>CloudDeck reads profiles from ~/.aws/config. Connect an account to browse its EC2 fleet.</p><span class="pbtn">Connect to AWS</span><span style="color:var(--dim)">or try the demo from the File menu</span>`)+
+
+ mini('Several regions failed',`<div style="width:100%;text-align:left"><div style="font-weight:600;color:var(--warntext);display:flex;gap:6px;align-items:center;margin-bottom:6px">${I('warn')}3 regions couldn’t be loaded</div>${[['us-west-2','Throttled · retrying in 8s'],['eu-west-1','AccessDenied'],['eu-central-1','AccessDenied']].map(r=>`<div class="mrow"><span class="mono">${r[0]}</span><span style="color:var(--dim)">${r[1]}</span><span class="sp"></span><span class="sbtn" style="height:22px;padding:0 8px">Retry</span></div>`).join('')}<div style="display:flex;justify-content:flex-end;margin-top:8px;gap:6px"><span class="sbtn">Copy errors</span><span class="pbtn">Retry all</span></div></div>`,sb_('<span style="color:var(--warntext)">3 regions failed</span>','Updated 12:04'))+
+ mini('Throttled (automatic retry)',`${I('refresh','width:28px;height:28px;color:var(--warntext)')}<h4>AWS is rate limiting requests</h4><p>CloudDeck will retry on its own, with a growing delay. The data shown is from 12:04.</p><span class="sbtn">Retry now</span>`,sb_('<span style="color:var(--warntext)">Throttled · retry in 8s</span>','Updated 12:04'))+
+ mini('Offline',`${I('plug','width:28px;height:28px;color:var(--faint)')}<h4>You’re offline</h4><p>Showing the last data from 11:52. CloudDeck will refresh when the connection returns.</p>`,sb_('<span>Offline</span>','Updated 11:52'))+
+ mini('Signed out (SSO expired)',`${I('key','width:28px;height:28px;color:var(--faint)')}<h4>Sign in to prod-readonly</h4><p>Your AWS SSO session expired. Signing in opens your browser; credentials stay with the AWS CLI.</p><span class="pbtn">Sign in</span><span class="mono" style="color:var(--dim)">aws sso login --profile prod-readonly</span>`,sb_('<span style="color:var(--warntext)">Sign-in required</span>','Updated 09:12'))+
+ mini('Demo mode',`<span class="chip" style="height:20px;font-size:11px;padding:0 10px">DEMO</span><h4>You’re looking at simulated data</h4><p>No AWS account is connected. Nothing here exists. The DEMO tag stays in the status bar the whole time.</p><span class="sbtn">Exit demo</span>`,sb_('<span class="chip">DEMO</span> simulated fleet','Updated 12:04'))+
+ mini('Empty fleet',`${I('server','width:28px;height:28px;color:var(--faint)')}<h4>No instances in us-east-1</h4><p>prod-readonly has no EC2 instances in this region. Try other regions.</p><span class="sbtn">Select all regions</span>`,sb_('0 instances','Updated 12:04'))+
  mini('Loading',`<div class="cloud">${I('cloud','width:56px;height:56px;stroke-width:1;color:var(--accent)')}</div><h4>Loading instances</h4><p>prod-readonly · All regions<span class="dots"><i>.</i><i>.</i><i>.</i></span></p>`)+
  mini('Error',`${I('alert','width:28px;height:28px;color:var(--err)')}<h4>Couldn’t load instances</h4><p>Your SSO session for prod-readonly has expired. Run <span class="mono">aws sso login --profile prod-readonly</span>, then retry.</p><span class="sbtn">${I('refresh')}Retry</span>`)+
  mini('Filter matches nothing',`${I('search','width:28px;height:28px;color:var(--faint)')}<h4>No instances match</h4><p>State: Stopped · Type: g5.xlarge · “bastion”</p><span class="sbtn">Clear filters</span>`)+
