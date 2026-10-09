@@ -56,6 +56,14 @@
 .setw .keyc{font-family:var(--mono);font-size:11px}.setw .pin{display:flex;align-items:center;gap:8px;height:28px;padding:0 8px;border-radius:5px}.setw .pin:hover{background:var(--hover)}.setw .pin .x{margin-left:auto;border:0;background:transparent;color:var(--faint);cursor:default}
 .setw .info{padding:10px 12px;border-radius:8px;background:var(--k0a);color:var(--dim);margin:6px 0}
 .setw .ok{color:var(--runtext)}
+.search{transition:width .12s}.search:focus-within{width:380px}
+.qwrap{position:relative;flex:1;min-width:0;height:26px}.qhl,.qwrap input{position:absolute;inset:0;margin:0;padding:0;font:inherit;line-height:26px;white-space:pre;overflow:hidden;border:0;outline:0}.qhl{pointer-events:none;color:var(--text)}.qwrap input{background:transparent;color:transparent;caret-color:var(--text);width:100%}.qwrap input::placeholder{color:var(--faint)}.qwrap input:focus-visible{outline:0!important}
+.tk-f{color:var(--accent);font-weight:500}.tk-n{color:var(--err)}.tk-w{color:var(--text)}.tk-v{color:var(--text)}.tk-e{text-decoration:underline wavy var(--warn);text-underline-offset:3px}
+.recent.show,.sugg.show{}.search:focus-within .recent.show,.search:focus-within .sugg.show{display:block}.recent{display:none}
+.sugg{display:none;position:absolute;top:30px;right:0;width:100%;min-width:300px;background:var(--popbg);backdrop-filter:blur(20px);border-radius:8px;box-shadow:0 0 0 .5px #0004,0 10px 30px #0003;padding:4px;z-index:9;color:var(--text)}
+.sugg .si{height:24px;border-radius:4px;display:flex;align-items:center;gap:8px;padding:0 8px}.sugg .si.hl{background:var(--accent);color:#fff}.sugg .dh{color:var(--faint);margin-left:auto;font-size:11px}.sugg .si.hl .dh,.sugg .si.hl .ct{color:#ffffffcc}.sugg .ct{margin-left:auto;color:var(--faint);font-variant-numeric:tabular-nums}.sugg .dh+.ct{margin-left:8px}.tk-f2{font-family:var(--mono);font-size:11px}
+.sugg .serr{display:flex;gap:6px;align-items:flex-start;padding:4px 8px;color:var(--warntext)}.sugg .h{height:20px;font:600 10px var(--font);color:var(--faint);text-transform:uppercase;letter-spacing:.04em;padding:0 8px;display:flex;align-items:center}
+.compact .search .qwrap{width:0;flex:none}.compact .search:focus-within .qwrap{width:130px}
 .strip{height:24px;background:var(--chrome);display:flex;align-items:center;gap:8px;padding:0 10px;color:var(--dim);font-size:11px;flex:none;width:100%}.strip .r{margin-left:auto}
 .mini .bd{overflow:hidden}.mrow{display:flex;align-items:center;gap:8px;width:100%;padding:3px 6px;border-radius:5px;text-align:left}.mrow .sp{flex:1}
 .rgchk{width:14px;height:14px;border-radius:4px;border:1px solid var(--faint);display:inline-flex;align-items:center;justify-content:center;flex:none}.rgchk.on{background:var(--accent);border-color:var(--accent);color:#fff}.rgchk svg{width:11px;height:11px;stroke-width:2}.only{margin-left:8px;opacity:0;color:inherit;text-decoration:underline}.pk:hover .only,.pk.hl .only{opacity:.85}
@@ -77,7 +85,7 @@ svg.i{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.2;stro
 .title{font-weight:600;margin-left:4px}
 .sp{flex:1}
 .search{width:220px;height:26px;border-radius:6px;background:var(--surf);box-shadow:0 0 0 .5px var(--line);display:flex;align-items:center;gap:6px;padding:0 7px;color:var(--faint)}
-.recent{display:none;position:absolute;top:30px;right:0;width:260px;background:var(--popbg);backdrop-filter:blur(20px);border-radius:8px;box-shadow:0 0 0 .5px #0004,0 10px 30px #0003;padding:4px;z-index:9;color:var(--text)}.search{position:relative}.search input:placeholder-shown:focus~.recent{display:block}.recent div{height:24px;border-radius:4px;display:flex;align-items:center;gap:8px;padding:0 8px}.recent div:not(.h):hover{background:var(--accent);color:var(--surf)}.recent .h{height:20px;font:600 10px var(--font);color:var(--faint);text-transform:uppercase;letter-spacing:.04em}.search input{border:0;outline:0;background:transparent;font:inherit;color:var(--text);width:100%;min-width:0}
+.recent{display:none;position:absolute;top:30px;right:0;width:260px;background:var(--popbg);backdrop-filter:blur(20px);border-radius:8px;box-shadow:0 0 0 .5px #0004,0 10px 30px #0003;padding:4px;z-index:9;color:var(--text)}.search{position:relative}.recent div{height:24px;border-radius:4px;display:flex;align-items:center;gap:8px;padding:0 8px}.recent div:not(.h):hover{background:var(--accent);color:var(--surf)}.recent .h{height:20px;font:600 10px var(--font);color:var(--faint);text-transform:uppercase;letter-spacing:.04em}.search input{border:0;outline:0;background:transparent;font:inherit;color:var(--text);width:100%;min-width:0}
 kbd{font:10px var(--font);color:var(--faint);border:1px solid var(--line);border-radius:4px;padding:0 4px;background:var(--surf)}
 /* body */
 .main{flex:1;display:flex;min-height:0}
@@ -200,19 +208,88 @@ const stateCell=(d,dotOnly)=>`<span class="st ${stT[d.state]}"><span class="dot 
 
 const PROFILES=[['prod-readonly','1111-2222-3333 · us-east-1','PR'],['staging-admin','1111-2222-4444 · us-west-2','SA'],['sandbox','7777-8888-9999 · eu-west-1','SB'],['data-platform','1010-1010-1010 · us-east-1','DP'],['security-audit','1904-5521-8812 · eu-central-1','SE'],['legacy-2019','3056-7741-0098 · us-east-1','L9']];
 const pk=(p,cur)=>`<div class="pk${cur?' cur':''}" tabindex="0"><span class="bdg">${p[2]}</span><span><div class="t">${p[0]}</div><div class="u">${p[1]}</div></span>${cur?`<span style="margin-left:auto">${I('check')}</span>`:''}</div>`;
-function tb(v,F){F=F||{state:'',type:''};return `<div class="tb"><div class="lights"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></div>
+
+// ---------------- Query engine
+const NOW=Date.UTC(2026,9,8,12,4);
+const QFIELDS=['name','id','state','type','az','zone','region','ip','private','public','vpc','subnet','sg','ami','key','age','has','tag'];
+const TAGKEYS=[...new Set(D.flatMap(d=>Object.keys(d.tags)))].filter(k=>!k.startsWith('aws:')&&k!=='Name');
+const lc=s=>(s||'').toLowerCase();
+function tokenize(q){const out=[];let i=0;while(i<q.length){if(/\s/.test(q[i])){i++;continue}let j=i,inq=false;while(j<q.length&&(inq||!/\s/.test(q[j]))){if(q[j]==='"')inq=!inq;j++}out.push({raw:q.slice(i,j),start:i,end:j});i=j}return out}
+function classify(t){let raw=t.raw,neg=false;if(raw.length>1&&raw[0]==='-'){neg=true;raw=raw.slice(1)}const m=/^([A-Za-z][\w-]*):(.*)$/.exec(raw);
+ if(!m)return Object.assign(t,{neg,kind:'word',value:raw.replace(/"/g,'')});
+ const f=m[1].toLowerCase(),v=m[2].replace(/^"|"$/g,'');
+ if(QFIELDS.includes(f))return Object.assign(t,{neg,kind:'field',field:f==='zone'?'az':f,name:m[1],value:v});
+ const tk=TAGKEYS.find(k=>lc(k)===f);if(tk)return Object.assign(t,{neg,kind:'field',field:'tag',tagkey:tk,name:m[1],value:v,short:true});
+ return Object.assign(t,{neg,kind:'unknown',name:m[1],value:raw.replace(/"/g,''),err:`No field named “${m[1]}”. Searching for the text instead.`})}
+const hay=d=>lc([d.name,d.id,d.state,d.type,d.az,d.region,d.pip,d.pub,d.launched,d.vpc,d.subnet,d.ami,d.key,d.sgs.map(g=>g.n+' '+g.id).join(' '),Object.entries(d.tags).map(([k,v])=>k+' '+v).join(' ')].join(' '));
+const glob=(s,v)=>v.includes('*')?new RegExp('^'+v.replace(/[.+?^${}()|[\]\\]/g,'\\$&').replace(/\*/g,'.*')+'$').test(lc(s)):lc(s).includes(v);
+function fieldPred(t){const vals=t.value.split(',').map(lc).filter(Boolean);if(!vals.length&&t.field!=='tag')return {ok:()=>true};
+ const any=f=>d=>vals.some(v=>f(d,v));
+ switch(t.field){
+  case 'name':return {ok:any((d,v)=>glob(d.name,v))};case 'id':return {ok:any((d,v)=>glob(d.id,v))};
+  case 'state':return {ok:any((d,v)=>d.state.startsWith(v))};case 'type':return {ok:any((d,v)=>v.includes('*')?glob(d.type,v):d.type.startsWith(v))};
+  case 'az':return {ok:any((d,v)=>v.includes('*')?glob(d.az,v):d.az.startsWith(v))};case 'region':return {ok:any((d,v)=>d.region.startsWith(v))};
+  case 'ip':return {ok:any((d,v)=>(d.pip||'').includes(v)||(d.pub||'').includes(v))};case 'private':return {ok:any((d,v)=>(d.pip||'').includes(v))};case 'public':return {ok:any((d,v)=>(d.pub||'').includes(v))};
+  case 'vpc':return {ok:any((d,v)=>lc(d.vpc).includes(v))};case 'subnet':return {ok:any((d,v)=>lc(d.subnet).includes(v))};case 'ami':return {ok:any((d,v)=>lc(d.ami).includes(v))};case 'key':return {ok:any((d,v)=>lc(d.key).includes(v))};
+  case 'sg':return {ok:any((d,v)=>d.sgs.some(g=>lc(g.n).includes(v)||lc(g.id).includes(v)))};
+  case 'age':{const m=/^([<>])(\d+)([hdw])$/.exec(vals[0]||'');if(!m)return {ok:()=>true,err:'age needs > or <, a number and h, d or w. Example: age:>30d'};const lim=+m[2]*{h:1/24,d:1,w:7}[m[3]];return {ok:d=>{const a=(NOW-Date.parse(d.launched.replace(' ','T')+':00Z'))/864e5;return m[1]==='>'?a>lim:a<lim}}}
+  case 'has':{const known=['public-ip','tags','name'];const bad=vals.find(v=>!known.includes(v));if(bad)return {ok:()=>true,err:`has: knows public-ip, tags and name, not “${bad}”.`};return {ok:any((d,v)=>v==='public-ip'?!!d.pub:v==='tags'?Object.keys(d.tags).length>0:!!d.name)}}
+  case 'tag':{if(t.short)return {ok:d=>Object.entries(d.tags).some(([k,val])=>lc(k)===lc(t.tagkey)&&vals.some(v=>lc(val).includes(v)))};
+   return {ok:any((d,v)=>{const [k,val]=v.split('=');return Object.keys(d.tags).some(tk=>lc(tk)===k&&(val===undefined||lc(d.tags[tk]).includes(val)))})}}}
+ return {ok:()=>true}}
+function compile(q){const toks=tokenize(q).map(classify);const preds=[];const errs=[];let nf=0;
+ toks.forEach(t=>{let p;if(t.kind==='word'||t.kind==='unknown'){const w=lc(t.value);p=d=>hay(d).includes(w);if(t.err)errs.push(t.err)}
+  else{const fp=fieldPred(t);if(fp.err){t.err=fp.err;errs.push(fp.err)}else nf++;p=fp.ok}
+  preds.push(t.neg?(d=>!p(d)):p)});
+ return {toks,errs,nf,pred:d=>preds.every(p=>p(d))}}
+const qWithout=(q,field)=>tokenize(q).map(classify).filter(t=>!(t.kind==='field'&&!t.neg&&t.field===field)).map(t=>t.raw).join(' ');
+const setToken=(q,field,v)=>(qWithout(q,field)+(v?' '+field+':'+v:'')).trim();
+function deriveF(CQ){const F={state:'',type:''};CQ.toks.forEach(t=>{if(t.kind==='field'&&!t.neg&&(t.field==='state'||t.field==='type')&&t.value&&!t.value.includes(','))F[t.field]=t.value});return F}
+const esc=s=>s.replace(/&/g,'&amp;').replace(/</g,'&lt;');
+function hlq(q){const toks=tokenize(q).map(classify);let out='',p=0;toks.forEach(t=>{out+=esc(q.slice(p,t.start));p=t.end;
+  if(t.kind==='word'){out+=`<span class="tk-w">${esc(t.raw)}</span>`;return}
+  const neg=t.neg?'<span class="tk-n">-</span>':'';const body=t.neg?t.raw.slice(1):t.raw;const i=body.indexOf(':');
+  out+=`<span class="${t.err?'tk-e':''}">${neg}<span class="tk-f">${esc(body.slice(0,i+1))}</span><span class="tk-v">${esc(body.slice(i+1))}</span></span>`});
+ return out+esc(q.slice(p))}
+function buildSug(q,R){const ends=/\s$/.test(q);const toks=tokenize(q);const last=!ends&&toks.length?toks[toks.length-1]:null;const cur=last?last.raw:'';const start=last?last.start:q.length;
+ const inScope=D.filter(d=>R.has(d.region));const cnt=(f)=>inScope.filter(f).length;let items=[],head='';
+ const m=/^(-?)([A-Za-z][\w-]*):(.*)$/.exec(cur);
+ if(!m){const pre=lc(cur.replace(/^-/,''));const neg=cur.startsWith('-')?'-':'';
+  if(!cur&&!q)return {items:[],start,cur};
+  const names=[...QFIELDS.filter(f=>f!=='zone'),...TAGKEYS.map(k=>lc(k))];
+  const hints={name:'name contains',id:'instance id',state:'running, stopped, pending',type:'instance type, t3.* works',az:'availability zone',region:'region',ip:'private or public',private:'private IP',public:'public IP',vpc:'VPC id',subnet:'subnet id',sg:'security group',ami:'image id',key:'key pair',age:'time since launch, e.g. >30d',has:'public-ip, tags, name',tag:'tag key or key=value'};
+  items=names.filter(n=>pre&&n.startsWith(pre)&&n!==pre).slice(0,6).map(n=>({label:neg+n+':',insert:neg+n+':',hint:hints[n]||'tag key',kind:'field'}));
+  if(!cur)items=['state','type','tag','has','age'].map(n=>({label:n+':',insert:n+':',hint:hints[n],kind:'field'}));
+  return {items,start,cur}}
+ const neg=m[1],f0=lc(m[2]),val=m[3];const field=f0==='zone'?'az':f0;const seg=val.split(',').pop();const pre=lc(seg);const base=neg+m[2]+':'+val.slice(0,val.length-seg.length);
+ const mk=(v,c)=>({label:v,insert:base+v,count:c,kind:'value'});
+ if(field==='state')items=['running','stopped','pending'].map(v=>mk(v,cnt(d=>d.state===v)));
+ else if(field==='type')items=[...new Set(D.map(d=>d.type))].sort().map(v=>mk(v,cnt(d=>d.type===v)));
+ else if(field==='az')items=[...new Set(D.map(d=>d.az))].sort().map(v=>mk(v,cnt(d=>d.az===v)));
+ else if(field==='region')items=REG.map(v=>mk(v,cnt(d=>d.region===v)));
+ else if(field==='has')items=['public-ip','tags','name'].map(v=>mk(v,cnt(d=>v==='public-ip'?!!d.pub:v==='tags'?Object.keys(d.tags).length>0:!!d.name)));
+ else if(field==='age')items=['>30d','>7d','<1d','<7d'].map(v=>mk(v));
+ else if(field==='tag'){const eq=seg.indexOf('=');if(eq<0)items=TAGKEYS.map(k=>({label:k,insert:base+k+'=',kind:'value',count:cnt(d=>k in d.tags)}));else{const k=TAGKEYS.find(x=>lc(x)===lc(seg.slice(0,eq)));if(k){const vs=[...new Set(D.map(d=>d.tags[k]).filter(Boolean))].sort();items=vs.map(v=>({label:k+'='+v,insert:base+k+'='+v,kind:'value',count:cnt(d=>d.tags[k]===v)}));return {items:items.filter(i=>lc(i.label.split('=')[1]).startsWith(lc(seg.slice(eq+1)))),start,cur}}}}
+ else if(TAGKEYS.find(k=>lc(k)===field)){const k=TAGKEYS.find(k=>lc(k)===field);items=[...new Set(D.map(d=>d.tags[k]).filter(Boolean))].sort().map(v=>mk(v,cnt(d=>d.tags[k]===v)))}
+ else if(!QFIELDS.includes(field))return {items:[],start,cur,unknown:m[2]};
+ items=items.filter(i=>!pre||lc(i.label).startsWith(pre)).slice(0,8);
+ return {items,start,cur}}
+
+function tb(v,F,CQ,sg,q){CQ=CQ||{nf:0,errs:[]};sg=sg||{items:[]};q=q||'';F=F||{state:'',type:''};return `<div class="tb"><div class="lights"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></div>
  <button class="btn" data-tsb title="Toggle sidebar (⌘B)" aria-label="Toggle sidebar">${I('sidebar')}</button>
  <span class="title" style="margin-left:6px">EC2 Instances</span><span class="sp"></span>
- <button class="btn menu" aria-label="Filters" title="Filters live in the sidebar" style="${(F.state||F.type)?'color:var(--accent)':''}">${I('filter')}${(F.state?1:0)+(F.type?1:0)?`${(F.state?1:0)+(F.type?1:0)} filter${(F.state&&F.type)?'s':''}`:'Filters'}</button>
- <div class="search">${I('search')}<input data-search placeholder="Search" aria-label="Search instances"><kbd>⌘F</kbd><div class="recent"><div class="h">Recent</div>${["billing prod","10.0.25","owner esteban","stopped g5"].map(t=>`<div data-r="${t}">${I("search","width:13px;height:13px")}${t}</div>`).join("")}<div class="h" style="margin-top:2px">Matches name, ID, IP, AZ, type, tags</div></div></div></div>`}
+ <button class="btn menu" aria-label="Filters" title="Filters are part of the search. Click a facet or type state:stopped" style="${CQ.nf?'color:var(--accent)':''}">${I('filter')}${CQ.nf?CQ.nf+' filter'+(CQ.nf>1?'s':''):'Filters'}</button>
+ <div class="search">${I('search')}<div class="qwrap"><div class="qhl" aria-hidden="true">${hlq(q)}</div><input data-search placeholder="Search or filter, e.g. state:stopped" aria-label="Search instances" autocomplete="off" spellcheck="false"></div><kbd>⌘F</kbd>
+  <div class="recent${q?'':' show'}"><div class="h">Recent</div>${["state:stopped age:>30d","owner:esteban","has:public-ip type:t3.*","billing prod"].map(t=>`<div data-r="${t}">${I("search","width:13px;height:13px")}${t}</div>`).join("")}<div class="h" style="margin-top:2px">Filter with field:value · -not · a,b either · * wildcard</div></div>
+  <div class="sugg${sg.items.length||sg.unknown||CQ.errs.length?' show':''}" role="listbox">${sg.items.map((it,n)=>`<div class="si${n===(sg.si||0)?' hl':''}" role="option" data-sg="${n}"><span class="${it.kind==='field'?'tk-f2':''}">${esc(it.label)}</span>${it.hint?`<span class="dh">${it.hint}</span>`:''}${it.count!==undefined?`<span class="ct">${it.count}</span>`:''}</div>`).join('')}${sg.unknown?`<div class="serr">${I('warn','width:13px;height:13px')}No field named “${sg.unknown}”. It will be searched as text.</div>`:''}${CQ.errs.filter(e=>!sg.unknown||!e.includes(sg.unknown)).map(e=>`<div class="serr">${I('warn','width:13px;height:13px')}${e}</div>`).join('')}<div class="h" style="margin-top:2px">↑↓ choose · Tab or ↵ accept · esc clear</div></div></div></div>`}
 
 function sideA(F,q,tAll,R){
- const match=d=>!q||(Object.values(d).join(' ')+' '+Object.entries(d.tags).map(([k,v])=>k+' '+v).join(' ')).toLowerCase().split(/\s+/).length&&q.trim().split(/\s+/).every(w=>(Object.values(d).join(' ')+' '+Object.entries(d.tags).map(([k,v])=>k+' '+v).join(' ')).toLowerCase().includes(w));
- const cs=v=>D.filter(d=>R.has(d.region)&&(!F.type||d.type===F.type)&&match(d)&&(!v||d.state===v)).length;
- const ct=t=>D.filter(d=>R.has(d.region)&&(!F.state||d.state===F.state)&&match(d)&&d.type===t).length;
+ const qs=compile(qWithout(q,'state')).pred,qt=compile(qWithout(q,'type')).pred;
+ const cs=v=>D.filter(d=>R.has(d.region)&&qs(d)&&(!v||d.state===v)).length;
+ const ct=t=>D.filter(d=>R.has(d.region)&&qt(d)&&d.type===t).length;
  const ty=[...new Set(D.map(d=>d.type))].sort();
  const z=n=>n?'':' style="opacity:.45"';
- const pins=['billing prod','owner esteban','stopped g5'];
+ const pins=['state:stopped age:>30d','owner:esteban -state:stopped','has:public-ip type:t3.*'];
  return `<div class="side"><div class="sb-h" style="padding-top:2px">State</div>
  <div class="sb-item" tabindex="0" data-fk="state" data-fv="">${I('server')}All<span class="n">${cs('')}</span></div>
  ${['running','stopped','pending'].map(s=>`<div class="sb-item" tabindex="0" data-fk="state" data-fv="${s}"${z(cs(s))}><span class="dot ${stD[s]}" style="margin:0 4px"></span>${cap(s)}<span class="n">${cs(s)}</span></div>`).join('')}
@@ -252,9 +329,10 @@ function sbar(n,shown,extra,loading,rl,rsz){rl=rl||'All regions';const ch=I('che
  <span class="r"><span class="h2">Updated 12:04</span><button class="sbb ic" title="Refresh  ⌘R" aria-label="Refresh">${I('refresh','width:14px;height:14px')}</button><button class="sbb ic${UI.insp?' on':''}" data-tin title="${UI.insp?'Close':'Open'} Inspector  ⌘⌥I" aria-label="Toggle inspector">${I('panelr','width:14px;height:14px')}</button><button class="sbb ic${UI.side?' on':''}" data-tsb title="${UI.side?'Close':'Open'} Sidebar  ⌘B" aria-label="Toggle sidebar">${I('sidebar','width:14px;height:14px')}</button><span class="sep"></span>${extra||(loading?`<span class="sbb" style="padding:0 4px"><span class="spin"></span>Loading prod-readonly…</span>`:`<span class="sbb" style="padding:0 4px"><span class="dot run"></span>Ready</span>`)}</span></div>`}
 
 function mount(el,v){
- let sort={k:'name',dir:1},sel=(window.SEL0!==undefined?window.SEL0:3),q='',ctx=null,pop=null,loading=false,failed=true,R=new Set(REG),flash='',pal=null,pq='',pi=0,tAll=false,tagsAll=false,F={state:'',type:''};
+ let sort={k:'name',dir:1},sel=(window.SEL0!==undefined?window.SEL0:3),q='',ctx=null,pop=null,loading=false,failed=true,R=new Set(REG),flash='',pal=null,pq='',pi=0,tAll=false,tagsAll=false,si=0,F={state:'',type:''};
  const draw=()=>{
-  let rows=D.filter(d=>R.has(d.region)&&(!F.state||d.state===F.state)&&(!F.type||d.type===F.type)).filter(d=>!q||(Object.values(d).join(' ')+' '+Object.entries(d.tags).map(([k,v])=>k+' '+v).join(' ')).toLowerCase().split(/\s+/).length&&q.trim().split(/\s+/).every(w=>(Object.values(d).join(' ')+' '+Object.entries(d.tags).map(([k,v])=>k+' '+v).join(' ')).toLowerCase().includes(w)));
+  const CQ=compile(q);F=deriveF(CQ);const sgv=Object.assign(buildSug(q,R),{si});
+  let rows=D.filter(d=>R.has(d.region)&&CQ.pred(d));
   rows=rows.slice().sort(cmp);
   function cmp(a,b){return (a[sort.k]>b[sort.k]?1:a[sort.k]<b[sort.k]?-1:0)*sort.dir}
   const head=cols.map(([k,l,w])=>`<th tabindex="0" data-k="${k}" style="width:${w}px" class="${sort.k===k?'sorted':''}" aria-sort="${sort.k===k?(sort.dir>0?'ascending':'descending'):'none'}"><span class="s">${l}${sort.k===k?I(sort.dir>0?'up':'down','width:12px;height:12px'):''}</span></th>`).join('');
@@ -264,7 +342,7 @@ function mount(el,v){
    body+=`<tr class="row ${d.i===sel?'sel':''}${failedNow&&d.region==='eu-central-1'?' stale':''}" tabindex="0" data-i="${d.i}"><td>${d.name||'<i style="color:var(--faint)">unnamed</i>'}</td><td class="mono dim">${d.id}</td><td>${stateCell(d)}</td><td>${d.type}</td><td class="dim">${d.az}</td><td class="mono dim num">${d.pip}</td><td class="mono dim num">${d.pub||'—'}</td><td class="dim num">${d.launched}</td></tr>`});
   const d=D[sel];
   const W=el.offsetWidth,H=el.offsetHeight;el.className='win'+(W<760?' narrow':'')+(W<600?' compact':'')+(H<600?' short':'')+(W<1100?' cl1':'')+(W<960?' cl2':'')+(W<840?' cl3':'')+(W<720?' cl4 h2x':'')+(W<640?' h1x':'');const overlayOpen=W<760&&(UI.side||(UI.insp&&sel>=0));
-  el.innerHTML=tb(v,F)+`<div class="main">${overlayOpen?'<div class="scrim" data-scrim></div>':''}${UI.side?sideA(F,q,tAll,R):''}<div class="center">
+  el.innerHTML=tb(v,F,CQ,sgv,q)+`<div class="main">${overlayOpen?'<div class="scrim" data-scrim></div>':''}${UI.side?sideA(F,q,tAll,R):''}<div class="center">
    <div class="tbl"><table><thead><tr>${head}</tr></thead><tbody>${body||`<tr><td colspan="8" style="height:120px;text-align:center;color:var(--dim)">${q?`No instances match “${q}”. Press Esc to clear.`:'No instances match these filters. Select All under State, or click the active type to clear it.'}</td></tr>`}</tbody></table></div></div>
    ${UI.insp&&d&&rows.includes(d)?inspector(d,{stale:failedNow&&d.region==='eu-central-1',tagsAll}):''}</div>`+sbar(scopeN,rows.length,flash?`<span class="sbb" style="padding:0 4px" role="status">${I('check','width:12px;height:12px')}${flash}</span>`:loading||!failedNow?'':`<button class="sbb warn${pop==='fail'?' on':''}" data-fail title="Show details" aria-label="region failed, show details">${I('warn','width:14px;height:14px')}eu-central-1 failed</button>`,loading,rl);
   el.querySelector('[data-search]').value=q;
@@ -292,7 +370,7 @@ function mount(el,v){
   const cur=D[sel];
   const CMDS=[['View: Switch Profile…','⌘P',1,()=>{pop='profile';pq='';pi=0}],['View: Switch Region…','⌘⇧R',1,()=>{pop='region';pq='';pi=0}],['Fleet: Refresh','⌘R',1,doRefresh],
    ['View: Toggle Sidebar','⌘B',1,()=>{UI.side=!UI.side}],['View: Toggle Inspector','⌘⌥I',1,()=>{UI.insp=!UI.insp}],
-   ['Filter: Running Only','',1,()=>{F.state='running'}],['Filter: Stopped Only','',1,()=>{F.state='stopped'}],['Filter: Pending Only','',1,()=>{F.state='pending'}],['Filter: Clear All','',F.state||F.type||q,()=>{F={state:'',type:''};q=''}],
+   ['Filter: Running Only','',1,()=>{q=setToken(q,'state','running')}],['Filter: Stopped Only','',1,()=>{q=setToken(q,'state','stopped')}],['Filter: Pending Only','',1,()=>{q=setToken(q,'state','pending')}],['Filter: Clear All','',q,()=>{q=''}],
    ['Instance: Copy ID','⌘C',cur&&sel>=0,()=>doFlash('Copied '+cur.id)],['Instance: Copy Private IP','',cur&&sel>=0,()=>doFlash('Copied '+cur.pip)],['Instance: Copy Public IP','',cur&&cur.pub,()=>doFlash('Copied '+cur.pub)],['Instance: Open in Console','⌘O',cur&&sel>=0,()=>doFlash('Opening in AWS Console…')],
    ['Fleet: Retry Failed Region','',failedNow,()=>{pop=null;doRefresh();setTimeout(()=>{failed=false;draw()},1200)}],['Account: Connect to AWS…','',1,()=>doFlash('Opening AWS setup…')],['Preferences: Open Settings…','⌘,',1,()=>{document.getElementById('set').scrollIntoView({behavior:'smooth'})}]];
   if(pal){const words=pal.q.toLowerCase().split(/\s+/).filter(Boolean);
@@ -316,13 +394,20 @@ function mount(el,v){
   el.querySelectorAll('th').forEach(h=>{h.onclick=()=>{const k=h.dataset.k;sort=sort.k===k?{k,dir:-sort.dir}:{k,dir:1};draw()}});
   el.querySelectorAll('tr.row').forEach(r=>{r.onclick=()=>{sel=+r.dataset.i;tagsAll=false;UI.insp=true;ctx=null;draw();el.querySelector('tr.sel').focus()};
    r.oncontextmenu=e=>{e.preventDefault();sel=+r.dataset.i;const b=el.getBoundingClientRect();ctx={x:e.clientX-b.left,y:e.clientY-b.top};draw()}});
-  const s=el.querySelector('[data-search]');s.oninput=()=>{q=s.value.toLowerCase();draw();const n=el.querySelector('[data-search]');n.focus();n.setSelectionRange(q.length,q.length)};
-  el.querySelectorAll('[data-r]').forEach(r=>r.onmousedown=e=>{e.preventDefault();q=r.dataset.r.toLowerCase();draw()});
-  s.onkeydown=e=>{if(e.key==='Escape'){q='';draw()}};
-  el.querySelectorAll('[data-fk]').forEach(it=>{const k=it.dataset.fk,v_=it.dataset.fv;it.classList.toggle('on',F[k]===v_);it.onclick=()=>{F[k]=(F[k]===v_&&v_)?'':v_;draw()}});
+  const s=el.querySelector('[data-search]');s.value=q;
+  const syncHl=()=>{const h=el.querySelector('.qhl');if(h)h.scrollLeft=s.scrollLeft};
+  s.oninput=()=>{q=s.value;si=0;draw();const n=el.querySelector('[data-search]');n.focus();n.setSelectionRange(q.length,q.length);const h=el.querySelector('.qhl');if(h)h.scrollLeft=n.scrollLeft};
+  s.onscroll=syncHl;s.onkeyup=syncHl;
+  const accept=n=>{const it=sgv.items[n];if(!it)return false;q=q.slice(0,sgv.start)+it.insert+(/[:=]$/.test(it.insert)?'':' ');si=0;draw();const e=el.querySelector('[data-search]');e.focus();e.setSelectionRange(q.length,q.length);const h=el.querySelector('.qhl');if(h)h.scrollLeft=e.scrollLeft;return true};
+  el.querySelectorAll('[data-sg]').forEach(r=>r.onmousedown=e=>{e.preventDefault();accept(+r.dataset.sg)});
+  s.onkeydown=e=>{const n=sgv.items.length;
+   if(n&&(e.key==='ArrowDown'||e.key==='ArrowUp')){e.preventDefault();e.stopPropagation();si=(si+(e.key==='ArrowDown'?1:n-1))%n;draw();const x=el.querySelector('[data-search]');x.focus();x.setSelectionRange(q.length,q.length);return}
+   if(n&&(e.key==='Tab'||e.key==='Enter')){e.preventDefault();e.stopPropagation();accept(si);return}
+   if(e.key==='Escape'){q='';si=0;draw()}};
+  el.querySelectorAll('[data-fk]').forEach(it=>{const k=it.dataset.fk,v_=it.dataset.fv;it.classList.toggle('on',F[k]===v_);it.onclick=()=>{q=setToken(q,k,(F[k]===v_&&v_)?'':v_);draw()}});
   el.querySelectorAll('[data-tall]').forEach(it=>it.onclick=()=>{tAll=!tAll;draw()});
   el.querySelectorAll('[data-ps]').forEach(it=>it.onclick=()=>{q=it.dataset.ps;draw()});
-  el.querySelectorAll('[data-rc]').forEach(it=>it.onclick=()=>{sel=+it.dataset.rc;F={state:'',type:''};q='';draw()});
+  el.querySelectorAll('[data-rc]').forEach(it=>it.onclick=()=>{sel=+it.dataset.rc;q='';draw()});
   const bd=el.querySelector('[data-dismiss]');if(bd)bd.onclick=e=>{e.stopPropagation();pop=null;draw()};
   const br=el.querySelector('[data-retry]');if(br)br.onclick=e=>{e.stopPropagation();pop=null;loading=true;draw();setTimeout(()=>{loading=false;failed=false;draw()},1200)};
   const bf=el.querySelector('[data-fail]');if(bf)bf.onclick=e=>{e.stopPropagation();pop=pop==='fail'?null:'fail';ctx=null;draw();if(!pop)el.querySelector('[data-fail]')?.focus()};
@@ -389,7 +474,7 @@ const SET_ITEMS=[
   {id:'log',l:'Log level',d:'Written to ~/.config/clouddeck/logs.',t:'select',o:['Errors only','Info','Debug']}]],
  ['About',[{id:'about',l:'',t:'about'}]]];
 function mountSettings(el){
- const S=JSON.parse(JSON.stringify(SET_DEF));let cur='Appearance',q='',note='',pins=['billing prod','owner esteban','stopped g5'];
+ const S=JSON.parse(JSON.stringify(SET_DEF));let cur='Appearance',q='',note='',pins=['state:stopped age:>30d','owner:esteban -state:stopped','has:public-ip type:t3.*'];
  const mod=id=>JSON.stringify(S[id])!==JSON.stringify(SET_DEF[id]);
  const items=c=>SET_ITEMS.find(x=>x[0]===c)[1].filter(i=>!Array.isArray(i));
  const catMod=c=>items(c).some(i=>i.id in SET_DEF&&mod(i.id));
@@ -435,7 +520,7 @@ function mountSettings(el){
   el.querySelectorAll('[data-unpin]').forEach(b=>b.onclick=()=>{pins.splice(+b.dataset.unpin,1);note='Unpinned';draw()});
   el.querySelectorAll('[data-act]').forEach(b=>b.onclick=()=>{note=b.dataset.act;draw()});
   el.querySelectorAll('[data-test]').forEach(b=>b.onclick=()=>{note='aws-cli/2.17.1 found and working';draw()});
-  el.querySelector('[data-restore]').onclick=()=>{Object.keys(SET_DEF).forEach(k=>S[k]=JSON.parse(JSON.stringify(SET_DEF[k])));pins=['billing prod','owner esteban','stopped g5'];note='Defaults restored';draw()};
+  el.querySelector('[data-restore]').onclick=()=>{Object.keys(SET_DEF).forEach(k=>S[k]=JSON.parse(JSON.stringify(SET_DEF[k])));pins=['state:stopped age:>30d','owner:esteban -state:stopped','has:public-ip type:t3.*'];note='Defaults restored';draw()};
  };
  draw();
 }
@@ -465,6 +550,7 @@ document.getElementById('states').innerHTML=
  mini('Signed out (SSO expired)',`${I('key','width:28px;height:28px;color:var(--faint)')}<h4>Sign in to prod-readonly</h4><p>Your AWS SSO session expired. Signing in opens your browser; credentials stay with the AWS CLI.</p><span class="pbtn">Sign in</span><span class="mono" style="color:var(--dim)">aws sso login --profile prod-readonly</span>`,sb_('<span style="color:var(--warntext)">Sign-in required</span>','Updated 09:12'))+
  mini('Demo mode',`<span class="chip" style="height:20px;font-size:11px;padding:0 10px">DEMO</span><h4>You’re looking at simulated data</h4><p>No AWS account is connected. Nothing here exists. The DEMO tag stays in the status bar the whole time.</p><span class="sbtn">Exit demo</span>`,sb_('<span class="chip">DEMO</span> simulated fleet','Updated 12:04'))+
  mini('Empty fleet',`${I('server','width:28px;height:28px;color:var(--faint)')}<h4>No instances in us-east-1</h4><p>prod-readonly has no EC2 instances in this region. Try other regions.</p><span class="sbtn">Select all regions</span>`,sb_('0 instances','Updated 12:04'))+
+ mini('Search syntax',`<div class="kv" style="text-align:left;width:360px;grid-template-columns:130px 1fr"><dt class="mono">state:stopped</dt><dd>field filter (name, id, state, type, az, region, ip, vpc, subnet, sg, ami, key)</dd><dt class="mono">owner:esteban</dt><dd>any tag key works as a field</dd><dt class="mono">tag:Team=data</dt><dd>explicit tag, tag:Owner = has tag</dd><dt class="mono">-state:stopped</dt><dd>not</dd><dt class="mono">state:running,pending</dt><dd>either</dd><dt class="mono">type:t3.*</dt><dd>wildcard</dd><dt class="mono">age:>30d</dt><dd>launched over 30 days ago</dd><dt class="mono">has:public-ip</dt><dd>has a public address</dd><dt class="mono">"api gateway"</dt><dd>exact phrase; plain words must all match</dd></div>`)+
  mini('Loading',`<div class="cloud">${I('cloud','width:56px;height:56px;stroke-width:1;color:var(--accent)')}</div><h4>Loading instances</h4><p>prod-readonly · All regions<span class="dots"><i>.</i><i>.</i><i>.</i></span></p>`)+
  mini('Error',`${I('alert','width:28px;height:28px;color:var(--err)')}<h4>Couldn’t load instances</h4><p>Your SSO session for prod-readonly has expired. Run <span class="mono">aws sso login --profile prod-readonly</span>, then retry.</p><span class="sbtn">${I('refresh')}Retry</span>`)+
  mini('Filter matches nothing',`${I('search','width:28px;height:28px;color:var(--faint)')}<h4>No instances match</h4><p>State: Stopped · Type: g5.xlarge · “bastion”</p><span class="sbtn">Clear filters</span>`)+
