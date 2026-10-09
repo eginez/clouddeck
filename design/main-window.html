@@ -15,7 +15,7 @@
 [data-theme=dark] body,body[data-theme=dark]{color:var(--text)}
 .ctrls{display:flex;gap:6px;margin-bottom:8px}.ctrls button{height:26px;padding:0 12px;border-radius:6px;border:0;background:var(--surf);color:var(--text);font:inherit;box-shadow:0 0 0 .5px var(--line)}.ctrls button.on{background:var(--accent);color:#fff}
 .chip{height:16px;padding:0 6px;border-radius:8px;background:var(--accent);color:#fff;font:600 9px var(--font);letter-spacing:.05em;display:inline-flex;align-items:center}
-.strip{height:24px;background:var(--chrome);display:flex;align-items:center;gap:8px;padding:0 10px;color:var(--dim);font-size:11px;flex:none;width:100%}.strip .r{margin-left:auto}
+.palwrap{position:absolute;inset:0;background:var(--k1a);display:flex;justify-content:center;align-items:flex-start;padding-top:70px;z-index:20}.palette{width:540px;background:var(--popbg);backdrop-filter:blur(24px);border-radius:10px;box-shadow:0 0 0 .5px #0005,0 16px 50px #0005;overflow:hidden}.palin{display:flex;align-items:center;gap:8px;padding:0 12px;height:40px;color:var(--faint)}.palin input:focus-visible{outline:0!important}.palin input{flex:1;border:0;outline:0;background:transparent;font:14px var(--font);color:var(--text)}.pallist{max-height:300px;overflow:auto;padding:4px;border-top:1px solid var(--line2)}.palrow{height:28px;border-radius:5px;display:flex;align-items:center;padding:0 10px;gap:8px}.palrow kbd{margin-left:auto;background:transparent;border:0;color:inherit;opacity:.7}.palrow.off{color:var(--faint)}.palrow.hl{background:var(--accent);color:#fff}.palrow.hl.off{background:var(--k1a);color:var(--dim)}.palft{padding:6px 12px;color:var(--faint);font-size:11px;border-top:1px solid var(--line2)}.strip{height:24px;background:var(--chrome);display:flex;align-items:center;gap:8px;padding:0 10px;color:var(--dim);font-size:11px;flex:none;width:100%}.strip .r{margin-left:auto}
 .mini .bd{overflow:hidden}.mrow{display:flex;align-items:center;gap:8px;width:100%;padding:3px 6px;border-radius:5px;text-align:left}.mrow .sp{flex:1}
 .rgchk{width:14px;height:14px;border-radius:4px;border:1px solid var(--faint);display:inline-flex;align-items:center;justify-content:center;flex:none}.rgchk.on{background:var(--accent);border-color:var(--accent);color:#fff}.rgchk svg{width:11px;height:11px;stroke-width:2}.only{margin-left:8px;opacity:0;color:inherit;text-decoration:underline}.pk:hover .only,.pk.hl .only{opacity:.85}
 *{box-sizing:border-box}
@@ -155,7 +155,7 @@ const stateCell=(d,dotOnly)=>`<span class="st ${stT[d.state]}"><span class="dot 
 const PROFILES=[['prod-readonly','1111-2222-3333 · us-east-1','PR'],['staging-admin','1111-2222-4444 · us-west-2','SA'],['sandbox','7777-8888-9999 · eu-west-1','SB'],['data-platform','1010-1010-1010 · us-east-1','DP'],['security-audit','1904-5521-8812 · eu-central-1','SE'],['legacy-2019','3056-7741-0098 · us-east-1','L9']];
 const pk=(p,cur)=>`<div class="pk${cur?' cur':''}" tabindex="0"><span class="bdg">${p[2]}</span><span><div class="t">${p[0]}</div><div class="u">${p[1]}</div></span>${cur?`<span style="margin-left:auto">${I('check')}</span>`:''}</div>`;
 function tb(v,F){F=F||{state:'',type:''};return `<div class="tb"><div class="lights"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></div>
- <button class="btn" title="Toggle sidebar (⌘B)" aria-label="Toggle sidebar">${I('sidebar')}</button>
+ <button class="btn" data-tsb title="Toggle sidebar (⌘B)" aria-label="Toggle sidebar">${I('sidebar')}</button>
  <span class="title" style="margin-left:6px">EC2 Instances</span><span class="sp"></span>
  <button class="btn menu" aria-label="Filters" title="Filters live in the sidebar" style="${(F.state||F.type)?'color:var(--accent)':''}">${I('filter')}${(F.state?1:0)+(F.type?1:0)?`${(F.state?1:0)+(F.type?1:0)} filter${(F.state&&F.type)?'s':''}`:'Filters'}</button>
  <div class="search">${I('search')}<input data-search placeholder="Search" aria-label="Search instances"><kbd>⌘F</kbd><div class="recent"><div class="h">Recent</div>${["billing prod","10.0.25","owner esteban","stopped g5"].map(t=>`<div data-r="${t}">${I("search","width:13px;height:13px")}${t}</div>`).join("")}<div class="h" style="margin-top:2px">Matches name, ID, IP, AZ, type, tags</div></div></div></div>`}
@@ -188,15 +188,16 @@ function inspector(d){if(!d)return '';
  <div class="sec">Tags · ${Object.keys(d.tags).length}</div>${Object.entries(d.tags).map(([k,v])=>`<span class="tag"><i>${k}</i><b>${v}</b></span>`).join('')}
  <div class="sec">Actions</div><div style="display:flex;gap:6px;flex-wrap:wrap"><span class="sbtn">${I('copy')}Copy ID</span><span class="sbtn">${I('ext')}Open in Console</span></div></div></aside>`}
 
+window.UI=window.UI||{side:true,insp:true};
 function sbar(n,shown,extra,loading,rl,rsz){rl=rl||'All regions';const ch=I('chev','width:11px;height:11px');return `<div class="sbar">
  <span class="sbb" style="padding:0 4px;cursor:default" title="Provider">${I('cloud','width:14px;height:14px')}AWS${window.DEMO?' <span class="chip">DEMO</span>':''}</span>
  <button class="sbb prof" data-pop="profile" title="Switch profile  ⌘P" aria-label="Switch profile (⌘P)">${I('user','width:14px;height:14px')}prod-readonly${ch}</button>
  <button class="sbb" data-pop="region" title="Switch region  ⌘⇧R" aria-label="Switch region (⌘⇧R)">${I('globe','width:14px;height:14px')}${rl}${ch}</button>
  <span class="sep"></span><span>${n} instances</span><span>·</span><span>${shown} shown</span>
- <span class="r"><span>Updated 12:04</span><button class="sbb ic" title="Refresh  ⌘R" aria-label="Refresh">${I('refresh','width:14px;height:14px')}</button><button class="sbb ic on" title="Close Inspector  ⌘⌥I" aria-label="Toggle inspector">${I('panelr','width:14px;height:14px')}</button><button class="sbb ic on" title="Close Sidebar  ⌘B" aria-label="Toggle sidebar">${I('sidebar','width:14px;height:14px')}</button><span class="sep"></span>${extra||(loading?`<span class="sbb" style="padding:0 4px"><span class="spin"></span>Loading prod-readonly…</span>`:`<span class="sbb" style="padding:0 4px"><span class="dot run"></span>Ready</span>`)}</span></div>`}
+ <span class="r"><span>Updated 12:04</span><button class="sbb ic" title="Refresh  ⌘R" aria-label="Refresh">${I('refresh','width:14px;height:14px')}</button><button class="sbb ic${UI.insp?' on':''}" data-tin title="${UI.insp?'Close':'Open'} Inspector  ⌘⌥I" aria-label="Toggle inspector">${I('panelr','width:14px;height:14px')}</button><button class="sbb ic${UI.side?' on':''}" data-tsb title="${UI.side?'Close':'Open'} Sidebar  ⌘B" aria-label="Toggle sidebar">${I('sidebar','width:14px;height:14px')}</button><span class="sep"></span>${extra||(loading?`<span class="sbb" style="padding:0 4px"><span class="spin"></span>Loading prod-readonly…</span>`:`<span class="sbb" style="padding:0 4px"><span class="dot run"></span>Ready</span>`)}</span></div>`}
 
 function mount(el,v){
- let sort={k:'name',dir:1},sel=3,q='',ctx=null,pop=null,loading=false,failed=true,R=new Set(REG),pq='',pi=0,tAll=false,F={state:'',type:''};
+ let sort={k:'name',dir:1},sel=3,q='',ctx=null,pop=null,loading=false,failed=true,R=new Set(REG),flash='',pal=null,pq='',pi=0,tAll=false,F={state:'',type:''};
  const draw=()=>{
   let rows=D.filter(d=>R.has(d.region)&&(!F.state||d.state===F.state)&&(!F.type||d.type===F.type)).filter(d=>!q||(Object.values(d).join(' ')+' '+Object.entries(d.tags).map(([k,v])=>k+' '+v).join(' ')).toLowerCase().split(/\s+/).length&&q.trim().split(/\s+/).every(w=>(Object.values(d).join(' ')+' '+Object.entries(d.tags).map(([k,v])=>k+' '+v).join(' ')).toLowerCase().includes(w)));
   rows=rows.slice().sort(cmp);
@@ -207,9 +208,9 @@ function mount(el,v){
   rows.forEach(d=>{
    body+=`<tr class="row ${d.i===sel?'sel':''}${failedNow&&d.region==='eu-central-1'?' stale':''}" tabindex="0" data-i="${d.i}"><td>${d.name}</td><td class="mono dim">${d.id}</td><td>${stateCell(d)}</td><td>${d.type}</td><td class="dim">${d.az}</td><td class="mono dim num">${d.pip}</td><td class="mono dim num">${d.pub||'—'}</td><td class="dim num">${d.launched}</td></tr>`});
   const d=D[sel];
-  el.innerHTML=tb(v,F)+`<div class="main">${sideA(F,q,tAll,R)}<div class="center">
+  el.innerHTML=tb(v,F)+`<div class="main">${UI.side?sideA(F,q,tAll,R):''}<div class="center">
    <div class="tbl"><table><thead><tr>${head}</tr></thead><tbody>${body||`<tr><td colspan="8" style="height:120px;text-align:center;color:var(--dim)">${q?`No instances match “${q}”. Press Esc to clear.`:'No instances match these filters. Select All under State, or click the active type to clear it.'}</td></tr>`}</tbody></table></div></div>
-   ${d&&rows.includes(d)?inspector(d):''}</div>`+sbar(scopeN,rows.length,loading||!failedNow?'':`<button class="sbb warn${pop==='fail'?' on':''}" data-fail title="Show details" aria-label="region failed, show details">${I('warn','width:14px;height:14px')}eu-central-1 failed</button>`,loading,rl);
+   ${UI.insp&&d&&rows.includes(d)?inspector(d):''}</div>`+sbar(scopeN,rows.length,flash?`<span class="sbb" style="padding:0 4px" role="status">${I('check','width:12px;height:12px')}${flash}</span>`:loading||!failedNow?'':`<button class="sbb warn${pop==='fail'?' on':''}" data-fail title="Show details" aria-label="region failed, show details">${I('warn','width:14px;height:14px')}eu-central-1 failed</button>`,loading,rl);
   el.querySelector('[data-search]').value=q;
   if(ctx){el.insertAdjacentHTML('beforeend',`<div class="ctx" style="left:${ctx.x}px;top:${ctx.y}px">${[['copy','Copy Instance ID','⌘C'],['copy','Copy Private IP'],['copy','Copy Public IP'],['ext','Open in Console','⌘O']].map(([ic,t,k],n)=>`<div>${I(ic)}${t}${k?`<kbd>${k}</kbd>`:''}</div>${n===2?'<hr>':''}`).join('')}</div>`)}
   const rcount=r=>D.filter(d=>d.region===r).length;
@@ -230,6 +231,26 @@ function mount(el,v){
    el.querySelectorAll('.pop .pk').forEach(x=>x.onclick=e=>{e.stopPropagation();if(x.dataset.pi!==undefined){pi=+x.dataset.pi;act(pi)}else switchProfile()});
    el.querySelectorAll('[data-only]').forEach(o=>o.onclick=e=>{e.stopPropagation();R=new Set([o.dataset.only]);draw()});}
   if(pop==='fail'){el.insertAdjacentHTML('beforeend',`<div class="pop failpop" onclick="event.stopPropagation()" role="dialog" aria-label="Region failure details"><div class="h2">${I('warn')}eu-central-1 couldn’t be loaded</div><p>4 instances from this region are from the 12:01 refresh and may be out of date. The other three regions are current.</p><code>AccessDenied: ec2:DescribeInstances is not allowed for prod-readonly in eu-central-1</code><div class="a"><button class="sbtn" data-copyerr>${I('copy')}Copy error</button><button class="pbtn" data-retry>${I('refresh')}Retry region</button></div></div>`);el.querySelector('.failpop [data-retry]').focus()}
+  const doFlash=t=>{flash=t;setTimeout(()=>{flash='';draw()},1800)};
+  const doRefresh=()=>{loading=true;setTimeout(()=>{loading=false;draw()},1200)};
+  const cur=D[sel];
+  const CMDS=[['View: Switch Profile…','⌘P',1,()=>{pop='profile';pq='';pi=0}],['View: Switch Region…','⌘⇧R',1,()=>{pop='region';pq='';pi=0}],['Fleet: Refresh','⌘R',1,doRefresh],
+   ['View: Toggle Sidebar','⌘B',1,()=>{UI.side=!UI.side}],['View: Toggle Inspector','⌘⌥I',1,()=>{UI.insp=!UI.insp}],
+   ['Filter: Running Only','',1,()=>{F.state='running'}],['Filter: Stopped Only','',1,()=>{F.state='stopped'}],['Filter: Pending Only','',1,()=>{F.state='pending'}],['Filter: Clear All','',F.state||F.type||q,()=>{F={state:'',type:''};q=''}],
+   ['Instance: Copy ID','⌘C',cur&&sel>=0,()=>doFlash('Copied '+cur.id)],['Instance: Copy Private IP','',cur&&sel>=0,()=>doFlash('Copied '+cur.pip)],['Instance: Copy Public IP','',cur&&cur.pub,()=>doFlash('Copied '+cur.pub)],['Instance: Open in Console','⌘O',cur&&sel>=0,()=>doFlash('Opening in AWS Console…')],
+   ['Fleet: Retry Failed Region','',failedNow,()=>{pop=null;doRefresh();setTimeout(()=>{failed=false;draw()},1200)}],['Account: Connect to AWS…','',1,()=>doFlash('Opening AWS setup…')]];
+  if(pal){const words=pal.q.toLowerCase().split(/\s+/).filter(Boolean);
+   const list=CMDS.filter(c=>words.every(w=>c[0].toLowerCase().includes(w)));
+   pal.i=Math.min(pal.i,Math.max(0,list.length-1));
+   el.insertAdjacentHTML('beforeend',`<div class="palwrap" onclick="event.stopPropagation()"><div class="palette" role="dialog" aria-label="Command palette"><div class="palin">${I('search')}<input data-pal placeholder="Type a command" aria-label="Command" value="${pal.q}"></div><div class="pallist">${list.map((c,n)=>`<div class="palrow${n===pal.i?' hl':''}${c[2]?'':' off'}" data-pn="${n}"><span>${c[0]}</span>${c[1]?`<kbd>${c[1]}</kbd>`:''}</div>`).join('')||'<div class="palrow off">No matching commands</div>'}</div><div class="palft">↑↓ navigate · ↵ run · esc close</div></div></div>`);
+   const pin=el.querySelector('[data-pal]');pin.focus();pin.setSelectionRange(pal.q.length,pal.q.length);
+   const run=n=>{const c=list[n];if(!c||!c[2])return;pal=null;c[3]();draw()};
+   pin.oninput=()=>{pal.q=pin.value;pal.i=0;draw()};
+   pin.onkeydown=e=>{if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();pal.i=Math.max(0,Math.min(list.length-1,pal.i+(e.key==='ArrowDown'?1:-1)));draw()}else if(e.key==='Enter'){e.preventDefault();run(pal.i)}else if(e.key==='Escape'){e.stopPropagation();pal=null;draw()}};
+   el.querySelectorAll('.palrow[data-pn]').forEach(r=>r.onclick=e=>{e.stopPropagation();run(+r.dataset.pn)});
+   el.querySelector('.palwrap').onclick=e=>{pal=null;draw()};}
+  el.querySelectorAll('[data-tsb]').forEach(b=>b.onclick=e=>{e.stopPropagation();UI.side=!UI.side;draw()});
+  el.querySelectorAll('[data-tin]').forEach(b=>b.onclick=e=>{e.stopPropagation();UI.insp=!UI.insp;draw()});
   el.querySelectorAll('[data-pop]').forEach(b=>{b.onclick=e=>{e.stopPropagation();pop=pop===b.dataset.pop?null:b.dataset.pop;pq='';pi=0;ctx=null;draw();if(!pop)el.querySelector(`[data-pop="${b.dataset.pop}"]`)?.focus()}});
   el.querySelectorAll('th').forEach(h=>{h.onclick=()=>{const k=h.dataset.k;sort=sort.k===k?{k,dir:-sort.dir}:{k,dir:1};draw()}});
   el.querySelectorAll('tr.row').forEach(r=>{r.onclick=()=>{sel=+r.dataset.i;ctx=null;draw();el.querySelector('tr.sel').focus()};
@@ -247,7 +268,7 @@ function mount(el,v){
   const x=el.querySelector('.ih .btn');if(x)x.onclick=()=>{sel=-1;draw()};
  };
  el.tabIndex=-1;
- el.addEventListener('keydown',e=>{const m=e.metaKey||e.ctrlKey;if(m&&e.key.toLowerCase()==='p'){e.preventDefault();pop='profile';pq='';pi=0;draw();return}if(m&&e.shiftKey&&e.key.toLowerCase()==='r'){e.preventDefault();pop='region';pq='';pi=0;draw();return}if(m&&!e.shiftKey&&e.key.toLowerCase()==='r'){e.preventDefault();loading=true;draw();setTimeout(()=>{loading=false;draw()},1200);return}if(e.target.matches('input'))return;
+ el.addEventListener('keydown',e=>{const m=e.metaKey||e.ctrlKey;if(m&&e.shiftKey&&e.key.toLowerCase()==='p'){e.preventDefault();pop=null;pal={q:'',i:0};draw();return}if(m&&e.key.toLowerCase()==='b'&&!e.target.matches('input')){e.preventDefault();UI.side=!UI.side;draw();return}if(m&&e.altKey&&e.key.toLowerCase()==='i'){e.preventDefault();UI.insp=!UI.insp;draw();return}if(m&&e.key.toLowerCase()==='c'&&sel>=0&&!e.target.matches('input')){e.preventDefault();doFlash('Copied '+D[sel].id);draw();return}if(m&&e.key.toLowerCase()==='o'&&sel>=0){e.preventDefault();doFlash('Opening in AWS Console…');draw();return}if(m&&!e.shiftKey&&e.key.toLowerCase()==='p'){e.preventDefault();pop='profile';pq='';pi=0;draw();return}if(m&&e.shiftKey&&e.key.toLowerCase()==='r'){e.preventDefault();pop='region';pq='';pi=0;draw();return}if(m&&!e.shiftKey&&e.key.toLowerCase()==='r'){e.preventDefault();loading=true;draw();setTimeout(()=>{loading=false;draw()},1200);return}if(e.target.matches('input'))return;
   const dn=e.key==='ArrowDown'||e.key==='j',up=e.key==='ArrowUp'||e.key==='k';
   if(dn||up){e.preventDefault();const r=[...el.querySelectorAll('tr.row')];const c=r.findIndex(x=>+x.dataset.i===sel);const n=r[Math.max(0,Math.min(r.length-1,c+(dn?1:-1)))];if(n){sel=+n.dataset.i;draw();el.querySelector('tr.sel').focus()}}
   if(e.key==='Escape'){ctx=null;pop=null;if(!e.target.matches('input')){sel=-1}draw()}
@@ -255,7 +276,7 @@ function mount(el,v){
  document.addEventListener('click',()=>{if(ctx||pop){ctx=null;pop=null;draw()}});
  draw();
 }
-window.DEMO=false;
+window.DEMO=false;window.UI={side:true,insp:true};
 function remountA(){const old=document.getElementById('A');const n=old.cloneNode(false);n.innerHTML='';old.replaceWith(n);mount(n,'A')}
 mount(document.getElementById('A'),'A');
 const tgl=(a,b,fn)=>{[a,b].forEach(id=>document.getElementById(id).onclick=()=>{document.getElementById(a).classList.toggle('on',id===a);document.getElementById(b).classList.toggle('on',id===b);fn(id)})};
