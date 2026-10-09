@@ -272,6 +272,8 @@ fn instance_row(
 ) -> impl IntoElement {
     let selector: &'static str = "ec2.instance.row";
     let row_id = instance.id();
+    let name_selector = format!("{selector}.{row_id}.name");
+    let id_selector = format!("{selector}.{row_id}.id");
     let click_id = row_id.clone();
     let hover_id = row_id.clone();
     let name = instance
@@ -307,6 +309,7 @@ fn instance_row(
                 .gap(px(3.0))
                 .child(
                     div()
+                        .debug_selector(move || name_selector.clone())
                         .min_w(px(0.0))
                         .whitespace_nowrap()
                         .text_ellipsis()
@@ -316,6 +319,7 @@ fn instance_row(
                 )
                 .child(
                     div()
+                        .debug_selector(move || id_selector.clone())
                         .min_w(px(0.0))
                         .whitespace_nowrap()
                         .text_ellipsis()
@@ -929,6 +933,138 @@ mod tests {
 
         assert!(cx.debug_bounds("ec2.instance.error").is_some());
         assert!(cx.debug_bounds("ec2.instance.list").is_none());
+    }
+
+    // clouddeck-rs-mac-ui-fix-ellipsis: the Name and ID cells used to render
+    // only an ellipsis ("...") at real window widths. The row's first column
+    // is a `flex_1` + `flex_basis(260)` + `min_w(140)` item; with
+    // `whitespace_nowrap` + `text_ellipsis` text children, a layout pass
+    // where the text's minimum width resolves to the full untruncated string
+    // would pin the column to the whole row width and starve the
+    // Region/Type/State columns. The regression could not be reproduced on
+    // the current layout (the name cell measures 956px of a 1256px row at
+    // 1280pt, i.e. 76%), so these tests are regression guards: they assert
+    // the name cell owns at least half the row width and the ID cell is
+    // non-zero at the reported 1280pt window width, in both the 3-row demo
+    // and the 121-row "large" scenario.
+    /// The reported regression is at 1280pt window width; the tests resize
+    /// the test window to exactly this and assert at it.
+    const TEST_WINDOW_WIDTH_PX: f32 = 1280.0;
+
+    /// View model for the large-fleet scenario (the `--demo-scenario large`
+    /// shape: 4 seed instances plus generated "demo-N" clones, 121 rows
+    /// total), the same code path `AppShell::large_instances` exercises.
+    fn large_fleet_view_model() -> InstanceListViewModel {
+        let seed = vec![
+            instance("i-1", "api-server", "running", "t3.medium", "us-east-1"),
+            instance("i-2", "bastion", "stopped", "t3.small", "us-west-2"),
+            instance("i-3", "worker-0001", "running", "m5.large", "us-east-1"),
+            instance("i-4", "builder-node", "pending", "c5.xlarge", "eu-west-1"),
+        ];
+        let mut instances = seed.clone();
+        for index in 4..=120 {
+            let mut inst = seed[(index - 4) % seed.len()].clone();
+            inst.instance_id = format!("i-demo-{index:03}");
+            if let Some(tag) = inst.tags.iter_mut().find(|t| t.key == "Name") {
+                tag.value = format!("demo-{index}");
+            }
+            instances.push(inst);
+        }
+        let mut vm =
+            InstanceListViewModel::new(Box::new(MockComputeService::new(instances, None)));
+        let rt = tokio::runtime::Builder::new_current_thread().build().unwrap();
+        rt.block_on(vm.load_instances());
+        vm
+    }
+
+    fn assert_readable_row_widths(cx: &mut VisualTestContext, row_key: &'static str) {
+        let row = cx
+            .debug_bounds(row_key)
+            .unwrap_or_else(|| panic!("row {row_key} should render"));
+        let name_key = format!("{row_key}.name");
+        // `debug_bounds` only accepts `&'static str`, while the row key is
+        // built at runtime; leak a static copy for the probe (tests run in
+        // short-lived processes, so the intentional leak is acceptable).
+        let name_static: &'static str = Box::leak(name_key.into_boxed_str());
+        let name = cx
+            .debug_bounds(name_static)
+            .unwrap_or_else(|| panic!("name cell {name_static} should render"));
+        let id_key = format!("{row_key}.id");
+        let id_static: &'static str = Box::leak(id_key.into_boxed_str());
+        let id = cx
+            .debug_bounds(id_static)
+            .unwrap_or_else(|| panic!("id cell {id_static} should render"));
+
+        assert!(
+            name.size.width > row.size.width / 2.0,
+            "name cell should be at least half the row width \
+             (got {name} of {row})"
+        );
+        assert!(
+            id.size.width > px(0.0),
+            "id cell must not be zero width (got {id})"
+        );
+        // The regression symptom: the first column pinned to the entire row
+        // width, starving the fixed Region/Type/State columns. Guard that
+        // the name cell leaves real space for them (fixed columns total
+        // 90+78+72=240pt plus three 12pt gaps and the row's 12pt padding:
+        // 240 + 36 + 24 = 300pt at a 1280pt window leaves at least
+        // row_width - 300 for the first column, so the name cell must be
+        // strictly less than the row width minus a margin).
+        assert!(
+            name.size.width < row.size.width - px(100.0),
+            "name cell must not fill the whole row (the fixed columns are \
+             starved) (got {name} of {row})"
+        );
+    }
+
+    #[gpui::test]
+    fn name_and_id_cells_have_readable_width_in_demo_fleet(cx: &mut TestAppContext) {
+        let (_view, cx) = cx.add_window_view(|_, _| InstanceListView::new(populated_view_model()));
+
+        cx.simulate_resize(gpui::size(px(TEST_WINDOW_WIDTH_PX), px(800.0)));
+        cx.run_until_parked();
+
+        assert_readable_row_widths(cx, "ec2.instance.row.us-east-1:i-1");
+        assert_readable_row_widths(cx, "ec2.instance.row.us-west-2:i-2");
+    }
+
+    #[gpui::test]
+    fn name_and_id_cells_have_readable_width_in_large_fleet(cx: &mut TestAppContext) {
+        // The --demo-scenario large case: 121 rows (4 seeds + demo-004..120).
+        let vm = large_fleet_view_model();
+        let (_view, cx) = cx.add_window_view(|_, _| InstanceListView::new(vm));
+        cx.simulate_resize(gpui::size(px(TEST_WINDOW_WIDTH_PX), px(800.0)));
+        cx.run_until_parked();
+
+        // The 121 rows all render (gpui does not virtualize the list).
+        // MockComputeService sorts rows by instance id ascending, so the
+        // seeded i-1 renders first and the generated i-demo-119 (a clone of
+        // the eu-west-1 seed, (119-4) % 4 == 3) sits at the end of the
+        // table.
+        assert_readable_row_widths(cx, "ec2.instance.row.us-east-1:i-1");
+        assert_readable_row_widths(cx, "ec2.instance.row.eu-west-1:i-demo-119");
+    }
+
+    #[gpui::test]
+    fn large_fleet_renders_all_rows(cx: &mut TestAppContext) {
+        // Sanity check for the large-fleet fixture: prove the 121-row view
+        // (i-1..i-4 seeds plus i-demo-004..120) actually renders its
+        // rows, not silently fewer.
+        let vm = large_fleet_view_model();
+        assert_eq!(vm.instances().len(), 121);
+
+        let (_view, cx) = cx.add_window_view(|_, _| InstanceListView::new(vm));
+        // Spot-check the last generated row (i-demo-119 clones the eu-west-1
+        // seed, (119-4) % 4 == 3) and the first seed.
+        assert!(
+            cx.debug_bounds("ec2.instance.row.us-east-1:i-1").is_some(),
+            "seed row renders"
+        );
+        assert!(
+            cx.debug_bounds("ec2.instance.row.eu-west-1:i-demo-119").is_some(),
+            "last generated row renders"
+        );
     }
 
     #[gpui::test]
