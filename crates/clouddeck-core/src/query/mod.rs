@@ -3,6 +3,7 @@
 mod edit;
 mod facets;
 mod matcher;
+mod suggest;
 mod tags;
 mod term;
 mod tokenize;
@@ -13,6 +14,7 @@ pub(crate) mod fixtures;
 pub use edit::*;
 pub use facets::*;
 pub use matcher::*;
+pub use suggest::*;
 pub use tags::*;
 pub use term::*;
 pub use tokenize::*;
