@@ -5,6 +5,7 @@ mod mock;
 mod models;
 mod scenario;
 mod scenario_service;
+mod query;
 mod service;
 
 pub use error::CloudDeckError;
@@ -25,6 +26,7 @@ pub use scenario::{
 pub use scenario_service::{
     DEFAULT_FAILURE_MESSAGE, ScenarioFailureError, ScenarioService, TestScenarioKind,
 };
+pub use query::*;
 pub use service::{BoxError, ComputeService};
 
 mod instance_detail_view_model;
