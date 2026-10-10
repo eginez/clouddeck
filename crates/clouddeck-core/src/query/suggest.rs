@@ -3,8 +3,10 @@
 use super::term::{TermKind, classify};
 use super::tokenize::{QueryField, tokenize};
 use crate::models::EC2Instance;
+use std::collections::BTreeMap;
 
 const MAX_FIELD_ITEMS: usize = 6;
+const MAX_VALUE_ITEMS: usize = 8;
 
 /// Whether a suggestion names a field or a value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,8 +43,8 @@ pub struct Suggestions {
     pub unknown_field: Option<String>,
 }
 
-/// Suggests fields for the word at the end of `query`.
-pub fn suggest(query: &str, _instances: &[EC2Instance], known_tag_keys: &[String]) -> Suggestions {
+/// Suggests fields and values for the word at the end of `query`.
+pub fn suggest(query: &str, instances: &[EC2Instance], known_tag_keys: &[String]) -> Suggestions {
     if query.is_empty() {
         return Suggestions::default();
     }
@@ -72,6 +74,13 @@ pub fn suggest(query: &str, _instances: &[EC2Instance], known_tag_keys: &[String
 
     match classify(current, known_tag_keys).kind {
         TermKind::Word { .. } => {}
+        TermKind::Field { field, .. } => {
+            return Suggestions {
+                items: value_items(&current.raw, field, instances),
+                replace_start,
+                unknown_field: None,
+            };
+        }
         TermKind::Unknown { name, .. } => {
             return Suggestions {
                 items: Vec::new(),
@@ -79,7 +88,7 @@ pub fn suggest(query: &str, _instances: &[EC2Instance], known_tag_keys: &[String
                 unknown_field: Some(name),
             };
         }
-        // value suggestions: query engine beads 11-12
+        // tag values: query engine bead 12
         _ => {
             return Suggestions {
                 items: Vec::new(),
@@ -143,6 +152,103 @@ pub fn apply_suggestion(query: &str, suggestions: &Suggestions, index: usize) ->
         applied.push(' ');
     }
     Some(applied)
+}
+
+fn value_items(current: &str, field: QueryField, instances: &[EC2Instance]) -> Vec<Suggestion> {
+    let (neg, body) = match current.strip_prefix('-') {
+        Some(rest) => ("-", rest),
+        None => ("", current),
+    };
+    let Some((name, value)) = body.split_once(':') else {
+        return Vec::new();
+    };
+    let seg_start = value.rfind(',').map_or(0, |comma| comma + 1);
+    let base = format!("{neg}{name}:{}", &value[..seg_start]);
+    let seg = value[seg_start..].to_ascii_lowercase();
+
+    value_candidates(field, instances)
+        .into_iter()
+        .filter(|(label, _)| label.to_ascii_lowercase().starts_with(&seg))
+        .take(MAX_VALUE_ITEMS)
+        .map(|(label, count)| Suggestion {
+            insert: format!("{base}{label}"),
+            label,
+            hint: None,
+            count,
+            kind: SuggestionKind::Value,
+        })
+        .collect()
+}
+
+fn value_candidates(field: QueryField, instances: &[EC2Instance]) -> Vec<(String, Option<usize>)> {
+    match field {
+        QueryField::State => ["running", "stopped", "pending"]
+            .into_iter()
+            .map(|state| {
+                let count = instances
+                    .iter()
+                    .filter(|i| is_text(i.state.as_deref(), state))
+                    .count();
+                (state.to_string(), Some(count))
+            })
+            .collect(),
+        QueryField::Type => distinct_values(instances, |i| i.instance_type.as_deref()),
+        QueryField::Az => distinct_values(instances, |i| i.availability_zone.as_deref()),
+        QueryField::Region => distinct_values(instances, |i| i.region.as_deref()),
+        QueryField::Has => vec![
+            (
+                "public-ip".to_string(),
+                Some(
+                    instances
+                        .iter()
+                        .filter(|i| non_empty(i.public_ip_address.as_deref()))
+                        .count(),
+                ),
+            ),
+            (
+                "tags".to_string(),
+                Some(instances.iter().filter(|i| !i.tags.is_empty()).count()),
+            ),
+            (
+                "name".to_string(),
+                Some(instances.iter().filter(|i| non_empty(i.name())).count()),
+            ),
+        ],
+        QueryField::Age => [">30d", ">7d", "<1d", "<7d"]
+            .into_iter()
+            .map(|label| (label.to_string(), None))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn distinct_values(
+    instances: &[EC2Instance],
+    text_of: impl Fn(&EC2Instance) -> Option<&str>,
+) -> Vec<(String, Option<usize>)> {
+    let mut counts: BTreeMap<String, (String, usize)> = BTreeMap::new();
+    for text in instances
+        .iter()
+        .filter_map(text_of)
+        .filter(|t| !t.is_empty())
+    {
+        counts
+            .entry(text.to_ascii_lowercase())
+            .or_insert_with(|| (text.to_string(), 0))
+            .1 += 1;
+    }
+    counts
+        .into_values()
+        .map(|(value, count)| (value, Some(count)))
+        .collect()
+}
+
+fn is_text(value: Option<&str>, expected: &str) -> bool {
+    value.is_some_and(|v| v.eq_ignore_ascii_case(expected))
+}
+
+fn non_empty(value: Option<&str>) -> bool {
+    value.is_some_and(|v| !v.is_empty())
 }
 
 fn field_item(neg: &str, name: &str, hint: &str) -> Suggestion {
@@ -301,8 +407,146 @@ mod tests {
     }
 
     #[test]
-    fn name_value_has_no_items_until_value_suggestions_exist() {
-        assert!(labels("state:r").is_empty());
+    fn state_value_prefix_suggests_running() {
+        assert_eq!(labels("state:r"), ["running"]);
+    }
+
+    fn counted(q: &str) -> Vec<(String, Option<usize>)> {
+        suggest(q, &fleet(), &known_tag_keys(&fleet()))
+            .items
+            .into_iter()
+            .map(|s| (s.label, s.count))
+            .collect()
+    }
+
+    fn pairs(items: &[(&str, usize)]) -> Vec<(String, Option<usize>)> {
+        items
+            .iter()
+            .map(|(label, count)| (label.to_string(), Some(*count)))
+            .collect()
+    }
+
+    #[test]
+    fn state_values_with_counts() {
+        assert_eq!(
+            counted("state:"),
+            pairs(&[("running", 2), ("stopped", 2), ("pending", 1)])
+        );
+    }
+
+    #[test]
+    fn state_value_prefix_replaces_only_value() {
+        let s = suggest("web state:r", &fleet(), &known_tag_keys(&fleet()));
+        assert_eq!(counted("web state:r"), pairs(&[("running", 2)]));
+        assert_eq!(s.replace_start, 4);
+        assert_eq!(s.items[0].insert, "state:running");
+        assert_eq!(s.items[0].kind, SuggestionKind::Value);
+        assert_eq!(s.items[0].hint, None);
+    }
+
+    #[test]
+    fn comma_list_completes_last_segment() {
+        let s = suggest("state:running,st", &fleet(), &known_tag_keys(&fleet()));
+        assert_eq!(
+            s.items.iter().map(|i| i.count).collect::<Vec<_>>(),
+            [Some(2)]
+        );
+        assert_eq!(s.items[0].label, "stopped");
+        assert_eq!(s.items[0].insert, "state:running,stopped");
+    }
+
+    #[test]
+    fn negated_value_keeps_dash_in_insert() {
+        let s = suggest("-state:s", &fleet(), &known_tag_keys(&fleet()));
+        assert_eq!(s.items[0].insert, "-state:stopped");
+        assert_eq!(s.items.len(), 1);
+    }
+
+    #[test]
+    fn value_match_ignores_case_and_keeps_typed_name() {
+        let s = suggest("STATE:R", &fleet(), &known_tag_keys(&fleet()));
+        assert_eq!(counted("STATE:R"), pairs(&[("running", 2)]));
+        assert_eq!(s.items[0].insert, "STATE:running");
+    }
+
+    #[test]
+    fn type_values_are_distinct_sorted_and_counted() {
+        assert_eq!(
+            counted("type:t3"),
+            pairs(&[("t3.medium", 1), ("t3.micro", 1), ("t3.small", 1)])
+        );
+    }
+
+    #[test]
+    fn distinct_values_keep_first_seen_text_and_merge_case() {
+        let mut instances = fleet();
+        instances[0].availability_zone = Some("US-EAST-1A".to_string());
+        let s = suggest("zone:us-e", &instances, &known_tag_keys(&instances));
+        assert_eq!(
+            s.items
+                .iter()
+                .map(|i| (i.label.as_str(), i.count))
+                .collect::<Vec<_>>(),
+            [("US-EAST-1A", Some(1)), ("us-east-1b", Some(1))]
+        );
+        assert_eq!(s.items[0].insert, "zone:US-EAST-1A");
+    }
+
+    #[test]
+    fn az_values_filtered_by_prefix() {
+        assert_eq!(
+            counted("zone:us-w"),
+            pairs(&[("us-west-2a", 1), ("us-west-2c", 1)])
+        );
+        let s = suggest("zone:us-w", &fleet(), &known_tag_keys(&fleet()));
+        assert_eq!(s.items[0].insert, "zone:us-west-2a");
+    }
+
+    #[test]
+    fn region_values_sorted_and_counted() {
+        assert_eq!(
+            counted("region:"),
+            pairs(&[("eu-west-1", 1), ("us-east-1", 2), ("us-west-2", 2)])
+        );
+    }
+
+    #[test]
+    fn has_values_counted() {
+        assert_eq!(
+            counted("has:"),
+            pairs(&[("public-ip", 2), ("tags", 4), ("name", 4)])
+        );
+    }
+
+    #[test]
+    fn age_values_have_no_count() {
+        assert_eq!(
+            counted("age:"),
+            vec![
+                (">30d".to_string(), None),
+                (">7d".to_string(), None),
+                ("<1d".to_string(), None),
+                ("<7d".to_string(), None),
+            ]
+        );
+        assert_eq!(labels("age:>"), [">30d", ">7d"]);
+    }
+
+    #[test]
+    fn name_id_ip_and_tag_values_have_no_items() {
+        assert!(labels("name:").is_empty());
+        assert!(labels("ip:1").is_empty());
+        assert!(labels("owner:").is_empty());
+        assert!(labels("colour:").is_empty());
+    }
+
+    #[test]
+    fn apply_state_value_adds_trailing_space() {
+        let s = suggest("web state:r", &fleet(), &known_tag_keys(&fleet()));
+        assert_eq!(
+            apply_suggestion("web state:r", &s, 0).as_deref(),
+            Some("web state:running ")
+        );
     }
 
     #[test]
