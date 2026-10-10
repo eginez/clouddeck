@@ -19,25 +19,38 @@ pub struct QueryError {
 pub struct CompiledQuery {
     terms: Vec<Term>,
     errors: Vec<QueryError>,
-    // read by date filters, added in query engine beads 5-7
-    #[allow(dead_code)]
+    // per term: an invalid age or has term, which always matches
+    ignored: Vec<bool>,
     now: SystemTime,
 }
 
 /// Parses `query` into a compiled predicate; `now` anchors relative terms.
 pub fn compile(query: &str, known_tag_keys: &[String], now: SystemTime) -> CompiledQuery {
     let terms = parse(query, known_tag_keys);
-    let errors = terms
+    let problems: Vec<Option<String>> = terms
         .iter()
+        .map(|term| term.error().or_else(|| invalid_message(term)))
+        .collect();
+    let ignored = terms
+        .iter()
+        .map(|term| invalid_message(term).is_some())
+        .collect();
+    let errors = problems
+        .into_iter()
         .enumerate()
-        .filter_map(|(term_index, term)| {
-            term.error().map(|message| QueryError {
+        .filter_map(|(term_index, problem)| {
+            problem.map(|message| QueryError {
                 term_index,
                 message,
             })
         })
         .collect();
-    CompiledQuery { terms, errors, now }
+    CompiledQuery {
+        terms,
+        errors,
+        ignored,
+        now,
+    }
 }
 
 impl CompiledQuery {
@@ -55,12 +68,15 @@ impl CompiledQuery {
     pub fn recognised_field_count(&self) -> usize {
         self.terms
             .iter()
-            .filter(|term| match &term.kind {
-                TermKind::Field { field, value, .. } => {
-                    is_counted_field(*field) && !field_values(value).is_empty()
-                }
-                TermKind::TagShorthand { value, .. } => !field_values(value).is_empty(),
-                _ => false,
+            .zip(&self.ignored)
+            .filter(|(term, ignored)| {
+                !**ignored
+                    && match &term.kind {
+                        TermKind::Field { value, .. } | TermKind::TagShorthand { value, .. } => {
+                            !field_values(value).is_empty()
+                        }
+                        _ => false,
+                    }
             })
             .count()
     }
@@ -69,7 +85,8 @@ impl CompiledQuery {
     pub fn matches(&self, instance: &EC2Instance) -> bool {
         self.terms
             .iter()
-            .all(|term| self.term_matches(term, instance) != term.negated)
+            .zip(&self.ignored)
+            .all(|(term, ignored)| *ignored || self.term_matches(term, instance) != term.negated)
     }
 
     /// Clones of the matching instances, in input order.
@@ -86,6 +103,13 @@ impl CompiledQuery {
             TermKind::Word { text } | TermKind::Unknown { text, .. } => {
                 haystack(instance).contains(&text.to_lowercase())
             }
+            TermKind::Field {
+                field: QueryField::Age,
+                value,
+                ..
+            } => field_values(value)
+                .first()
+                .is_none_or(|age| age_matches(instance, age, self.now)),
             TermKind::Field { field, value, .. } => {
                 let values = field_values(value);
                 values.is_empty() || values.iter().any(|v| field_matches(*field, instance, v))
@@ -98,9 +122,75 @@ impl CompiledQuery {
     }
 }
 
-// age and has are placeholders until query engine bead 7
-fn is_counted_field(field: QueryField) -> bool {
-    !matches!(field, QueryField::Age | QueryField::Has)
+const AGE_HELP: &str = "age needs > or <, a number and h, d or w. Example: age:>30d";
+
+/// Why an `age:` or `has:` term is ignored, or `None` when it is usable.
+fn invalid_message(term: &Term) -> Option<String> {
+    let TermKind::Field { field, value, .. } = &term.kind else {
+        return None;
+    };
+    let values = field_values(value);
+    match field {
+        QueryField::Age => {
+            let first = values.first()?;
+            parse_age(first).is_none().then(|| AGE_HELP.to_string())
+        }
+        QueryField::Has => values
+            .iter()
+            .find(|v| !matches!(v.as_str(), "public-ip" | "tags" | "name"))
+            .map(|bad| format!("has: knows public-ip, tags and name, not “{bad}”.")),
+        _ => None,
+    }
+}
+
+/// Parses an age such as `>30d`, `<36h` or `>2w` into its direction and limit in days.
+fn parse_age(value: &str) -> Option<(char, f64)> {
+    let direction = value.chars().next().filter(|c| matches!(c, '>' | '<'))?;
+    let rest = &value[1..];
+    let unit = rest.chars().last()?;
+    let digits = &rest[..rest.len() - unit.len_utf8()];
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let count: f64 = digits.parse().ok()?;
+    let days = match unit {
+        'h' => count / 24.0,
+        'd' => count,
+        'w' => count * 7.0,
+        _ => return None,
+    };
+    Some((direction, days))
+}
+
+/// Whether the launch time is older (`>`) or younger (`<`) than the parsed limit.
+fn age_matches(instance: &EC2Instance, value: &str, now: SystemTime) -> bool {
+    let (direction, limit_days) = match parse_age(value) {
+        Some(parsed) => parsed,
+        None => return false,
+    };
+    let Some(launch) = instance.launch_time else {
+        return false;
+    };
+    let age_days = match now.duration_since(launch) {
+        Ok(elapsed) => elapsed.as_secs_f64() / 86_400.0,
+        Err(ahead) => -ahead.duration().as_secs_f64() / 86_400.0,
+    };
+    match direction {
+        '>' => age_days > limit_days,
+        _ => age_days < limit_days,
+    }
+}
+
+fn has_matches(instance: &EC2Instance, value: &str) -> bool {
+    match value {
+        "public-ip" => instance
+            .public_ip_address
+            .as_deref()
+            .is_some_and(|ip| !ip.is_empty()),
+        "tags" => !instance.tags.is_empty(),
+        "name" => instance.name().is_some_and(|name| !name.is_empty()),
+        _ => false,
+    }
 }
 
 fn field_values(value: &str) -> Vec<String> {
@@ -145,8 +235,8 @@ fn field_matches(field: QueryField, instance: &EC2Instance, value: &str) -> bool
                 || field_text(&group.group_id).contains(value)
         }),
         QueryField::Tag => tag_field_matches(instance, value),
-        // filled in by query engine bead 7
-        QueryField::Age | QueryField::Has => true,
+        QueryField::Has => has_matches(instance, value),
+        QueryField::Age => unreachable!("age terms are matched in term_matches"),
     }
 }
 
@@ -440,5 +530,75 @@ mod tests {
             |query: &str| compile(query, &known_tag_keys(&fleet), now()).recognised_field_count();
         assert_eq!(count("owner:esteban tag:Team web"), 2);
         assert_eq!(count("owner:"), 0);
+    }
+
+    #[test]
+    fn has_filters() {
+        assert_eq!(ids("has:public-ip"), vec![1, 3]);
+        assert_eq!(ids("-has:public-ip"), vec![2, 4, 5]);
+        assert_eq!(ids("has:name"), vec![1, 2, 3, 5]);
+        assert_eq!(ids("has:tags"), vec![1, 2, 3, 5]);
+        assert_eq!(ids("has:public-ip,name"), vec![1, 2, 3, 5]);
+    }
+
+    #[test]
+    fn has_with_unknown_key_is_ignored_with_error() {
+        let fleet = fleet();
+        let query = compile("has:ipv6", &known_tag_keys(&fleet), now());
+        assert_eq!(ids("has:ipv6"), vec![1, 2, 3, 4, 5]);
+        assert_eq!(
+            query.errors(),
+            &[QueryError {
+                term_index: 0,
+                message: "has: knows public-ip, tags and name, not “ipv6”.".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn age_filters() {
+        assert_eq!(ids("age:>30d"), vec![2]);
+        assert_eq!(ids("age:<1d"), vec![3]);
+        assert_eq!(ids("age:>2w"), vec![2, 4]);
+        assert_eq!(ids("age:>36h"), vec![1, 2, 4]);
+        assert_eq!(ids("age:<7d"), vec![3]);
+        assert_eq!(ids("age:>7d"), vec![1, 2, 4]);
+        assert_eq!(ids("-age:>30d"), vec![1, 3, 4, 5]);
+    }
+
+    #[test]
+    fn invalid_age_is_ignored_with_error() {
+        let fleet = fleet();
+        let help = "age needs > or <, a number and h, d or w. Example: age:>30d";
+        let error = |query: &str| {
+            compile(query, &known_tag_keys(&fleet), now())
+                .errors()
+                .to_vec()
+        };
+        assert_eq!(ids("age:30d"), vec![1, 2, 3, 4, 5]);
+        assert_eq!(
+            error("age:30d"),
+            vec![QueryError {
+                term_index: 0,
+                message: help.into(),
+            }]
+        );
+        assert_eq!(ids("age:>30m"), vec![1, 2, 3, 4, 5]);
+        assert_eq!(error("age:>30m")[0].message, help);
+        assert_eq!(ids("-age:bad"), vec![1, 2, 3, 4, 5]);
+        assert_eq!(error("-age:bad").len(), 1);
+    }
+
+    #[test]
+    fn recognised_field_count_skips_ignored_terms() {
+        let fleet = fleet();
+        let query = compile(
+            "state:stopped owner:esteban web colour:x age:bad -has:tags state:",
+            &known_tag_keys(&fleet),
+            now(),
+        );
+        assert_eq!(query.recognised_field_count(), 3);
+        let indexes: Vec<usize> = query.errors().iter().map(|e| e.term_index).collect();
+        assert_eq!(indexes, vec![3, 4]);
     }
 }
