@@ -1,6 +1,7 @@
 //! Compiles a query into a predicate over instances.
 
 use super::term::{Term, TermKind, parse};
+use super::tokenize::QueryField;
 use crate::models::EC2Instance;
 use chrono::{DateTime, Utc};
 use std::time::SystemTime;
@@ -50,9 +51,17 @@ impl CompiledQuery {
         &self.errors
     }
 
-    /// Number of terms naming a known field; always 0 until field filters land.
+    /// Number of terms naming an instance field with a non-empty value, negated ones included.
     pub fn recognised_field_count(&self) -> usize {
-        0
+        self.terms
+            .iter()
+            .filter(|term| match &term.kind {
+                TermKind::Field { field, value, .. } => {
+                    is_instance_field(*field) && !field_values(value).is_empty()
+                }
+                _ => false,
+            })
+            .count()
     }
 
     /// Whether `instance` satisfies every term.
@@ -77,8 +86,63 @@ impl CompiledQuery {
                 haystack(instance).contains(&text.to_lowercase())
             }
             // filled in by query engine beads 5-7
-            TermKind::Field { .. } | TermKind::TagShorthand { .. } => true,
+            TermKind::Field { field, value, .. } => {
+                let values = field_values(value);
+                values.is_empty() || values.iter().any(|v| field_matches(*field, instance, v))
+            }
+            // filled in by query engine beads 5-7
+            TermKind::TagShorthand { .. } => true,
         }
+    }
+}
+
+fn is_instance_field(field: QueryField) -> bool {
+    !matches!(field, QueryField::Tag | QueryField::Age | QueryField::Has)
+}
+
+fn field_values(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(|piece| piece.trim().to_lowercase())
+        .filter(|piece| !piece.is_empty())
+        .collect()
+}
+
+fn field_text(value: &Option<String>) -> String {
+    value.as_deref().unwrap_or("").to_lowercase()
+}
+
+fn field_matches(field: QueryField, instance: &EC2Instance, value: &str) -> bool {
+    let prefix_or_glob = |text: &Option<String>| {
+        if value.contains('*') {
+            glob(text.as_deref().unwrap_or(""), value)
+        } else {
+            field_text(text).starts_with(value)
+        }
+    };
+    match field {
+        QueryField::Name => glob(instance.name().unwrap_or(""), value),
+        QueryField::Id => glob(&instance.instance_id, value),
+        QueryField::State => field_text(&instance.state).starts_with(value),
+        QueryField::Region => field_text(&instance.region).starts_with(value),
+        QueryField::Type => prefix_or_glob(&instance.instance_type),
+        QueryField::Az => prefix_or_glob(&instance.availability_zone),
+        QueryField::Ip => {
+            field_text(&instance.private_ip_address).contains(value)
+                || field_text(&instance.public_ip_address).contains(value)
+        }
+        QueryField::Private => field_text(&instance.private_ip_address).contains(value),
+        QueryField::Public => field_text(&instance.public_ip_address).contains(value),
+        QueryField::Vpc => field_text(&instance.vpc_id).contains(value),
+        QueryField::Subnet => field_text(&instance.subnet_id).contains(value),
+        QueryField::Ami => field_text(&instance.image_id).contains(value),
+        QueryField::Key => field_text(&instance.key_name).contains(value),
+        QueryField::Sg => instance.security_groups.iter().any(|group| {
+            field_text(&group.group_name).contains(value)
+                || field_text(&group.group_id).contains(value)
+        }),
+        // filled in by query engine beads 5-7
+        QueryField::Tag | QueryField::Age | QueryField::Has => true,
     }
 }
 
@@ -124,8 +188,6 @@ fn haystack(instance: &EC2Instance) -> String {
 }
 
 /// Case-insensitive match; without `*` the pattern is a substring test, with it the whole text must match.
-// called by field filters, added in query engine beads 5-7
-#[allow(dead_code)]
 pub(crate) fn glob(text: &str, pattern: &str) -> bool {
     let text = text.to_lowercase();
     let pattern = pattern.to_lowercase();
@@ -247,5 +309,77 @@ mod tests {
         assert!(glob("hello", "ell"));
         assert!(!glob("aba", "ab*ba"));
         assert!(glob("abba", "ab*ba"));
+    }
+
+    #[test]
+    fn state_filters() {
+        assert_eq!(ids("state:stopped"), vec![2, 5]);
+        assert_eq!(ids("-state:stopped"), vec![1, 3, 4]);
+        assert_eq!(ids("state:running,pending"), vec![1, 3, 4]);
+        assert_eq!(ids("state:run"), vec![1, 4]);
+        assert_eq!(ids("STATE:Running"), vec![1, 4]);
+        assert_eq!(ids("state:"), vec![1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn type_filters() {
+        assert_eq!(ids("type:t3"), vec![1, 3, 4]);
+        assert_eq!(ids("type:t3.*"), vec![1, 3, 4]);
+        assert_eq!(ids("type:*large"), vec![2, 5]);
+        assert_eq!(ids("type:m6i.large"), vec![2]);
+    }
+
+    #[test]
+    fn az_and_region_filters() {
+        assert_eq!(ids("az:us-west-2"), vec![3, 4]);
+        assert_eq!(ids("zone:us-east-1b"), vec![2]);
+        assert_eq!(ids("az:*b"), vec![2, 5]);
+        assert_eq!(ids("region:eu"), vec![5]);
+        assert_eq!(ids("region:us"), vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn ip_filters() {
+        assert_eq!(ids("ip:54.8"), vec![1, 3]);
+        assert_eq!(ids("private:10.1."), vec![3, 4]);
+        assert_eq!(ids("public:10.0"), Vec::<u8>::new());
+    }
+
+    #[test]
+    fn network_and_key_filters() {
+        assert_eq!(ids("vpc:vpc-0aaa"), vec![1]);
+        assert_eq!(ids("subnet:0bbb"), vec![1]);
+        assert_eq!(ids("ami:0ddd"), vec![1]);
+        assert_eq!(ids("key:ops"), vec![1, 4]);
+        assert_eq!(ids("key:rsa"), vec![4]);
+        assert_eq!(ids("sg:bastion"), vec![4]);
+        assert_eq!(ids("sg:sg-0ccc"), vec![1]);
+        assert_eq!(ids("sg:-sg"), vec![1, 2, 4]);
+    }
+
+    #[test]
+    fn name_and_id_filters() {
+        assert_eq!(ids("name:api*"), vec![1]);
+        assert_eq!(ids("name:*01"), vec![1, 5]);
+        assert_eq!(ids("name:web"), vec![3]);
+        assert_eq!(ids("id:*0003"), vec![3]);
+        assert_eq!(ids("id:0000000000000002"), vec![2]);
+    }
+
+    #[test]
+    fn field_filters_combine_with_words() {
+        assert_eq!(ids("web state:pending"), vec![3]);
+    }
+
+    #[test]
+    fn recognised_field_count_cases() {
+        let fleet = fleet();
+        let count = |query: &str| {
+            compile(query, &known_tag_keys(&fleet), now()).recognised_field_count()
+        };
+        assert_eq!(count("state:stopped type:t3 web"), 2);
+        assert_eq!(count("-state:stopped"), 1);
+        assert_eq!(count("state:"), 0);
+        assert_eq!(count("colour:x"), 0);
     }
 }
