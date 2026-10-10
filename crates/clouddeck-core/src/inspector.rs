@@ -2,13 +2,31 @@
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use chrono::NaiveDateTime;
+use chrono::{DateTime, NaiveDateTime, Utc};
 
 use crate::EC2Instance;
 
 const STOP_TIME_FORMAT: &str = "%Y-%m-%d %H:%M:%S GMT";
+const LAUNCH_TIME_FORMAT: &str = "%Y-%m-%d %H:%M UTC";
 const SECONDS_PER_HOUR: u64 = 3_600;
 const SECONDS_PER_DAY: u64 = 86_400;
+
+/// One label and value line in an inspector section.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InspectorRow {
+    pub label: &'static str,
+    pub value: Option<String>,
+    pub empty_text: String,
+    pub monospace: bool,
+    pub copyable: bool,
+}
+
+/// A titled group of inspector rows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InspectorSection {
+    pub title: String,
+    pub rows: Vec<InspectorRow>,
+}
 
 /// Time parsed from the last parenthesised `YYYY-MM-DD HH:MM:SS GMT` in a state transition reason.
 pub fn stopped_at(reason: &str) -> Option<SystemTime> {
@@ -70,6 +88,111 @@ pub fn public_ip_text(instance: &EC2Instance) -> String {
         _ => "No public address",
     }
     .to_string()
+}
+
+/// Instance and Network sections of the inspector body.
+pub fn inspector_sections(instance: &EC2Instance) -> Vec<InspectorSection> {
+    let instance_rows = vec![
+        text_row(
+            "State",
+            capitalized(instance.state.as_deref()).as_deref(),
+            false,
+            false,
+        ),
+        text_row("Type", instance.instance_type.as_deref(), false, false),
+        text_row("Zone", instance.availability_zone.as_deref(), false, false),
+        text_row("AMI", instance.image_id.as_deref(), true, true),
+        text_row("Key pair", instance.key_name.as_deref(), false, false),
+        text_row(
+            "Launched",
+            instance.launch_time.map(launched_text).as_deref(),
+            false,
+            false,
+        ),
+    ];
+    let network_rows = vec![
+        text_row(
+            "Private IP",
+            instance.private_ip_address.as_deref(),
+            true,
+            true,
+        ),
+        InspectorRow {
+            label: "Public IP",
+            value: non_empty(instance.public_ip_address.as_deref()),
+            empty_text: public_ip_text(instance),
+            monospace: true,
+            copyable: true,
+        },
+        text_row(
+            "Private DNS",
+            instance.private_dns_name.as_deref(),
+            true,
+            true,
+        ),
+        text_row("VPC", instance.vpc_id.as_deref(), true, true),
+        text_row("Subnet", instance.subnet_id.as_deref(), true, true),
+    ];
+    vec![
+        InspectorSection {
+            title: "Instance".to_string(),
+            rows: instance_rows,
+        },
+        InspectorSection {
+            title: "Network".to_string(),
+            rows: network_rows,
+        },
+    ]
+}
+
+/// Heading for the security group list, including the group count.
+pub fn security_groups_title(instance: &EC2Instance) -> String {
+    format!("Security groups · {}", instance.security_groups.len())
+}
+
+/// `(group name, group id)` for each security group, in model order; missing fields are empty.
+pub fn security_group_rows(instance: &EC2Instance) -> Vec<(String, String)> {
+    instance
+        .security_groups
+        .iter()
+        .map(|group| {
+            (
+                group.group_name.clone().unwrap_or_default(),
+                group.group_id.clone().unwrap_or_default(),
+            )
+        })
+        .collect()
+}
+
+fn text_row(
+    label: &'static str,
+    value: Option<&str>,
+    monospace: bool,
+    copyable: bool,
+) -> InspectorRow {
+    InspectorRow {
+        label,
+        value: non_empty(value),
+        empty_text: "None".to_string(),
+        monospace,
+        copyable,
+    }
+}
+
+fn non_empty(value: Option<&str>) -> Option<String> {
+    value.filter(|value| !value.is_empty()).map(str::to_string)
+}
+
+fn capitalized(value: Option<&str>) -> Option<String> {
+    let mut chars = value.filter(|value| !value.is_empty())?.chars();
+    let first = chars.next()?;
+    Some(first.to_uppercase().chain(chars).collect())
+}
+
+fn launched_text(launch: SystemTime) -> String {
+    DateTime::<Utc>::from(launch)
+        .format(LAUNCH_TIME_FORMAT)
+        .to_string()
 }
 
 fn normalized_state(instance: &EC2Instance) -> Option<String> {
@@ -368,5 +491,114 @@ mod tests {
             public_ip_text(&with_state(blank(), "terminated")),
             "No public address"
         );
+    }
+
+    fn labels(section: &InspectorSection) -> Vec<&'static str> {
+        section.rows.iter().map(|row| row.label).collect()
+    }
+
+    fn values(section: &InspectorSection) -> Vec<Option<&str>> {
+        section
+            .rows
+            .iter()
+            .map(|row| row.value.as_deref())
+            .collect()
+    }
+
+    #[test]
+    fn sections_are_instance_then_network() {
+        let sections = inspector_sections(&running());
+        let titles: Vec<&str> = sections.iter().map(|s| s.title.as_str()).collect();
+        assert_eq!(titles, ["Instance", "Network"]);
+        assert_eq!(
+            labels(&sections[0]),
+            ["State", "Type", "Zone", "AMI", "Key pair", "Launched"]
+        );
+        assert_eq!(
+            labels(&sections[1]),
+            ["Private IP", "Public IP", "Private DNS", "VPC", "Subnet"]
+        );
+    }
+
+    #[test]
+    fn running_instance_values() {
+        let sections = inspector_sections(&running());
+        assert_eq!(
+            values(&sections[0]),
+            [
+                Some("Running"),
+                Some("t3.medium"),
+                Some("us-east-1a"),
+                Some("ami-027d083c0"),
+                Some("ops-ed25519"),
+                Some("2026-10-07 07:00 UTC"),
+            ]
+        );
+    }
+
+    #[test]
+    fn running_network_values_and_public_ip_placeholder() {
+        let sections = inspector_sections(&running());
+        assert_eq!(
+            values(&sections[1]),
+            [
+                Some("10.0.4.3"),
+                None,
+                Some("ip-10-0-4-3.ec2.internal"),
+                Some("vpc-098f0fdb8"),
+                Some("subnet-0d99b9061"),
+            ]
+        );
+        let public_ip = &sections[1].rows[1];
+        assert_eq!(public_ip.empty_text, "No public address");
+        assert!(
+            sections[1]
+                .rows
+                .iter()
+                .all(|row| row.monospace && row.copyable)
+        );
+    }
+
+    #[test]
+    fn ami_is_monospace_and_copyable_state_is_neither() {
+        let sections = inspector_sections(&running());
+        let ami = &sections[0].rows[3];
+        assert!(ami.monospace && ami.copyable);
+        let state = &sections[0].rows[0];
+        assert!(!state.monospace && !state.copyable);
+    }
+
+    #[test]
+    fn stopped_instance_shows_placeholders() {
+        let sections = inspector_sections(&stopped());
+        let ami = &sections[0].rows[3];
+        assert_eq!(ami.value, None);
+        assert_eq!(ami.empty_text, "None");
+        assert_eq!(sections[0].rows[4].value, None);
+        assert_eq!(sections[1].rows[1].empty_text, "Released while stopped");
+    }
+
+    #[test]
+    fn empty_key_name_is_no_value() {
+        let instance = EC2Instance {
+            key_name: Some(String::new()),
+            ..running()
+        };
+        let sections = inspector_sections(&instance);
+        assert_eq!(sections[0].rows[4].value, None);
+    }
+
+    #[test]
+    fn security_group_title_and_rows() {
+        assert_eq!(security_groups_title(&running()), "Security groups · 2");
+        assert_eq!(
+            security_group_rows(&running()),
+            [
+                ("web-sg".to_string(), "sg-0d2fc5662".to_string()),
+                ("monitoring-sg".to_string(), "sg-074bb5deb".to_string()),
+            ]
+        );
+        assert_eq!(security_groups_title(&stopped()), "Security groups · 0");
+        assert!(security_group_rows(&stopped()).is_empty());
     }
 }
