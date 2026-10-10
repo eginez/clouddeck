@@ -164,6 +164,68 @@ pub fn security_group_rows(instance: &EC2Instance) -> Vec<(String, String)> {
         .collect()
 }
 
+/// Tags shown before the inspector offers "Show all".
+pub const TAGS_COLLAPSED_LIMIT: usize = 8;
+
+/// Explanation shown in place of the tag list when an instance has no tags.
+pub const NO_TAGS_TEXT: &str =
+    "This instance has no tags. Names come from the Name tag, so it shows as unnamed.";
+
+/// Name tag value for the inspector header, or `None` when it is absent or empty.
+pub fn inspector_title(instance: &EC2Instance) -> Option<String> {
+    instance
+        .name()
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+}
+
+/// All tags as `(key, value)`: Name first, then by key ignoring ASCII case, then by value.
+pub fn inspector_tags(instance: &EC2Instance) -> Vec<(String, String)> {
+    let mut tags: Vec<(String, String)> = instance
+        .tags
+        .iter()
+        .map(|tag| (tag.key.clone(), tag.value.clone()))
+        .collect();
+    tags.sort_by_key(|(key, value)| {
+        (
+            !key.eq_ignore_ascii_case("Name"),
+            key.to_ascii_lowercase(),
+            value.clone(),
+        )
+    });
+    tags
+}
+
+/// Heading for the tag section, including the tag count.
+pub fn tags_title(count: usize) -> String {
+    format!("Tags · {count}")
+}
+
+/// Leading tags to show, all of them when expanded or when there are few enough.
+pub fn visible_tags(tags: &[(String, String)], show_all: bool) -> &[(String, String)] {
+    if show_all || tags.len() <= TAGS_COLLAPSED_LIMIT {
+        tags
+    } else {
+        &tags[..TAGS_COLLAPSED_LIMIT]
+    }
+}
+
+/// Toggle link under the tag list, or `None` when the list is not collapsed.
+pub fn tags_toggle_text(count: usize, show_all: bool) -> Option<String> {
+    if count <= TAGS_COLLAPSED_LIMIT {
+        None
+    } else if show_all {
+        Some("Show fewer".to_string())
+    } else {
+        Some(format!("Show all {count} tags"))
+    }
+}
+
+/// Note shown when the instance's region failed on the last refresh.
+pub fn stale_note(refreshed_at: &str, region: &str) -> String {
+    format!("From the {refreshed_at} refresh. {region} failed to load.")
+}
+
 fn text_row(
     label: &'static str,
     value: Option<&str>,
@@ -600,5 +662,123 @@ mod tests {
         );
         assert_eq!(security_groups_title(&stopped()), "Security groups · 0");
         assert!(security_group_rows(&stopped()).is_empty());
+    }
+
+    fn many_tags() -> EC2Instance {
+        EC2Instance {
+            tags: std::iter::once(tag("Name", "x"))
+                .chain((1..=9).rev().map(|n| tag(&format!("k{n}"), &n.to_string())))
+                .collect(),
+            ..running()
+        }
+    }
+
+    fn pairs(tags: &[(String, String)]) -> Vec<(&str, &str)> {
+        tags.iter()
+            .map(|(key, value)| (key.as_str(), value.as_str()))
+            .collect()
+    }
+
+    #[test]
+    fn title_is_non_empty_name_tag() {
+        assert_eq!(
+            inspector_title(&running()),
+            Some("api-gateway-01".to_string())
+        );
+        let untagged = EC2Instance {
+            tags: Vec::new(),
+            ..running()
+        };
+        assert_eq!(inspector_title(&untagged), None);
+        let empty_name = EC2Instance {
+            tags: vec![tag("Name", "")],
+            ..running()
+        };
+        assert_eq!(inspector_title(&empty_name), None);
+    }
+
+    #[test]
+    fn tags_put_name_first_then_by_key_and_value() {
+        let tags = inspector_tags(&running());
+        assert_eq!(
+            pairs(&tags),
+            [
+                ("Name", "api-gateway-01"),
+                ("aws:cloudformation:stack", "api-gateway-stack"),
+                ("Team", "platform"),
+            ]
+        );
+
+        let mixed = EC2Instance {
+            tags: vec![
+                tag("b", "2"),
+                tag("NAME", "n"),
+                tag("A", "1"),
+                tag("b", "1"),
+            ],
+            ..running()
+        };
+        let tags = inspector_tags(&mixed);
+        assert_eq!(
+            pairs(&tags),
+            [("NAME", "n"), ("A", "1"), ("b", "1"), ("b", "2")]
+        );
+    }
+
+    #[test]
+    fn tags_title_includes_count() {
+        assert_eq!(tags_title(3), "Tags · 3");
+        assert_eq!(tags_title(0), "Tags · 0");
+    }
+
+    #[test]
+    fn many_tags_collapse_to_eight_with_toggle() {
+        let tags = inspector_tags(&many_tags());
+        assert_eq!(tags.len(), 10);
+
+        let collapsed = visible_tags(&tags, false);
+        let keys: Vec<&str> = collapsed.iter().map(|(key, _)| key.as_str()).collect();
+        assert_eq!(keys, ["Name", "k1", "k2", "k3", "k4", "k5", "k6", "k7"]);
+        assert_eq!(visible_tags(&tags, true).len(), 10);
+
+        assert_eq!(
+            tags_toggle_text(10, false),
+            Some("Show all 10 tags".to_string())
+        );
+        assert_eq!(tags_toggle_text(10, true), Some("Show fewer".to_string()));
+        assert_eq!(tags_toggle_text(8, false), None);
+        assert_eq!(tags_toggle_text(0, false), None);
+    }
+
+    #[test]
+    fn collapse_boundary_is_between_eight_and_nine_tags() {
+        let tags_of = |count: usize| -> Vec<(String, String)> {
+            (0..count)
+                .map(|i| (format!("k{i}"), i.to_string()))
+                .collect()
+        };
+        assert_eq!(visible_tags(&tags_of(8), false).len(), 8);
+        assert_eq!(visible_tags(&tags_of(9), false).len(), 8);
+        assert_eq!(tags_toggle_text(8, false), None);
+        assert_eq!(
+            tags_toggle_text(9, false),
+            Some("Show all 9 tags".to_string())
+        );
+    }
+
+    #[test]
+    fn no_tags_text_matches_design() {
+        assert_eq!(
+            NO_TAGS_TEXT,
+            "This instance has no tags. Names come from the Name tag, so it shows as unnamed."
+        );
+    }
+
+    #[test]
+    fn stale_note_names_refresh_time_and_region() {
+        assert_eq!(
+            stale_note("12:01", "eu-central-1"),
+            "From the 12:01 refresh. eu-central-1 failed to load."
+        );
     }
 }
