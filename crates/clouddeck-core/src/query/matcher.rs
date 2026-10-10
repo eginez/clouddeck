@@ -51,14 +51,15 @@ impl CompiledQuery {
         &self.errors
     }
 
-    /// Number of terms naming an instance field with a non-empty value, negated ones included.
+    /// Number of terms naming an instance field or tag with a non-empty value, negated ones included.
     pub fn recognised_field_count(&self) -> usize {
         self.terms
             .iter()
             .filter(|term| match &term.kind {
                 TermKind::Field { field, value, .. } => {
-                    is_instance_field(*field) && !field_values(value).is_empty()
+                    is_counted_field(*field) && !field_values(value).is_empty()
                 }
+                TermKind::TagShorthand { value, .. } => !field_values(value).is_empty(),
                 _ => false,
             })
             .count()
@@ -85,19 +86,21 @@ impl CompiledQuery {
             TermKind::Word { text } | TermKind::Unknown { text, .. } => {
                 haystack(instance).contains(&text.to_lowercase())
             }
-            // filled in by query engine beads 5-7
             TermKind::Field { field, value, .. } => {
                 let values = field_values(value);
                 values.is_empty() || values.iter().any(|v| field_matches(*field, instance, v))
             }
-            // filled in by query engine beads 5-7
-            TermKind::TagShorthand { .. } => true,
+            TermKind::TagShorthand { key, value, .. } => {
+                let values = field_values(value);
+                values.is_empty() || values.iter().any(|v| tag_value_matches(instance, key, v))
+            }
         }
     }
 }
 
-fn is_instance_field(field: QueryField) -> bool {
-    !matches!(field, QueryField::Tag | QueryField::Age | QueryField::Has)
+// age and has are placeholders until query engine bead 7
+fn is_counted_field(field: QueryField) -> bool {
+    !matches!(field, QueryField::Age | QueryField::Has)
 }
 
 fn field_values(value: &str) -> Vec<String> {
@@ -141,9 +144,31 @@ fn field_matches(field: QueryField, instance: &EC2Instance, value: &str) -> bool
             field_text(&group.group_name).contains(value)
                 || field_text(&group.group_id).contains(value)
         }),
-        // filled in by query engine beads 5-7
-        QueryField::Tag | QueryField::Age | QueryField::Has => true,
+        QueryField::Tag => tag_field_matches(instance, value),
+        // filled in by query engine bead 7
+        QueryField::Age | QueryField::Has => true,
     }
+}
+
+/// Whether some tag matches `key` (as in `tag:Team`) or `key=value` (value is a substring test).
+fn tag_field_matches(instance: &EC2Instance, spec: &str) -> bool {
+    let (key, wanted) = match spec.split_once('=') {
+        Some((key, wanted)) => (key, Some(wanted)),
+        None => (spec, None),
+    };
+    instance.tags.iter().any(|tag| {
+        tag.key.to_lowercase() == key
+            && wanted.is_none_or(|wanted| tag.value.to_lowercase().contains(wanted))
+    })
+}
+
+/// Whether a tag named `key` (ignoring case) has a value containing `value`.
+fn tag_value_matches(instance: &EC2Instance, key: &str, value: &str) -> bool {
+    let key = key.to_lowercase();
+    instance
+        .tags
+        .iter()
+        .any(|tag| tag.key.to_lowercase() == key && tag.value.to_lowercase().contains(value))
 }
 
 fn haystack(instance: &EC2Instance) -> String {
@@ -381,5 +406,39 @@ mod tests {
         assert_eq!(count("-state:stopped"), 1);
         assert_eq!(count("state:"), 0);
         assert_eq!(count("colour:x"), 0);
+    }
+
+    #[test]
+    fn tag_shorthand_filters() {
+        assert_eq!(ids("owner:esteban"), vec![1, 5]);
+        assert_eq!(ids("Owner:ESTEBAN"), vec![1, 5]);
+        assert_eq!(ids("team:pay,plat"), vec![1, 2]);
+        assert_eq!(ids("-owner:esteban"), vec![2, 3, 4]);
+        assert_eq!(ids("owner:"), vec![1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn tag_field_filters() {
+        assert_eq!(ids("tag:CostCenter"), vec![2]);
+        assert_eq!(ids("tag:costcenter"), vec![2]);
+        assert_eq!(ids("tag:team=data"), vec![5]);
+        assert_eq!(ids("tag:team=pay,team=plat"), vec![1, 2]);
+        assert_eq!(ids("tag:owner=e"), vec![1, 5]);
+        assert_eq!(ids("tag:Nope"), Vec::<u8>::new());
+        assert_eq!(ids("tag:"), vec![1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn tag_and_state_filters_combine() {
+        assert_eq!(ids("state:running team:platform"), vec![1]);
+    }
+
+    #[test]
+    fn recognised_field_count_counts_tags() {
+        let fleet = fleet();
+        let count =
+            |query: &str| compile(query, &known_tag_keys(&fleet), now()).recognised_field_count();
+        assert_eq!(count("owner:esteban tag:Team web"), 2);
+        assert_eq!(count("owner:"), 0);
     }
 }
