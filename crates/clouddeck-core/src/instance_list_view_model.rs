@@ -1,6 +1,10 @@
 use std::collections::HashSet;
+use std::time::SystemTime;
 
-use crate::{ComputeInstanceFilters, ComputeService, ComputeServicePartialFailure, EC2Instance};
+use crate::{
+    CompiledQuery, ComputeInstanceFilters, ComputeService, ComputeServicePartialFailure,
+    EC2Instance, QueryError,
+};
 
 /// Rust port of the Swift oracle's `InstanceListViewModel`
 /// (`ViewModels/EC2/InstanceListViewModel.swift`).
@@ -8,7 +12,8 @@ use crate::{ComputeInstanceFilters, ComputeService, ComputeServicePartialFailure
 /// Plain state + explicit update methods rather than `@Observable`: a gpui
 /// view owns one of these and calls the mutating methods, re-rendering
 /// itself after `load_instances`/`refresh` resolve. No gpui types are
-/// referenced here.
+/// referenced here. The search text is a query in the field language (see
+/// `crate::compile`).
 pub struct InstanceListViewModel {
     service: std::sync::Arc<dyn ComputeService + Send + Sync>,
     instances: Vec<EC2Instance>,
@@ -16,6 +21,7 @@ pub struct InstanceListViewModel {
     error_message: Option<String>,
     partial_failures: Vec<ComputeServicePartialFailure>,
     search_text: String,
+    known_tag_keys: Vec<String>,
     selected_state: String,
     selected_instance_type: String,
     selected_instance_id: Option<String>,
@@ -30,6 +36,7 @@ impl InstanceListViewModel {
             error_message: None,
             partial_failures: Vec::new(),
             search_text: String::new(),
+            known_tag_keys: Vec::new(),
             selected_state: String::new(),
             selected_instance_type: String::new(),
             selected_instance_id: None,
@@ -119,7 +126,7 @@ impl InstanceListViewModel {
     /// sorted by instance ID case-insensitively.
     pub fn filtered_instances(&self) -> Vec<EC2Instance> {
         let filters = ComputeInstanceFilters {
-            name_contains: Some(self.search_text.clone()),
+            name_contains: None,
             states: if self.selected_state.is_empty() {
                 vec![]
             } else {
@@ -132,7 +139,8 @@ impl InstanceListViewModel {
             },
         };
 
-        let mut filtered = filters.apply(&self.instances);
+        let matched = self.compile_search().filter_instances(&self.instances);
+        let mut filtered = filters.apply(&matched);
         filtered.sort_by(|a, b| {
             a.instance_id
                 .to_lowercase()
@@ -140,6 +148,20 @@ impl InstanceListViewModel {
                 .then_with(|| a.instance_id.cmp(&b.instance_id))
         });
         filtered
+    }
+
+    /// Errors for the terms of the search text that could not be interpreted.
+    pub fn query_errors(&self) -> Vec<QueryError> {
+        self.compile_search().errors().to_vec()
+    }
+
+    /// Number of search terms naming a field or tag with a value.
+    pub fn recognised_filter_count(&self) -> usize {
+        self.compile_search().recognised_field_count()
+    }
+
+    fn compile_search(&self) -> CompiledQuery {
+        crate::compile(&self.search_text, &self.known_tag_keys, SystemTime::now())
     }
 
     /// The instance matching `selected_instance_id`, if any.
@@ -194,12 +216,14 @@ impl InstanceListViewModel {
             Ok(result) => {
                 self.error_message = None;
                 self.instances = result.instances;
+                self.known_tag_keys = crate::known_tag_keys(&self.instances);
                 self.partial_failures = result.partial_failures;
                 self.reconcile_selected_filters();
                 self.reconcile_selection_with_filtered_instances();
             }
             Err(error) => {
                 self.instances = vec![];
+                self.known_tag_keys = vec![];
                 self.partial_failures = vec![];
                 self.selected_instance_id = None;
                 let cloud_deck_error = crate::CloudDeckError::from_service_error(error.as_ref());
@@ -550,6 +574,80 @@ mod tests {
         expected.sort_by_key(|a| a.to_lowercase());
         assert_eq!(ids, expected);
         assert_eq!(filtered.len(), 3);
+    }
+
+    fn filtered_ids(vm: &InstanceListViewModel) -> Vec<String> {
+        vm.filtered_instances()
+            .into_iter()
+            .map(|i| i.instance_id)
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn search_text_field_filters_match_instances() {
+        let mut vm = view_model_for(TestScenarioKind::SmallHappyPath);
+        vm.load_instances().await;
+
+        vm.set_search_text("state:stopped");
+        assert_eq!(filtered_ids(&vm), vec!["i-scenario-002"]);
+
+        vm.set_search_text("-state:stopped");
+        assert_eq!(filtered_ids(&vm), vec!["i-scenario-001", "i-scenario-003"]);
+
+        vm.set_search_text("service:api");
+        assert_eq!(filtered_ids(&vm), vec!["i-scenario-001"]);
+
+        vm.set_search_text("environment:prod");
+        assert_eq!(filtered_ids(&vm), vec!["i-scenario-001", "i-scenario-002"]);
+
+        vm.set_search_text("type:t3");
+        assert_eq!(filtered_ids(&vm), vec!["i-scenario-001", "i-scenario-003"]);
+    }
+
+    #[tokio::test]
+    async fn search_text_plain_words_match_name_and_security_groups() {
+        let mut vm = view_model_for(TestScenarioKind::SmallHappyPath);
+        vm.load_instances().await;
+
+        vm.set_search_text("web");
+        assert_eq!(filtered_ids(&vm), vec!["i-scenario-001"]);
+
+        vm.set_search_text("edge");
+        assert_eq!(filtered_ids(&vm), vec!["i-scenario-003"]);
+    }
+
+    #[tokio::test]
+    async fn search_text_unknown_field_matches_nothing_and_reports_one_error() {
+        let mut vm = view_model_for(TestScenarioKind::SmallHappyPath);
+        vm.load_instances().await;
+
+        vm.set_search_text("colour:x");
+        assert!(filtered_ids(&vm).is_empty());
+        assert_eq!(vm.query_errors().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn search_text_combines_with_state_and_type_filters() {
+        let mut vm = view_model_for(TestScenarioKind::SmallHappyPath);
+        vm.load_instances().await;
+
+        vm.set_search_text("state:running");
+        vm.set_selected_instance_type("t3.small");
+        assert_eq!(filtered_ids(&vm), vec!["i-scenario-003"]);
+    }
+
+    #[tokio::test]
+    async fn recognised_filter_count_and_query_errors_describe_search_text() {
+        let mut vm = view_model_for(TestScenarioKind::SmallHappyPath);
+        vm.load_instances().await;
+
+        vm.set_search_text("state:running service:api web");
+        assert_eq!(vm.recognised_filter_count(), 2);
+        assert!(vm.query_errors().is_empty());
+
+        vm.set_search_text("");
+        assert_eq!(vm.recognised_filter_count(), 0);
+        assert!(vm.query_errors().is_empty());
     }
 
     #[tokio::test]
