@@ -12,3 +12,4 @@ tools/harness/harness
 
 # bd gate lock files (created at the repo root and in .beads/)
 *.gate.lock*
+.DS_Store

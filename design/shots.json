@@ -1,0 +1,383 @@
+{
+ "prelude": "\nconst A=()=>document.getElementById('A');\nconst set=v=>{const i=A().querySelector('[data-search]');i.value=v;i.dispatchEvent(new Event('input'))};\nconst pick=i=>A().querySelector(`tr.row[data-i=\"${i}\"]`).click();\nconst key=(k,o={})=>A().dispatchEvent(new KeyboardEvent('keydown',Object.assign({key:k,bubbles:true},o)));\nconst dark=()=>{document.body.dataset.theme='dark'};\nconst size=(w,h)=>{document.querySelector(`.szb[data-w=\"${w}\"][data-h=\"${h}\"]`).click()};\nconst wait=ms=>new Promise(r=>setTimeout(r,ms));\ndocument.documentElement.style.scrollBehavior='auto';\n",
+ "shots": [
+  {
+   "name": "01-main-window-light",
+   "description": "Main window, light, 20 instances, one row selected, inspector open, all regions, one region failing (status bar item).",
+   "setup": "pick(3)",
+   "clip": "#A",
+   "scale": 1.5
+  },
+  {
+   "name": "02-main-window-dark",
+   "description": "Main window, dark theme, same state as 01.",
+   "setup": "dark();pick(3)",
+   "clip": "#A",
+   "scale": 1.5
+  },
+  {
+   "name": "03-main-window-demo",
+   "description": "Main window with the DEMO tag in the status bar.",
+   "setup": "document.getElementById('dmD').click();pick(3)",
+   "clip": "#A",
+   "scale": 1.5
+  },
+  {
+   "name": "04-main-window-no-selection",
+   "description": "No row selected: inspector hidden, table full width.",
+   "setup": "pick(3);A().querySelector('.ih .btn').click()",
+   "clip": "#A",
+   "scale": 1.5
+  },
+  {
+   "name": "10-inspector-running",
+   "description": "Inspector for a running instance (summary line, instance, network, security groups, tags with collapse).",
+   "setup": "pick(0)",
+   "clip": "#A .insp",
+   "scale": 1.5
+  },
+  {
+   "name": "11-inspector-stopped",
+   "description": "Inspector for a stopped instance: summary shows stop reason, public IP says 'Released while stopped'.",
+   "setup": "pick(4)",
+   "clip": "#A .insp",
+   "scale": 1.5
+  },
+  {
+   "name": "12-inspector-no-tags",
+   "description": "Inspector for an instance with no tags (explanation, shows as unnamed).",
+   "setup": "pick(11)",
+   "clip": "#A .insp",
+   "scale": 1.5
+  },
+  {
+   "name": "13-inspector-stale-region",
+   "description": "Inspector for an instance in a failed region: 'From the 12:01 refresh' note.",
+   "setup": "pick(16)",
+   "clip": "#A .insp",
+   "scale": 1.5
+  },
+  {
+   "name": "14-inspector-all-tags",
+   "description": "Inspector with all 13 tags expanded ('Show fewer').",
+   "setup": "pick(8);A().querySelector('[data-tagsall]').click()",
+   "clip": "#A .insp",
+   "scale": 1.5
+  },
+  {
+   "name": "20-sidebar-facets-filtered",
+   "description": "Sidebar facets with live counts after clicking Stopped; query field shows state:stopped; toolbar 'N filter'.",
+   "setup": "A().querySelector('[data-fv=stopped]').click()",
+   "clip": "#A",
+   "scale": 1.5
+  },
+  {
+   "name": "21-query-highlight-and-filter",
+   "description": "Query with several terms, highlighted, table filtered.",
+   "setup": "set('state:stopped age:>30d -type:g5.*');pick(4)",
+   "clip": "#A",
+   "scale": 1.5
+  },
+  {
+   "name": "22-query-autocomplete-fields",
+   "description": "Typing 'st': autocomplete suggests field names with hints.",
+   "setup": "set('st');A().querySelector('[data-search]').focus()",
+   "clip": "#A",
+   "scale": 1.5
+  },
+  {
+   "name": "23-query-autocomplete-values",
+   "description": "Typing 'state:': values with live counts.",
+   "setup": "set('state:');A().querySelector('[data-search]').focus()",
+   "clip": "#A",
+   "scale": 1.5
+  },
+  {
+   "name": "24-query-autocomplete-tags",
+   "description": "Typing 'tag:Team=': tag values with counts.",
+   "setup": "set('tag:Team=');A().querySelector('[data-search]').focus()",
+   "clip": "#A",
+   "scale": 1.5
+  },
+  {
+   "name": "25-query-error-unknown-field",
+   "description": "Unknown field: wavy underline and hint, searched as text.",
+   "setup": "set('foo:bar');A().querySelector('[data-search]').focus()",
+   "clip": "#A",
+   "scale": 1.5
+  },
+  {
+   "name": "26-query-error-bad-age",
+   "description": "Bad age value: hint explains the form.",
+   "setup": "set('age:>x');A().querySelector('[data-search]').focus()",
+   "clip": "#A",
+   "scale": 1.5
+  },
+  {
+   "name": "27-search-empty-recent",
+   "description": "Focused empty search: Recent searches and a one-line syntax reminder.",
+   "setup": "A().querySelector('[data-search]').focus()",
+   "clip": "#A",
+   "scale": 1.5
+  },
+  {
+   "name": "28-no-match",
+   "description": "Query with no results: empty table message.",
+   "setup": "set('state:stopped type:g5.* owner:mira')",
+   "clip": "#A",
+   "scale": 1.5
+  },
+  {
+   "name": "30-picker-profile",
+   "description": "Profile picker popover from the status bar: search, rows with badge/account/region, Connect to AWS.",
+   "setup": "key('p',{metaKey:true})",
+   "clip": "#A",
+   "scale": 1.5
+  },
+  {
+   "name": "31-picker-region-multi",
+   "description": "Region picker, multi-select: checkboxes, 'only' link on the highlighted row, counts; two regions selected (us-west-2, eu-central-1), status bar says '2 regions'.",
+   "setup": "key('R',{metaKey:true,shiftKey:true});await wait(50);A().querySelectorAll('.pp .pk')[1].click();await wait(50);A().querySelectorAll('.pp .pk')[3].click()",
+   "clip": "#A",
+   "scale": 1.5
+  },
+  {
+   "name": "32-failure-popover",
+   "description": "Partial failure: amber status item opened, details popover with Copy error and Retry region.",
+   "setup": "A().querySelector('[data-fail]').click()",
+   "clip": "#A",
+   "scale": 1.5
+  },
+  {
+   "name": "33-command-palette",
+   "description": "Command palette (\u2318\u21e7P) with all commands.",
+   "setup": "key('P',{metaKey:true,shiftKey:true})",
+   "clip": "#A",
+   "scale": 1.5
+  },
+  {
+   "name": "34-command-palette-filtered",
+   "description": "Palette filtered by typing 'copy'.",
+   "setup": "key('P',{metaKey:true,shiftKey:true});await wait(30);const i=A().querySelector('[data-pal]');i.value='copy';i.dispatchEvent(new Event('input'))",
+   "clip": "#A",
+   "scale": 1.5
+  },
+  {
+   "name": "35-copy-feedback",
+   "description": "Status bar flash after Copy ID ('Copied i-\u2026').",
+   "setup": "pick(3);key('c',{metaKey:true})",
+   "clip": "#A",
+   "scale": 1.5
+  },
+  {
+   "name": "36-context-menu",
+   "description": "Row context menu (copy ID/IPs, open in console).",
+   "setup": "pick(3);const r=A().querySelector('tr.row[data-i=\"3\"]').getBoundingClientRect();A().querySelector('tr.row[data-i=\"3\"]').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:r.left+200,clientY:r.top+10}))",
+   "clip": "#A",
+   "scale": 1.5
+  },
+  {
+   "name": "40-responsive-medium-960",
+   "description": "Medium window 960pt wide: Launched column dropped.",
+   "setup": "size(960,760);pick(3)",
+   "clip": "#A",
+   "scale": 1.5
+  },
+  {
+   "name": "41-responsive-narrow-700",
+   "description": "Narrow 700pt: sidebar and inspector closed, only Name/ID/State/Type columns.",
+   "setup": "size(700,760)",
+   "clip": "#A",
+   "scale": 1.5
+  },
+  {
+   "name": "42-responsive-narrow-inspector-sheet",
+   "description": "Narrow 700pt with a row selected: inspector as a sheet over a scrim.",
+   "setup": "size(700,760);pick(3)",
+   "clip": "#A",
+   "scale": 1.5
+  },
+  {
+   "name": "43-responsive-narrow-sidebar-overlay",
+   "description": "Narrow 700pt with the sidebar opened as an overlay.",
+   "setup": "size(700,760);A().querySelector('[data-tsb]').click()",
+   "clip": "#A",
+   "scale": 1.5
+  },
+  {
+   "name": "44-responsive-compact-520",
+   "description": "Compact 520pt: search collapsed to an icon, title hidden, truncated status bar buttons.",
+   "setup": "size(520,760)",
+   "clip": "#A",
+   "scale": 1.5
+  },
+  {
+   "name": "45-responsive-short-480",
+   "description": "Short window 480pt tall: scrolling regions, same layout.",
+   "setup": "size(1280,480);pick(3)",
+   "clip": "#A",
+   "scale": 1.5
+  },
+  {
+   "name": "50-settings-appearance",
+   "description": "Settings window, Appearance category (light).",
+   "setup": "document.querySelector('#set [data-cat=\"Appearance\"]').click()",
+   "clip": "#set",
+   "scale": 1.5
+  },
+  {
+   "name": "51-settings-fleet",
+   "description": "Settings window, Fleet category (light).",
+   "setup": "document.querySelector('#set [data-cat=\"Fleet\"]').click()",
+   "clip": "#set",
+   "scale": 1.5
+  },
+  {
+   "name": "52-settings-table",
+   "description": "Settings window, Table category (light).",
+   "setup": "document.querySelector('#set [data-cat=\"Table\"]').click()",
+   "clip": "#set",
+   "scale": 1.5
+  },
+  {
+   "name": "53-settings-search",
+   "description": "Settings window, Search category (light).",
+   "setup": "document.querySelector('#set [data-cat=\"Search\"]').click()",
+   "clip": "#set",
+   "scale": 1.5
+  },
+  {
+   "name": "54-settings-keymap",
+   "description": "Settings window, Keymap category (light).",
+   "setup": "document.querySelector('#set [data-cat=\"Keymap\"]').click()",
+   "clip": "#set",
+   "scale": 1.5
+  },
+  {
+   "name": "55-settings-aws-privacy",
+   "description": "Settings window, AWS & Privacy category (light).",
+   "setup": "document.querySelector('#set [data-cat=\"AWS & Privacy\"]').click()",
+   "clip": "#set",
+   "scale": 1.5
+  },
+  {
+   "name": "56-settings-advanced",
+   "description": "Settings window, Advanced category (light).",
+   "setup": "document.querySelector('#set [data-cat=\"Advanced\"]').click()",
+   "clip": "#set",
+   "scale": 1.5
+  },
+  {
+   "name": "57-settings-about",
+   "description": "Settings window, About category (light).",
+   "setup": "document.querySelector('#set [data-cat=\"About\"]').click()",
+   "clip": "#set",
+   "scale": 1.5
+  },
+  {
+   "name": "58-settings-search-results",
+   "description": "Settings search for 'refresh' (results grouped by category, highlighted).",
+   "setup": "const q=document.querySelector('#set [data-sq]');q.value='refresh';q.dispatchEvent(new Event('input'))",
+   "clip": "#set",
+   "scale": 1.5
+  },
+  {
+   "name": "59-settings-changed-values",
+   "description": "Settings with changed values: blue bars, Reset links, dot on the category.",
+   "setup": "document.querySelector('#set [data-sw=insp]').click();document.querySelector('#set [data-sw=side]').click()",
+   "clip": "#set",
+   "scale": 1.5
+  },
+  {
+   "name": "5a-settings-appearance-dark",
+   "description": "Settings window in dark theme.",
+   "setup": "dark()",
+   "clip": "#set",
+   "scale": 1.5
+  },
+  {
+   "name": "60-welcome-window",
+   "description": "First-run welcome window: profile search list, connect actions.",
+   "setup": "",
+   "clip": ".wel",
+   "scale": 1.5
+  },
+  {
+   "name": "70-state-several-regions-failed",
+   "description": "State card: several regions failed (with the status bar strip it would show).",
+   "setup": "",
+   "clip": "#states .mini:nth-child(1)",
+   "scale": 2
+  },
+  {
+   "name": "71-state-throttled",
+   "description": "State card: throttled (with the status bar strip it would show).",
+   "setup": "",
+   "clip": "#states .mini:nth-child(2)",
+   "scale": 2
+  },
+  {
+   "name": "72-state-offline",
+   "description": "State card: offline (with the status bar strip it would show).",
+   "setup": "",
+   "clip": "#states .mini:nth-child(3)",
+   "scale": 2
+  },
+  {
+   "name": "73-state-signed-out-sso-expired",
+   "description": "State card: signed out sso expired (with the status bar strip it would show).",
+   "setup": "",
+   "clip": "#states .mini:nth-child(4)",
+   "scale": 2
+  },
+  {
+   "name": "74-state-demo-mode",
+   "description": "State card: demo mode (with the status bar strip it would show).",
+   "setup": "",
+   "clip": "#states .mini:nth-child(5)",
+   "scale": 2
+  },
+  {
+   "name": "75-state-empty-fleet",
+   "description": "State card: empty fleet (with the status bar strip it would show).",
+   "setup": "",
+   "clip": "#states .mini:nth-child(6)",
+   "scale": 2
+  },
+  {
+   "name": "76-state-search-syntax-card",
+   "description": "State card: search syntax card (with the status bar strip it would show).",
+   "setup": "",
+   "clip": "#states .mini:nth-child(7)",
+   "scale": 2
+  },
+  {
+   "name": "77-state-loading",
+   "description": "State card: loading (with the status bar strip it would show).",
+   "setup": "",
+   "clip": "#states .mini:nth-child(8)",
+   "scale": 2
+  },
+  {
+   "name": "78-state-error",
+   "description": "State card: error (with the status bar strip it would show).",
+   "setup": "",
+   "clip": "#states .mini:nth-child(9)",
+   "scale": 2
+  },
+  {
+   "name": "79-state-filter-matches-nothing",
+   "description": "State card: filter matches nothing (with the status bar strip it would show).",
+   "setup": "",
+   "clip": "#states .mini:nth-child(10)",
+   "scale": 2
+  },
+  {
+   "name": "7a-state-keyboard-shortcuts",
+   "description": "State card: keyboard shortcuts (with the status bar strip it would show).",
+   "setup": "",
+   "clip": "#states .mini:nth-child(11)",
+   "scale": 2
+  }
+ ]
+}
