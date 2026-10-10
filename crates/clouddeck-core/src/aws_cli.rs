@@ -330,7 +330,7 @@ struct Instance {
     image_id: Option<String>,
     key_name: Option<String>,
     architecture: Option<String>,
-    state_transition_reason: Option<StateTransitionReason>,
+    state_transition_reason: Option<String>,
     #[serde(rename = "IamInstanceProfile")]
     iam_instance_profile: Option<IamInstanceProfile>,
     #[serde(rename = "PrivateDnsName")]
@@ -342,14 +342,6 @@ struct Instance {
 #[serde(rename_all = "PascalCase", default)]
 struct Placement {
     availability_zone: Option<String>,
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "PascalCase")]
-struct StateTransitionReason {
-    #[serde(default)]
-    code: Option<String>,
-    #[serde(default)]
-    message: Option<String>,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "PascalCase")]
@@ -416,16 +408,7 @@ pub fn parse_instances(bytes: &[u8], region: &str) -> Result<Vec<EC2Instance>, B
             architecture: i.architecture,
             state_transition_reason: i
                 .state_transition_reason
-                .and_then(|r| {
-                    [r.code, r.message]
-                        .into_iter()
-                        .flatten()
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                        .trim()
-                        .to_string()
-                        .into()
-                })
+                .map(|r| r.trim().to_owned())
                 .filter(|s| !s.is_empty()),
             iam_instance_profile_arn: i.iam_instance_profile.and_then(|p| p.arn),
             private_dns_name: i.private_dns_name,
@@ -557,7 +540,7 @@ mod tests {
     #[test]
     fn maps_inspector_fields_from_describe_instances_json() {
         let rows = parse_instances(
-            br#"{"Reservations":[{"Instances":[{"InstanceId":"i-1","State":{"Name":"stopped","Code":80},"LaunchTime":"2026-01-01T00:00:00Z","ImageId":"ami-0abc","KeyName":"deploy","Architecture":"x86_64","Placement":{"AvailabilityZone":"eu-west-1a"},"StateTransitionReason":{"Code":"Client.StopInstance","Message":"User requested stop"},"IamInstanceProfile":{"Arn":"arn:aws:iam::123:instance-profile/api"},"PrivateDnsName":"ip-10-0-0-1.ec2.internal","PublicDnsName":"ec2-1-2-3-4.eu-west-1.compute.amazonaws.com","SecurityGroups":[{"GroupId":"sg-1","GroupName":"web"}],"Tags":[{"Key":"Name","Value":"api"}]}]}]}"#,
+            br#"{"Reservations":[{"Instances":[{"InstanceId":"i-1","State":{"Name":"stopped","Code":80},"LaunchTime":"2026-01-01T00:00:00Z","ImageId":"ami-0abc","KeyName":"deploy","Architecture":"x86_64","Placement":{"AvailabilityZone":"eu-west-1a"},"StateTransitionReason":"User initiated (2026-01-02 03:04:05 GMT)","IamInstanceProfile":{"Arn":"arn:aws:iam::123:instance-profile/api"},"PrivateDnsName":"ip-10-0-0-1.ec2.internal","PublicDnsName":"ec2-1-2-3-4.eu-west-1.compute.amazonaws.com","SecurityGroups":[{"GroupId":"sg-1","GroupName":"web"}],"Tags":[{"Key":"Name","Value":"api"}]}]}]}"#,
             "eu-west-1",
         )
         .unwrap();
@@ -568,7 +551,7 @@ mod tests {
         assert_eq!(row.architecture.as_deref(), Some("x86_64"));
         assert_eq!(
             row.state_transition_reason.as_deref(),
-            Some("Client.StopInstance User requested stop")
+            Some("User initiated (2026-01-02 03:04:05 GMT)")
         );
         assert_eq!(
             row.iam_instance_profile_arn.as_deref(),
@@ -737,30 +720,36 @@ mod tests {
     }
 
     #[test]
-    fn partial_state_transition_reason_keeps_present_parts() {
+    fn empty_state_transition_reason_string_maps_to_none() {
         let rows = parse_instances(
-            br#"{"Reservations":[{"Instances":[{"InstanceId":"i-3","StateTransitionReason":{"Code":"Client.StopInstance"}}]}]}"#,
+            br#"{"Reservations":[{"Instances":[{"InstanceId":"i-4","StateTransitionReason":""}]}]}"#,
+            "us-east-1",
+        )
+        .unwrap();
+        assert_eq!(rows[0].state_transition_reason, None);
+    }
+
+    #[test]
+    fn missing_state_transition_reason_maps_to_none() {
+        let rows = parse_instances(
+            br#"{"Reservations":[{"Instances":[{"InstanceId":"i-5","State":{"Name":"running"}}]}]}"#,
+            "us-east-1",
+        )
+        .unwrap();
+        assert_eq!(rows[0].state_transition_reason, None);
+    }
+
+    #[test]
+    fn state_reason_object_is_ignored_alongside_state_transition_reason() {
+        let rows = parse_instances(
+            br#"{"Reservations":[{"Instances":[{"InstanceId":"i-6","StateTransitionReason":"User initiated (2026-01-02 03:04:05 GMT)","StateReason":{"Code":"Client.UserInitiatedShutdown","Message":"Client.UserInitiatedShutdown: User initiated shutdown"}}]}]}"#,
             "us-east-1",
         )
         .unwrap();
         assert_eq!(
             rows[0].state_transition_reason.as_deref(),
-            Some("Client.StopInstance")
+            Some("User initiated (2026-01-02 03:04:05 GMT)")
         );
-    }
-
-    #[test]
-    fn empty_state_transition_reason_objects_parse_without_failing_the_fleet() {
-        // A StateTransitionReason object missing either Code or Message must
-        // not hard-fail parsing the whole describe-instances response.
-        let rows = parse_instances(
-            br#"{"Reservations":[{"Instances":[{"InstanceId":"i-4","StateTransitionReason":{}}]}]}"#,
-            "us-east-1",
-        )
-        .unwrap();
-        assert_eq!(rows.len(), 1);
-        // Both parts absent -> no reason at all, not an empty string.
-        assert_eq!(rows[0].state_transition_reason, None);
     }
 
     #[test]
