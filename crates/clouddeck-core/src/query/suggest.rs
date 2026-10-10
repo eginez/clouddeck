@@ -3,7 +3,7 @@
 use super::term::{TermKind, classify};
 use super::tokenize::{QueryField, tokenize};
 use crate::models::EC2Instance;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 const MAX_FIELD_ITEMS: usize = 6;
 const MAX_VALUE_ITEMS: usize = 8;
@@ -74,9 +74,26 @@ pub fn suggest(query: &str, instances: &[EC2Instance], known_tag_keys: &[String]
 
     match classify(current, known_tag_keys).kind {
         TermKind::Word { .. } => {}
+        TermKind::Field {
+            field: QueryField::Tag,
+            ..
+        } => {
+            return Suggestions {
+                items: tag_items(&current.raw, known_tag_keys, instances),
+                replace_start,
+                unknown_field: None,
+            };
+        }
         TermKind::Field { field, .. } => {
             return Suggestions {
                 items: value_items(&current.raw, field, instances),
+                replace_start,
+                unknown_field: None,
+            };
+        }
+        TermKind::TagShorthand { key, .. } => {
+            return Suggestions {
+                items: shorthand_items(&current.raw, &key, instances),
                 replace_start,
                 unknown_field: None,
             };
@@ -86,14 +103,6 @@ pub fn suggest(query: &str, instances: &[EC2Instance], known_tag_keys: &[String]
                 items: Vec::new(),
                 replace_start,
                 unknown_field: Some(name),
-            };
-        }
-        // tag values: query engine bead 12
-        _ => {
-            return Suggestions {
-                items: Vec::new(),
-                replace_start,
-                unknown_field: None,
             };
         }
     }
@@ -154,17 +163,112 @@ pub fn apply_suggestion(query: &str, suggestions: &Suggestions, index: usize) ->
     Some(applied)
 }
 
-fn value_items(current: &str, field: QueryField, instances: &[EC2Instance]) -> Vec<Suggestion> {
+fn split_value(current: &str) -> Option<(String, &str)> {
     let (neg, body) = match current.strip_prefix('-') {
         Some(rest) => ("-", rest),
         None => ("", current),
     };
-    let Some((name, value)) = body.split_once(':') else {
+    let (name, value) = body.split_once(':')?;
+    let seg_start = value.rfind(',').map_or(0, |comma| comma + 1);
+    Some((
+        format!("{neg}{name}:{}", &value[..seg_start]),
+        &value[seg_start..],
+    ))
+}
+
+fn tag_items(
+    current: &str,
+    known_tag_keys: &[String],
+    instances: &[EC2Instance],
+) -> Vec<Suggestion> {
+    let Some((base, seg)) = split_value(current) else {
         return Vec::new();
     };
-    let seg_start = value.rfind(',').map_or(0, |comma| comma + 1);
-    let base = format!("{neg}{name}:{}", &value[..seg_start]);
-    let seg = value[seg_start..].to_ascii_lowercase();
+    match seg.split_once('=') {
+        None => known_tag_keys
+            .iter()
+            .filter(|key| starts_with_ignore_case(key, seg))
+            .take(MAX_VALUE_ITEMS)
+            .map(|key| Suggestion {
+                label: key.clone(),
+                insert: format!("{base}{key}="),
+                hint: None,
+                count: Some(
+                    instances
+                        .iter()
+                        .filter(|i| i.tags.iter().any(|t| t.key.eq_ignore_ascii_case(key)))
+                        .count(),
+                ),
+                kind: SuggestionKind::Value,
+            })
+            .collect(),
+        Some((kpart, vpart)) => {
+            match known_tag_keys
+                .iter()
+                .find(|key| key.eq_ignore_ascii_case(kpart))
+            {
+                Some(key) => tag_value_items(
+                    instances,
+                    key,
+                    vpart,
+                    &format!("{key}="),
+                    &format!("{base}{key}="),
+                ),
+                None => Vec::new(),
+            }
+        }
+    }
+}
+
+fn shorthand_items(current: &str, key: &str, instances: &[EC2Instance]) -> Vec<Suggestion> {
+    let Some((base, seg)) = split_value(current) else {
+        return Vec::new();
+    };
+    tag_value_items(instances, key, seg, "", &base)
+}
+
+fn tag_value_items(
+    instances: &[EC2Instance],
+    key: &str,
+    filter: &str,
+    label_prefix: &str,
+    insert_prefix: &str,
+) -> Vec<Suggestion> {
+    tag_value_counts(instances, key)
+        .into_iter()
+        .filter(|(value, _)| starts_with_ignore_case(value, filter))
+        .take(MAX_VALUE_ITEMS)
+        .map(|(value, count)| Suggestion {
+            label: format!("{label_prefix}{value}"),
+            insert: format!("{insert_prefix}{value}"),
+            hint: None,
+            count: Some(count),
+            kind: SuggestionKind::Value,
+        })
+        .collect()
+}
+
+fn tag_value_counts(instances: &[EC2Instance], key: &str) -> BTreeMap<String, usize> {
+    let mut counts = BTreeMap::new();
+    for instance in instances {
+        let values: BTreeSet<&str> = instance
+            .tags
+            .iter()
+            .filter(|tag| tag.key.eq_ignore_ascii_case(key) && !tag.value.is_empty())
+            .map(|tag| tag.value.as_str())
+            .collect();
+        for value in values {
+            *counts.entry(value.to_string()).or_insert(0) += 1;
+        }
+    }
+    counts
+}
+
+fn value_items(current: &str, field: QueryField, instances: &[EC2Instance]) -> Vec<Suggestion> {
+    let Some((base, seg)) = split_value(current) else {
+        return Vec::new();
+    };
+    let seg = seg.to_ascii_lowercase();
 
     value_candidates(field, instances)
         .into_iter()
@@ -249,6 +353,11 @@ fn is_text(value: Option<&str>, expected: &str) -> bool {
 
 fn non_empty(value: Option<&str>) -> bool {
     value.is_some_and(|v| !v.is_empty())
+}
+
+fn starts_with_ignore_case(text: &str, prefix: &str) -> bool {
+    text.to_ascii_lowercase()
+        .starts_with(&prefix.to_ascii_lowercase())
 }
 
 fn field_item(neg: &str, name: &str, hint: &str) -> Suggestion {
@@ -536,8 +645,120 @@ mod tests {
     fn name_id_ip_and_tag_values_have_no_items() {
         assert!(labels("name:").is_empty());
         assert!(labels("ip:1").is_empty());
-        assert!(labels("owner:").is_empty());
         assert!(labels("colour:").is_empty());
+    }
+
+    #[test]
+    fn tag_field_lists_keys_with_counts() {
+        let s = suggest("tag:", &fleet(), &known_tag_keys(&fleet()));
+        assert_eq!(s.items[0].insert, "tag:CostCenter=");
+        assert_eq!(
+            counted("tag:"),
+            pairs(&[
+                ("CostCenter", 1),
+                ("Environment", 3),
+                ("Owner", 4),
+                ("Team", 4)
+            ])
+        );
+    }
+
+    #[test]
+    fn tag_field_key_prefix_applies_without_trailing_space() {
+        let s = suggest("tag:te", &fleet(), &known_tag_keys(&fleet()));
+        assert_eq!(counted("tag:te"), pairs(&[("Team", 4)]));
+        assert_eq!(
+            apply_suggestion("tag:te", &s, 0).as_deref(),
+            Some("tag:Team=")
+        );
+    }
+
+    #[test]
+    fn negated_tag_field_keeps_dash_in_insert() {
+        let s = suggest("-tag:o", &fleet(), &known_tag_keys(&fleet()));
+        assert_eq!(counted("-tag:o"), pairs(&[("Owner", 4)]));
+        assert_eq!(s.items[0].insert, "-tag:Owner=");
+    }
+
+    #[test]
+    fn tag_equals_lists_distinct_values_with_counts() {
+        let s = suggest("tag:team=", &fleet(), &known_tag_keys(&fleet()));
+        assert_eq!(
+            counted("tag:team="),
+            pairs(&[
+                ("Team=data", 1),
+                ("Team=payments", 1),
+                ("Team=platform", 1),
+                ("Team=search", 1),
+            ])
+        );
+        assert_eq!(s.items[0].insert, "tag:Team=data");
+    }
+
+    #[test]
+    fn tag_equals_value_prefix_filters_values() {
+        assert_eq!(
+            counted("tag:team=p"),
+            pairs(&[("Team=payments", 1), ("Team=platform", 1)])
+        );
+    }
+
+    #[test]
+    fn tag_equals_unknown_key_has_no_items() {
+        assert!(labels("tag:nope=").is_empty());
+    }
+
+    #[test]
+    fn tag_shorthand_lists_values_sorted_with_counts() {
+        let s = suggest("owner:", &fleet(), &known_tag_keys(&fleet()));
+        assert_eq!(
+            counted("owner:"),
+            pairs(&[("esteban", 2), ("jonas", 1), ("mira", 1)])
+        );
+        assert_eq!(s.items[0].insert, "owner:esteban");
+    }
+
+    #[test]
+    fn tag_shorthand_value_prefix_filters_values() {
+        assert_eq!(counted("owner:j"), pairs(&[("jonas", 1)]));
+    }
+
+    #[test]
+    fn tag_shorthand_keeps_typed_key_case_in_insert() {
+        let s = suggest("Team:pa", &fleet(), &known_tag_keys(&fleet()));
+        assert_eq!(counted("Team:pa"), pairs(&[("payments", 1)]));
+        assert_eq!(
+            apply_suggestion("Team:pa", &s, 0).as_deref(),
+            Some("Team:payments ")
+        );
+    }
+
+    #[test]
+    fn tag_values_compare_exactly_and_skip_empty() {
+        let mut instances = fleet();
+        instances[0].tags[2].value = "Platform".to_string();
+        instances[4].tags[1].value = String::new();
+        let s = suggest("team:", &instances, &known_tag_keys(&instances));
+        assert_eq!(
+            s.items
+                .iter()
+                .map(|i| (i.label.as_str(), i.count))
+                .collect::<Vec<_>>(),
+            [
+                ("Platform", Some(1)),
+                ("payments", Some(1)),
+                ("search", Some(1)),
+            ]
+        );
+    }
+
+    #[test]
+    fn unknown_field_name_is_reported_as_typed() {
+        let s = suggest("Colour:", &fleet(), &known_tag_keys(&fleet()));
+        assert!(s.items.is_empty());
+        assert_eq!(s.unknown_field.as_deref(), Some("Colour"));
+        let s = suggest("state:", &fleet(), &known_tag_keys(&fleet()));
+        assert_eq!(s.unknown_field, None);
     }
 
     #[test]
