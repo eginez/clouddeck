@@ -46,10 +46,7 @@ mod toolbar;
 mod view_models;
 mod welcome_window;
 
-use gpui::{
-    App, Application, Bounds, SharedString, TitlebarOptions, WindowBounds, WindowOptions, actions,
-    prelude::*, px, size,
-};
+use gpui::{App, Application, Bounds, actions, prelude::*, px, size};
 
 use shell::AppShell;
 
@@ -64,21 +61,10 @@ fn main() {
             // popovers on the same palette even when macOS is using dark mode.
             gpui_component::Theme::change(gpui_component::ThemeMode::Light, None, cx);
             let bounds = Bounds::centered(None, size(px(1280.0), px(800.0)), cx);
-            cx.open_window(
-                WindowOptions {
-                    titlebar: Some(TitlebarOptions {
-                        title: Some(SharedString::from("CloudDeck")),
-                        ..Default::default()
-                    }),
-                    window_min_size: Some(size(px(920.0), px(600.0))),
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    ..Default::default()
-                },
-                |window, cx| {
-                    let shell = cx.new(|cx| AppShell::new(cx));
-                    cx.new(|cx| gpui_component::Root::new(shell, window, cx))
-                },
-            )
+            cx.open_window(main_window::window_options(bounds), |window, cx| {
+                let shell = cx.new(|cx| AppShell::new(window, cx));
+                cx.new(|cx| gpui_component::Root::new(shell, window, cx))
+            })
             .unwrap();
             cx.on_action(|_: &Quit, cx| cx.quit());
             cx.bind_keys(shell::app_key_bindings());

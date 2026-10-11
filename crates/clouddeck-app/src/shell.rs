@@ -1,11 +1,12 @@
 use crate::{
-    ec2_tab::EC2Tab,
-    status_bar::{CloudContextStatusBar, ContextStatusState},
+    fleet_state::FleetState,
+    main_window::{MainWindow, MainWindowEvent},
+    status_bar::CloudContextStatusBar,
     theme::SurgicalTheme,
 };
 use clouddeck_core::{
     AwsSdkComputeService, ComputeService, EC2Instance, EC2Scenario, FleetComputeService,
-    InstanceListViewModel, MockComputeService, WorkspaceContext,
+    InstanceListViewModel, MockComputeService, ProfileInput, WorkspaceContext,
 };
 use gpui::{
     Context, Entity, IntoElement, KeyBinding, ParentElement, Render, Styled, Window, actions, div,
@@ -22,7 +23,8 @@ pub fn app_key_bindings() -> [KeyBinding; 2] {
 }
 
 pub struct AppShell {
-    ec2_tab: Entity<EC2Tab>,
+    fleet: Entity<FleetState>,
+    main_window: Entity<MainWindow>,
     status_bar: Entity<CloudContextStatusBar>,
     context: WorkspaceContext,
     demo: bool,
@@ -35,9 +37,7 @@ pub struct AppShell {
     /// `is_loading` / `Reloading` transition window that
     /// `MockComputeService` resolves too fast to reliably catch.
     #[cfg(test)]
-    test_service_override: Option<
-        std::sync::Arc<dyn ComputeService + Send + Sync>,
-    >,
+    test_service_override: Option<std::sync::Arc<dyn ComputeService + Send + Sync>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,55 +92,30 @@ pub fn is_real_mode() -> bool {
     !std::env::args_os().any(|arg| arg == "--demo")
 }
 
-fn rescan_changed(before: &[String], after: &[clouddeck_core::AwsProfile]) -> bool {
-    let after_names: Vec<String> = after.iter().map(|p| p.name.clone()).collect();
-    before != after_names.as_slice()
-}
-
-/// The adopt-first-profile decision for a post-sign-in rescan, factored out
-/// of the shell observer so it can be unit-tested against profile vectors
-/// rather than the host's real `~/.aws` (clouddeck-rs-w6s.18).
-///
-/// Returns the name of the profile to adopt when (and only when) the current
-/// context has no profile selected yet *and* the detected set changed since
-/// launch (e.g. a browser sign-in created the first profiles). Otherwise
-/// `None`: a saved context is never overridden, an unchanged set means
-/// nothing new appeared, and an empty set means there is nothing to adopt.
-fn profile_to_adopt(
-    current_profile: &str,
-    before: &[String],
-    after: &[clouddeck_core::AwsProfile],
-) -> Option<String> {
-    if !current_profile.is_empty() || !rescan_changed(before, after) || after.is_empty() {
-        return None;
-    }
-    after.first().map(|p| p.name.clone())
-}
-
 impl AppShell {
-    pub fn new(cx: &mut Context<Self>) -> Self {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let (demo, scenario) = launch_options();
-        Self::build_with_scenario(demo, scenario, cx)
+        Self::build_with_scenario(window, demo, scenario, cx)
     }
 
     #[cfg(test)]
-    fn new_demo(cx: &mut Context<Self>) -> Self {
-        Self::build_with_scenario(true, DemoScenario::Happy, cx)
+    fn new_demo(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        Self::build_with_scenario(window, true, DemoScenario::Happy, cx)
     }
 
     #[cfg(test)]
-    fn new_demo_empty(cx: &mut Context<Self>) -> Self {
-        Self::build_with_scenario(true, DemoScenario::Empty, cx)
+    fn new_demo_empty(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        Self::build_with_scenario(window, true, DemoScenario::Empty, cx)
     }
 
     #[cfg(test)]
-    fn new_demo_failure(cx: &mut Context<Self>) -> Self {
-        Self::build_with_scenario(true, DemoScenario::Failure, cx)
+    fn new_demo_failure(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        Self::build_with_scenario(window, true, DemoScenario::Failure, cx)
     }
 
     #[cfg(test)]
-    fn new_demo_large(cx: &mut Context<Self>) -> Self {
-        Self::build_with_scenario(true, DemoScenario::Large, cx)
+    fn new_demo_large(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        Self::build_with_scenario(window, true, DemoScenario::Large, cx)
     }
 
     fn profiles(
@@ -289,6 +264,7 @@ impl AppShell {
     }
 
     fn build_with_scenario(
+        window: &mut Window,
         demo: bool,
         demo_scenario: DemoScenario,
         cx: &mut Context<Self>,
@@ -299,16 +275,6 @@ impl AppShell {
             .err()
             .map(|e| format!("Could not read AWS profiles: {e}"));
         let profiles = loaded.unwrap_or_default();
-        // Remember the profile list feeding the status bar chips at startup,
-        // so a later empty-state rescan can tell whether the profile set
-        // changed since launch (e.g. a browser sign-in created the first
-        // profiles after launch). Shared by value with the rescan observer
-        // below.
-        let startup_profile_names: std::sync::Arc<Vec<String>> = profiles
-            .iter()
-            .map(|p| p.name.clone())
-            .collect::<Vec<_>>()
-            .into();
         let saved = if demo {
             None
         } else {
@@ -328,96 +294,24 @@ impl AppShell {
                 },
             });
         let view_model = InstanceListViewModel::new(Self::service(&context, demo, demo_scenario));
-        let ec2_tab = cx.new(|cx| EC2Tab::new(view_model, cx));
-        cx.observe(&ec2_tab, |_, _, cx| cx.notify()).detach();
-        let ec2_tab = ec2_tab.clone();
-        let observer_startups = startup_profile_names.clone();
-        // The fleet's empty state can ask for the setup window ("Connect to
-        // AWS" on first launch with no profiles) or for a profile rescan
-        // (after a browser sign-in created the first profile) without the
-        // shell being rebuilt: consume those one-shot flags here.
-        cx.observe(&ec2_tab, move |this: &mut Self, tab, cx| {
-            let list = tab.read(cx).list.clone();
-            let manage = list.read(cx).manage_requested;
-            let rescan = list.read(cx).rescan_requested;
-            if manage || rescan {
-                list.update(cx, |list, cx| {
-                    list.manage_requested = false;
-                    list.rescan_requested = false;
-                    cx.notify();
-                });
-                if manage {
-                    this.open_setup(cx);
-                } else {
-                    // Rescan: refresh the profile list feeding the status
-                    // bar chips and restart the fleet load against the same
-                    // context (a newly created profile may now be usable;
-                    // otherwise the fleet errors again, inline and
-                    // recoverable).
-                    match Self::profiles(this.demo, this.demo_scenario) {
-                        Ok(rescanned) => {
-                            // Decide the adopt-up-front, before the status bar
-                            // update borrows the list, so the rescan-adopt
-                            // branch cannot race a move out of `rescanned`
-                            // (a previous draft `mem::take`-ed the profiles into
-                            // the status bar and then read `.first()`, which
-                            // was always `None` — clouddeck-rs-w6s.18 review).
-                            // `profile_to_adopt` re-checks the "changed since
-                            // launch" condition itself, so no separate `changed`
-                            // binding is needed here.
-                            let adopted = profile_to_adopt(
-                                &this.context.profile,
-                                &observer_startups,
-                                &rescanned,
-                            );
-                            this.status_bar.update(cx, |bar, cx| {
-                                bar.profiles = Some(
-                                    rescanned
-                                        .iter()
-                                        .map(|p| crate::quick_picker::AwsProfile {
-                                            name: p.name.clone(),
-                                            hint: p.region.clone().unwrap_or_default(),
-                                        })
-                                        .collect(),
-                                );
-                                cx.notify();
-                            });
-                            if let Some(adopted) = adopted {
-                                // No context was ever chosen and the first
-                                // profiles just appeared (e.g. a browser
-                                // sign-in created them): adopt the first
-                                // detected profile instead of restarting the
-                                // load against an empty profile name.
-                                this.apply_context(
-                                    WorkspaceContext {
-                                        profile: adopted,
-                                        region: "us-east-1".into(),
-                                    },
-                                    cx,
-                                );
-                                return;
-                            }
-                            this.refresh(cx);
-                        }
-                        Err(error) => {
-                            this.message = Some(format!("Could not read AWS profiles: {error}"));
-                        }
-                    }
-                }
-            }
-        })
-        .detach();
-        // Load asynchronously via `InstanceListView::refresh`'s cx.spawn
-        // pattern (background_executor().block() would freeze the UI
-        // thread once this wraps a real, network-latency-bearing
-        // ComputeService). Demo fixtures resolve almost instantly through
-        // the same path, and live/FleetComputeService loads keep the
-        // window responsive while they're in flight.
-        ec2_tab
-            .read(cx)
-            .list
-            .clone()
-            .update(cx, |list, cx| list.refresh(cx));
+        let fleet = cx.new(|_| FleetState::new(view_model, context.profile.clone(), demo));
+        let profile_inputs: Vec<ProfileInput> = profiles
+            .iter()
+            .map(|p| ProfileInput {
+                name: p.name.clone(),
+                account_id: None,
+                region: p.region.clone(),
+            })
+            .collect();
+        let main_window = Self::new_main_window(
+            fleet.clone(),
+            profile_inputs,
+            demo,
+            demo_scenario,
+            window,
+            cx,
+        );
+        fleet.update(cx, |fleet, cx| fleet.refresh(cx));
         let status_bar = cx.new(|_| CloudContextStatusBar {
             provider: if demo {
                 "DEMO · AWS".into()
@@ -438,12 +332,12 @@ impl AppShell {
             regions: Some(Self::regions(demo, demo_scenario)),
             ..Default::default()
         });
-        cx.observe(&status_bar, |this: &mut Self, bar, cx| {
+        cx.observe_in(&status_bar, window, |this: &mut Self, bar, window, cx| {
             if bar.read(cx).demo_requested {
                 let demo = !this.demo;
                 let scenario = this.demo_scenario;
                 bar.update(cx, |bar, _| bar.demo_requested = false);
-                *this = Self::build_with_scenario(demo, scenario, cx);
+                *this = Self::build_with_scenario(window, demo, scenario, cx);
                 cx.notify();
                 return;
             }
@@ -456,12 +350,13 @@ impl AppShell {
                 this.open_setup(cx);
             }
             if next != this.context {
-                this.apply_context(next, cx);
+                this.apply_context(next, window, cx);
             }
         })
         .detach();
         Self {
-            ec2_tab,
+            fleet,
+            main_window,
             status_bar,
             context,
             demo,
@@ -486,42 +381,108 @@ impl AppShell {
         self.test_service_override = Some(service);
     }
 
-    fn apply_context(&mut self, context: WorkspaceContext, cx: &mut Context<Self>) {
+    fn new_main_window(
+        fleet: Entity<FleetState>,
+        profiles: Vec<ProfileInput>,
+        demo: bool,
+        demo_scenario: DemoScenario,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<MainWindow> {
+        let regions: Vec<String> = Self::regions(demo, demo_scenario)
+            .into_iter()
+            .filter(|region| region != "fleet")
+            .collect();
+        let main_window = cx.new(|cx| MainWindow::new(fleet.clone(), regions, window, cx));
+        main_window.update(cx, |main_window, _| main_window.profiles = profiles);
+        let weak = main_window.downgrade();
+        cx.observe(&fleet, move |_, observed, cx| {
+            let failures = observed.read(cx).view_model.partial_failures().to_vec();
+            let _ = weak.update(cx, |main_window, cx| {
+                main_window.failures = failures;
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.subscribe(
+            &main_window,
+            |this: &mut Self, _, event: &MainWindowEvent, cx| match event {
+                MainWindowEvent::PickProfile(name) => {
+                    let name = name.clone();
+                    this.status_bar.update(cx, |bar, cx| {
+                        bar.profile = Some(name);
+                        cx.notify();
+                    });
+                }
+                MainWindowEvent::RegionsChanged(regions) => {
+                    let region = match regions.as_slice() {
+                        [only] => only.clone(),
+                        _ => "fleet".into(),
+                    };
+                    this.status_bar.update(cx, |bar, cx| {
+                        bar.region = region;
+                        cx.notify();
+                    });
+                }
+                MainWindowEvent::ConnectToAws => this.open_setup(cx),
+                MainWindowEvent::Retry(_) => this.refresh(cx),
+                MainWindowEvent::OpenSettings => {}
+            },
+        )
+        .detach();
+        main_window
+    }
+
+    fn apply_context(
+        &mut self,
+        context: WorkspaceContext,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.context = context;
         self.status_bar.update(cx, |bar, _| {
             bar.profile = (!self.context.profile.is_empty()).then(|| self.context.profile.clone());
             bar.region = self.context.region.clone();
         });
-        // `refresh` flips the new tab's view model to loading synchronously
-        // before its spawned task resolves, so the very next render
-        // already reports Reloading from the new tab itself.
         #[cfg(test)]
         let service: Box<dyn ComputeService + Send + Sync> = self
             .test_service_override
             .as_ref()
             .map(|s| {
                 // Wrap the shared `Arc<dyn>` in `ArcComputeService` so each
-                // new tab gets its own `Box<dyn>` handle over the same
+                // context switch gets its own `Box<dyn>` handle over the same
                 // underlying service.
                 Box::new(crate::test_support::ArcComputeService::new(
                     std::sync::Arc::clone(s),
                 )) as _
             })
-            .unwrap_or_else(|| {
-                Self::service(&self.context, self.demo, self.demo_scenario)
-            });
+            .unwrap_or_else(|| Self::service(&self.context, self.demo, self.demo_scenario));
         #[cfg(not(test))]
         let service: Box<dyn ComputeService + Send + Sync> =
             Self::service(&self.context, self.demo, self.demo_scenario);
         let vm = InstanceListViewModel::new(service);
-        let new_tab = cx.new(|cx| EC2Tab::new(vm, cx));
-        cx.observe(&new_tab, |_, _, cx| cx.notify()).detach();
-        new_tab
-            .read(cx)
-            .list
-            .clone()
-            .update(cx, |list, cx| list.refresh(cx));
-        self.ec2_tab = new_tab;
+        let profile = self.context.profile.clone();
+        let demo = self.demo;
+        // A fresh fleet and window, not an in-place reset: the previous load
+        // holds only a weak handle to the old fleet, so it cannot write into
+        // the new context once that entity is dropped.
+        let (profiles, scope) = {
+            let main_window = self.main_window.read(cx);
+            (main_window.profiles.clone(), main_window.scope.clone())
+        };
+        let fleet = cx.new(|_| FleetState::new(vm, profile, demo));
+        self.main_window = Self::new_main_window(
+            fleet.clone(),
+            profiles,
+            demo,
+            self.demo_scenario,
+            window,
+            cx,
+        );
+        self.main_window
+            .update(cx, |main_window, _| main_window.scope = scope);
+        self.fleet = fleet;
+        self.fleet.update(cx, |fleet, cx| fleet.refresh(cx));
         if !self.demo {
             self.message = self
                 .context
@@ -533,11 +494,7 @@ impl AppShell {
     }
 
     fn refresh(&mut self, cx: &mut Context<Self>) {
-        self.ec2_tab
-            .read(cx)
-            .list
-            .clone()
-            .update(cx, |list, cx| list.refresh(cx));
+        self.fleet.update(cx, |fleet, cx| fleet.refresh(cx));
     }
 
     fn open_setup(&mut self, cx: &mut Context<Self>) {
@@ -646,25 +603,6 @@ impl AppShell {
 
 impl Render for AppShell {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let vm = &self.ec2_tab.read(cx).list.read(cx).view_model;
-        // The status bar is the app-wide context indicator (it replaced
-        // the sidebar's "Active Context" card in clouddeck-rs-wz2.3): a
-        // context switch replaces the tab entity in `apply_context` and its
-        // `refresh` flips the fresh view model to loading synchronously, so
-        // Reloading is visible for the whole transition -- no stale Ready
-        // from the previous context's tab.
-        let status = if self.context.profile.is_empty() {
-            ContextStatusState::SetupRequired
-        } else if vm.is_loading() {
-            ContextStatusState::Reloading
-        } else if vm.error_message().is_some() {
-            ContextStatusState::Error("Load failed · see fleet message".into())
-        } else if !vm.partial_failures().is_empty() {
-            ContextStatusState::Error("Partial fleet · some regions failed".into())
-        } else {
-            ContextStatusState::Ready
-        };
-        self.status_bar.update(cx, |bar, _| bar.status = status);
         div()
             .debug_selector(|| "app-shell".into())
             .flex()
@@ -679,22 +617,13 @@ impl Render for AppShell {
             }))
             .child(
                 div()
-                    .debug_selector(|| "shell-main-content".into())
                     .flex_1()
                     .min_h(px(0.0))
                     .min_w(px(0.0))
-                    .h_full()
-                    .child(self.ec2_tab.clone()),
+                    .w_full()
+                    .child(self.main_window.clone()),
             )
             .on_action(cx.listener(|this, _: &Refresh, _, cx| this.refresh(cx)))
-            .child(
-                div()
-                    .debug_selector(|| "shell-status-bar".into())
-                    .flex_shrink_0()
-                    .w_full()
-                    .h(px(48.0))
-                    .child(self.status_bar.clone()),
-            )
     }
 }
 
@@ -702,66 +631,8 @@ impl Render for AppShell {
 mod tests {
     use super::*;
     use crate::test_support::GatedComputeService;
-    use clouddeck_core::AwsProfile;
-    use gpui::TestAppContext;
     use gpui::VisualTestContext;
-
-    // clouddeck-rs-w6s.18: the adopt-first-profile decision after a rescan,
-    // factored into a pure fn so it can be exercised against profile vectors
-    // instead of the host's real `~/.aws` (which the shell observer reads).
-    fn aws_profile(name: &str, region: Option<&str>) -> AwsProfile {
-        AwsProfile {
-            name: name.into(),
-            region: region.map(Into::into),
-        }
-    }
-
-    #[test]
-    fn profile_to_adopt_returns_first_profile_when_current_is_empty_and_list_changed() {
-        let before: Vec<String> = vec![];
-        let after = vec![
-            aws_profile("new-first", Some("us-east-1")),
-            aws_profile("new-second", None),
-        ];
-        assert_eq!(
-            profile_to_adopt("", &before, &after),
-            Some("new-first".to_string()),
-            "a first launch with no chosen profile and newly appeared profiles adopts the first"
-        );
-    }
-
-    #[test]
-    fn profile_to_adopt_returns_none_when_current_profile_is_non_empty() {
-        let before: Vec<String> = vec![];
-        let after = vec![aws_profile("new-first", None)];
-        assert_eq!(
-            profile_to_adopt("existing-profile", &before, &after),
-            None,
-            "a saved context is never overridden by a rescan"
-        );
-    }
-
-    #[test]
-    fn profile_to_adopt_returns_none_when_profile_list_is_unchanged() {
-        let before: Vec<String> = vec!["stable".into()];
-        let after = vec![aws_profile("stable", Some("eu-west-1"))];
-        assert_eq!(
-            profile_to_adopt("", &before, &after),
-            None,
-            "an unchanged set means nothing new appeared, so nothing is adopted"
-        );
-    }
-
-    #[test]
-    fn profile_to_adopt_returns_none_when_profile_list_is_empty() {
-        let before: Vec<String> = vec!["gone".into()];
-        let after: Vec<AwsProfile> = vec![];
-        assert_eq!(
-            profile_to_adopt("", &before, &after),
-            None,
-            "an empty rescan means there is nothing to adopt"
-        );
-    }
+    use gpui::{AppContext, TestAppContext};
 
     // clouddeck-rs-mac-ui-fix-ellipsis: the Name and ID cells of the fleet
     // table are reported to render only an ellipsis ("...") in the running
@@ -790,9 +661,11 @@ mod tests {
             .debug_bounds(id_static)
             .unwrap_or_else(|| panic!("id cell {id_static} should render"));
 
+        // Name is flex_1 with a 170pt minimum; the fixed columns take the rest,
+        // so a half-row share is not expected once all eight columns are shown.
         assert!(
-            name.size.width > row.size.width / 2.0,
-            "name cell should be at least half the row width (got {name} of {row})"
+            name.size.width >= px(170.0),
+            "name cell should keep its minimum width (got {name} of {row})"
         );
         assert!(
             id.size.width > px(0.0),
@@ -806,6 +679,28 @@ mod tests {
             "name cell must not fill the whole row (the fixed columns are \
              starved) (got {name} of {row})"
         );
+    }
+
+    /// Mounts the shell the way `main.rs` does: gpui-component is initialised
+    /// and the shell is wrapped in a `Root`, so its widgets have a theme.
+    fn add_rooted_shell(
+        cx: &mut TestAppContext,
+        build: impl FnOnce(&mut Window, &mut Context<AppShell>) -> AppShell + 'static,
+    ) -> (Entity<AppShell>, &mut VisualTestContext) {
+        let slot = std::rc::Rc::new(std::cell::RefCell::new(None));
+        let slot_for_window = slot.clone();
+        let (_root, cx) = cx.add_window_view(move |window, cx| {
+            gpui_component::init(cx);
+            let shell = cx.new(|cx| build(window, cx));
+            *slot_for_window.borrow_mut() = Some(shell.clone());
+            gpui_component::Root::new(shell, window, cx)
+        });
+        let shell = slot
+            .borrow()
+            .as_ref()
+            .expect("rooted shell entity should be created")
+            .clone();
+        (shell, cx)
     }
 
     /// Polls `run_until_parked` + short sleeps until `selector` renders,
@@ -828,34 +723,78 @@ mod tests {
     fn instance_row_name_and_id_cells_keep_readable_width_in_appshell_demo(
         cx: &mut TestAppContext,
     ) {
-        let (_view, cx) = cx.add_window_view(|_, cx| AppShell::new_demo(cx));
+        let (_view, cx) = add_rooted_shell(cx, |window, cx| AppShell::new_demo(window, cx));
         // The reported regression is at 1280pt window width.
         cx.simulate_resize(gpui::size(px(1280.0), px(800.0)));
-        wait_for_row(cx, "ec2.instance.row.us-east-1:i-scenario-001");
+        wait_for_row(cx, "table.row.us-east-1:i-scenario-001");
 
-        assert_appshell_row_widths(cx, "ec2.instance.row.us-east-1:i-scenario-001");
-        assert_appshell_row_widths(cx, "ec2.instance.row.us-east-1:i-scenario-002");
+        assert_appshell_row_widths(cx, "table.row.us-east-1:i-scenario-001");
+        assert_appshell_row_widths(cx, "table.row.us-east-1:i-scenario-002");
     }
 
     #[gpui::test]
     fn instance_row_name_and_id_cells_keep_readable_width_in_appshell_large(
         cx: &mut TestAppContext,
     ) {
-        let (_view, cx) = cx.add_window_view(|_, cx| AppShell::new_demo_large(cx));
+        let (_view, cx) = add_rooted_shell(cx, |window, cx| AppShell::new_demo_large(window, cx));
         cx.simulate_resize(gpui::size(px(1280.0), px(800.0)));
-        // 121 rows render: the 3 seeded i-scenario rows plus i-demo-004..120
-        // (large_instances clones the seeds, so i-demo-120 carries the
-        // us-east-1 seed's region).
-        wait_for_row(cx, "ec2.instance.row.us-east-1:i-scenario-001");
-        wait_for_row(cx, "ec2.instance.row.us-east-1:i-demo-120");
+        // 121 rows are in the model, but uniform_list only draws the visible
+        // ones. Sorted by Name ascending, i-scenario-003 (bastion-east-1),
+        // i-scenario-002 (batch-worker-1) and i-demo-010 (demo-10) are the
+        // first three rows; i-scenario-001 (prod-api-1) sorts last.
+        wait_for_row(cx, "table.row.us-east-1:i-scenario-002");
 
-        assert_appshell_row_widths(cx, "ec2.instance.row.us-east-1:i-scenario-001");
-        assert_appshell_row_widths(cx, "ec2.instance.row.us-east-1:i-demo-120");
+        assert_appshell_row_widths(cx, "table.row.us-east-1:i-scenario-003");
+        assert_appshell_row_widths(cx, "table.row.us-east-1:i-demo-010");
+    }
+
+    #[gpui::test]
+    fn a_superseded_context_load_does_not_overwrite_the_current_context(cx: &mut TestAppContext) {
+        let gate = std::sync::Arc::new(tokio::sync::Notify::new());
+        let (shell, cx) = add_rooted_shell(cx, |window, cx| AppShell::new_demo(window, cx));
+        wait_for_row(cx, "table.row.us-east-1:i-scenario-001");
+
+        shell.update(cx, |shell, _| {
+            shell.set_test_service_override(std::sync::Arc::new(GatedComputeService {
+                gate: gate.clone(),
+                instances: vec![],
+                error: None,
+            }));
+        });
+        emit_main_window_event(
+            cx,
+            &shell,
+            MainWindowEvent::RegionsChanged(vec!["us-west-2".into()]),
+        );
+
+        shell.update(cx, |shell, _| shell.test_service_override = None);
+        emit_main_window_event(
+            cx,
+            &shell,
+            MainWindowEvent::RegionsChanged(vec!["us-east-1".into()]),
+        );
+        wait_until(cx, "the current context load to settle", |cx| {
+            shell.read_with(cx, |shell, cx| {
+                !shell.fleet.read(cx).view_model.is_loading()
+            })
+        });
+
+        gate.notify_one();
+        for _ in 0..20 {
+            cx.run_until_parked();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+
+        assert!(
+            cx.debug_bounds("table.row.us-east-1:i-scenario-001")
+                .is_some(),
+            "the superseded load must not clear the current context's rows"
+        );
     }
 
     #[gpui::test]
     fn mounts_without_a_display(cx: &mut TestAppContext) {
-        let (_view, cx) = cx.add_window_view(|_, cx| AppShell::new_demo(cx));
+        let (_view, cx) = add_rooted_shell(cx, |window, cx| AppShell::new_demo(window, cx));
 
         assert!(
             cx.debug_bounds("app-shell").is_some(),
@@ -864,76 +803,44 @@ mod tests {
     }
 
     #[gpui::test]
-    fn renders_table_and_status_regions_with_real_child_components(cx: &mut TestAppContext) {
-        let (_view, cx) = cx.add_window_view(|_, cx| AppShell::new_demo(cx));
+    fn renders_main_window_regions_and_not_the_old_status_bar(cx: &mut TestAppContext) {
+        let (_view, cx) = add_rooted_shell(cx, |window, cx| AppShell::new_demo(window, cx));
+        wait_for_row(cx, "table.row.us-east-1:i-scenario-001");
 
         assert!(
-            cx.debug_bounds("shell-main-content").is_some(),
-            "main content region should render"
+            cx.debug_bounds("main.center").is_some(),
+            "the main window center should render"
         );
         assert!(
-            cx.debug_bounds("shell-sidebar").is_none(),
-            "the fleet table should use the full shell width"
+            cx.debug_bounds("main.table").is_some(),
+            "the instance table should be mounted in the main window center"
         );
         assert!(
-            cx.debug_bounds("shell-status-bar").is_some(),
-            "status bar region should render"
-        );
-
-        assert!(
-            cx.debug_bounds("ec2.tab.list-only")
-                .or(cx.debug_bounds("ec2.tab.split"))
-                .is_some(),
-            "the real EC2Tab should be mounted inside shell-main-content"
+            cx.debug_bounds("main.statusbar").is_some(),
+            "the main window status bar should render"
         );
         assert!(
-            cx.debug_bounds("statusbar.root").is_some(),
-            "the real CloudContextStatusBar should be mounted inside shell-status-bar"
+            cx.debug_bounds("statusbar.root").is_none(),
+            "the old CloudContextStatusBar is a hidden bridge and must not render"
         );
     }
 
     #[gpui::test]
-    fn ec2_tab_shows_the_seeded_sample_instances(cx: &mut TestAppContext) {
-        let (_view, cx) = cx.add_window_view(|_, cx| AppShell::new_demo(cx));
-        // The demo scenario now loads via the same cx.spawn path that
-        // crosses onto the shared tokio runtime (a real OS thread pool
-        // outside gpui's deterministic test executor), so a single
-        // run_until_parked() can return before the result lands -- poll
-        // with bounded, short real sleeps like
-        // startup_load_is_async_and_transitions_from_loading_to_populated
-        // does below.
-        let mut loaded = false;
-        for _ in 0..200 {
-            cx.run_until_parked();
-            if cx
-                .debug_bounds("ec2.instance.row.us-east-1:i-scenario-001")
-                .is_some()
-            {
-                loaded = true;
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
-        assert!(loaded, "the seeded row did not render within the timeout");
+    fn main_table_shows_the_seeded_sample_instances(cx: &mut TestAppContext) {
+        let (_view, cx) = add_rooted_shell(cx, |window, cx| AppShell::new_demo(window, cx));
+        wait_for_row(cx, "table.row.us-east-1:i-scenario-001");
 
         assert!(
-            cx.debug_bounds("ec2.tab.list-only").is_some(),
-            "no instance is selected initially, so the list-only layout should render"
-        );
-        assert!(
-            cx.debug_bounds("ec2.instance.row.us-east-1:i-scenario-001")
-                .is_some(),
-            "a seeded sample instance row should render"
+            cx.debug_bounds("main.table").is_some(),
+            "the seeded sample instances should render in the main table"
         );
     }
 
     #[gpui::test]
     fn startup_load_is_async_and_transitions_from_loading_to_populated(cx: &mut TestAppContext) {
-        // Mirrors the sequence `build_with_scenario` now uses at startup
-        // (and `apply_context` on a context switch): build the `EC2Tab`
-        // entity, then call `list.refresh(cx)` -- the same cx.spawn path
-        // the refresh button uses -- instead of blocking the UI thread on
-        // `cx.background_executor().block(view_model.load_instances())`.
+        // Mirrors the startup path: the fleet entity is built and refreshed,
+        // so the load is spawned instead of blocking the UI thread on
+        // `cx.background_executor().block(...)`.
         let gate = std::sync::Arc::new(tokio::sync::Notify::new());
         let service = GatedComputeService {
             gate: gate.clone(),
@@ -961,69 +868,57 @@ mod tests {
             error: None,
         };
         let view_model = InstanceListViewModel::new(Box::new(service));
-
-        let (ec2_tab, cx) = cx.add_window_view(|_, cx| {
-            let tab = EC2Tab::new(view_model, cx);
-            tab.list.clone().update(cx, |list, cx| list.refresh(cx));
-            tab
-        });
+        let fleet = cx.new(|_| FleetState::new(view_model, "scenario-default".into(), false));
+        fleet.update(cx, |fleet, cx| fleet.refresh(cx));
 
         assert!(
-            cx.debug_bounds("ec2.instance.row.us-east-1:i-gated")
-                .is_none(),
-            "data should not be populated synchronously while the gated load is in flight"
+            fleet.read_with(cx, |fleet, _| fleet.view_model.is_loading()),
+            "the view model should report loading while the spawn is in flight"
         );
         assert!(
-            ec2_tab.read_with(cx, |tab, cx| tab.list.read(cx).view_model.is_loading()),
-            "the view model should report loading while the spawn is in flight"
+            fleet.read_with(cx, |fleet, _| fleet.view_model.instances().is_empty()),
+            "data should not be populated synchronously while the gated load is in flight"
         );
 
         gate.notify_one();
-        // `EC2Tab`/`InstanceListView::refresh`'s load resolves on the
-        // shared tokio runtime, a real OS thread pool outside gpui's
-        // deterministic test executor -- a single `run_until_parked()` can
-        // return before that cross-thread result lands, so poll with
-        // bounded, short real sleeps.
         let mut loaded = false;
         for _ in 0..200 {
             cx.run_until_parked();
-            if cx
-                .debug_bounds("ec2.instance.row.us-east-1:i-gated")
-                .is_some()
-            {
+            if fleet.read_with(cx, |fleet, _| {
+                !fleet.view_model.is_loading() && !fleet.view_model.instances().is_empty()
+            }) {
                 loaded = true;
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
         assert!(loaded, "the load did not complete within the timeout");
-
         assert!(
-            cx.debug_bounds("ec2.instance.row.us-east-1:i-gated")
-                .is_some(),
-            "the row should render once the async load completes"
-        );
-        assert!(
-            !ec2_tab.read_with(cx, |tab, cx| tab.list.read(cx).view_model.is_loading()),
-            "loading should clear once the spawn resolves"
+            fleet.read_with(cx, |fleet, _| fleet
+                .view_model
+                .instances()
+                .iter()
+                .any(|instance| instance.instance_id == "i-gated")),
+            "the gated instance should be populated once the async load completes"
         );
     }
 
     #[gpui::test]
-    fn table_and_status_are_docked_without_a_sidebar(cx: &mut TestAppContext) {
-        let (_view, cx) = cx.add_window_view(|_, cx| AppShell::new_demo(cx));
+    fn main_center_and_status_bar_are_docked_in_the_window(cx: &mut TestAppContext) {
+        let (_view, cx) = add_rooted_shell(cx, |window, cx| AppShell::new_demo(window, cx));
+        wait_for_row(cx, "table.row.us-east-1:i-scenario-001");
 
-        let main_content = cx
-            .debug_bounds("shell-main-content")
-            .expect("main content should render");
+        let center = cx
+            .debug_bounds("main.center")
+            .expect("main center should render");
         let status_bar = cx
-            .debug_bounds("shell-status-bar")
-            .expect("status bar should render");
+            .debug_bounds("main.statusbar")
+            .expect("main status bar should render");
 
-        assert_eq!(main_content.origin.x, px(0.0));
         assert!(
-            status_bar.origin.y >= main_content.origin.y + main_content.size.height,
-            "status bar should be docked below the fleet table"
+            status_bar.origin.y >= center.origin.y + center.size.height
+                || status_bar.origin.x >= center.origin.x + center.size.width,
+            "the status bar should be docked beside or below the main center"
         );
         assert!(
             status_bar.size.height > px(0.0),
@@ -1100,7 +995,7 @@ mod tests {
     ) {
         use crate::account_window::AccountConnectionState;
 
-        let (shell, cx) = cx.add_window_view(|_, cx| AppShell::new_demo(cx));
+        let (shell, cx) = add_rooted_shell(cx, |window, cx| AppShell::new_demo(window, cx));
 
         // The trigger: nothing opens the account-connect window on its own
         // (per clouddeck-rs-w6s.18's design, existing profiles need minimal
@@ -1147,28 +1042,28 @@ mod tests {
     #[gpui::test]
     fn mounting_in_real_mode_without_profiles_shows_setup_affordance(cx: &mut TestAppContext) {
         // A real (non-demo) launch with no detected AWS profiles must reach
-        // the fleet with an in-place "Connect to AWS" affordance (the
+        // the main window with an in-place "Connect to AWS" affordance (the
         // no-profiles onboarding entry point, clouddeck-rs-w6s.18) rather
-        // than a dead end. The shell's no-profile branch of `service()`
-        // (see `shell.rs`) resolves to a load-failure error panel (not the
-        // plain empty panel), so the affordance must render in that error
-        // panel too — this test covers exactly that path.
+        // than a dead end. The load error renders as a centered state whose
+        // action is that affordance.
         let real_mode = crate::shell::is_real_mode();
-        let (_shell, cx) = cx.add_window_view(|_, cx| {
+        let (shell, cx) = add_rooted_shell(cx, move |window, cx| {
             if real_mode {
-                AppShell::build_with_scenario(false, DemoScenario::Happy, cx)
+                AppShell::build_with_scenario(window, false, DemoScenario::Happy, cx)
             } else {
-                AppShell::build_with_scenario(true, DemoScenario::Empty, cx)
+                AppShell::build_with_scenario(window, true, DemoScenario::Empty, cx)
             }
         });
 
-        // The state (empty or error) renders once the load resolves; the
-        // setup affordance must be present by then, so poll for it directly
-        // rather than just waiting for any state to appear.
+        wait_until(cx, "the load to settle", |cx| {
+            shell.read_with(cx, |shell, cx| {
+                !shell.fleet.read(cx).view_model.is_loading()
+            })
+        });
         let mut saw_setup = false;
         for _ in 0..200 {
             cx.run_until_parked();
-            if cx.debug_bounds("ec2.instance.empty-setup").is_some() {
+            if cx.debug_bounds("center.action").is_some() {
                 saw_setup = true;
                 break;
             }
@@ -1176,9 +1071,8 @@ mod tests {
         }
 
         assert!(
-            cx.debug_bounds("ec2.instance.empty").is_some()
-                || cx.debug_bounds("ec2.instance.error").is_some(),
-            "the empty/error state should render"
+            cx.debug_bounds("main.center-state").is_some(),
+            "the centered state should render when the load has no instances"
         );
         if real_mode {
             assert!(
@@ -1187,36 +1081,22 @@ mod tests {
             );
         } else {
             assert!(
-                cx.debug_bounds("ec2.instance.empty-setup").is_none(),
+                !saw_setup,
                 "the demo empty scenario must not offer AWS onboarding"
             );
         }
     }
 
     #[gpui::test]
-    fn empty_state_setup_request_opens_the_wizard(cx: &mut TestAppContext) {
-        // The empty-fleet "Connect to AWS" affordance sets
-        // `manage_requested`; the shell must consume that flag and open the
-        // Connect to AWS window (the no-profiles onboarding trigger,
-        // clouddeck-rs-w6s.18).
-        let (shell, cx) = cx.add_window_view(|_, cx| AppShell::new_demo(cx));
+    fn connect_to_aws_event_opens_the_wizard(cx: &mut TestAppContext) {
+        let (shell, cx) = add_rooted_shell(cx, |window, cx| AppShell::new_demo(window, cx));
 
-        shell.update(cx, |shell, cx| {
-            shell.ec2_tab.read(cx).list.clone().update(cx, |list, cx| {
-                list.manage_requested = true;
-                cx.notify();
-            });
-        });
-        cx.run_until_parked();
+        emit_main_window_event(cx, &shell, MainWindowEvent::ConnectToAws);
 
-        shell.read_with(cx, |shell, cx| {
+        shell.read_with(cx, |shell, _| {
             assert!(
                 shell.wizard.is_some(),
-                "the empty-state setup request should open the Connect to AWS window"
-            );
-            assert!(
-                !shell.ec2_tab.read(cx).list.read(cx).manage_requested,
-                "the one-shot setup request must be consumed by the shell"
+                "the ConnectToAws event should open the Connect to AWS window"
             );
         });
     }
@@ -1231,7 +1111,7 @@ mod tests {
     // rebuild.
     #[gpui::test]
     fn wizard_demo_request_proxies_into_the_status_bars_demo_toggle(cx: &mut TestAppContext) {
-        let (shell, cx) = cx.add_window_view(|_, cx| AppShell::new_demo(cx));
+        let (shell, cx) = add_rooted_shell(cx, |window, cx| AppShell::new_demo(window, cx));
 
         shell.update(cx, |shell, cx| shell.open_setup(cx));
 
@@ -1283,485 +1163,246 @@ mod tests {
         panic!("timed out waiting for: {label}");
     }
 
-    /// Polls until the switched-in context has finished loading, the status
-    /// bar reads `Ready`, and instances are present. Row presence alone is
-    /// not enough: the status bar is only refreshed on the next shell render,
-    /// so it can lag the view model's settled state.
+    /// Polls until the switched-in context has finished loading and the
+    /// fleet shows its instances.
     fn wait_until_context_settled(
         cx: &mut gpui::VisualTestContext,
         shell: &gpui::Entity<AppShell>,
     ) {
-        wait_until(cx, "context load to settle to Ready", |cx| {
+        wait_until(cx, "context load to settle", |cx| {
             shell.read_with(cx, |shell, cx| {
-                let vm = &shell.ec2_tab.read(cx).list.read(cx).view_model;
-                !vm.is_loading()
-                    && shell.status_bar.read(cx).status == ContextStatusState::Ready
-                    && !vm.instances().is_empty()
+                let vm = &shell.fleet.read(cx).view_model;
+                !vm.is_loading() && !vm.instances().is_empty()
             })
         });
     }
 
-    /// End-to-end proof that the *real* picker -> shell observer ->
-    /// `apply_context` path works, not just `apply_context` called by hand:
-    /// clicking the region chip in the live status bar opens the quick
-    /// picker, and clicking a row drives the whole shell -- context, status
-    /// bar chip, and the EC2Tab's fleet reload -- on a context switch from
-    /// Fleet to a concrete region.
+    /// Emits a main window event the way an overlay does, then lets the
+    /// shell's subscription and any spawned loads run.
+    fn emit_main_window_event(
+        cx: &mut gpui::VisualTestContext,
+        shell: &gpui::Entity<AppShell>,
+        event: MainWindowEvent,
+    ) {
+        let main_window = shell.read_with(cx, |shell, _| shell.main_window.clone());
+        main_window.update(cx, |_, cx| cx.emit(event));
+        cx.run_until_parked();
+    }
+
+    fn fleet_error(
+        cx: &mut gpui::VisualTestContext,
+        shell: &gpui::Entity<AppShell>,
+    ) -> Option<String> {
+        shell.read_with(cx, |shell, cx| {
+            shell
+                .fleet
+                .read(cx)
+                .view_model
+                .error_message()
+                .map(str::to_owned)
+        })
+    }
+
+    /// A region change from the main window's region overlay must drive the
+    /// shell: the context and status bridge update and the fleet reloads
+    /// for the selected region.
     #[gpui::test]
-    fn region_picker_row_click_drives_shell_context_and_fleet_reload(cx: &mut TestAppContext) {
-        let (shell, cx) = cx.add_window_view(|_, cx| AppShell::new_demo(cx));
+    fn region_change_event_drives_shell_context_and_fleet_reload(cx: &mut TestAppContext) {
+        let (shell, cx) = add_rooted_shell(cx, |window, cx| AppShell::new_demo(window, cx));
+        wait_for_row(cx, "table.row.us-east-1:i-scenario-001");
 
-        // Let the demo startup load settle so the initial context (the
-        // happy-path default: profile scenario-default, region us-east-1)
-        // is in its Ready state before we switch.
-        wait_until(cx, "startup load to settle", |cx| {
-            cx.debug_bounds("ec2.instance.row.us-east-1:i-scenario-001")
-                .is_some()
-        });
-
-        // Open the region picker from the status bar chip.
-        let chip = cx
-            .debug_bounds("statusbar.region")
-            .expect("region chip should render in the live status bar");
-        cx.simulate_click(chip.center(), gpui::Modifiers::default());
-        assert!(
-            cx.debug_bounds("statusbar.quickpicker").is_some(),
-            "the quick picker popover should open from the chip click"
+        emit_main_window_event(
+            cx,
+            &shell,
+            MainWindowEvent::RegionsChanged(vec!["fleet".into()]),
         );
 
-        // Click the Fleet row to switch from the concrete default region
-        // to the curated fleet view.
-        let row = cx
-            .debug_bounds("statusbar.quickpicker.region.row.fleet")
-            .expect("the Fleet row should render while the picker is open");
-        cx.simulate_click(row.center(), gpui::Modifiers::default());
-
-        // `apply_context` calls `refresh` on the new tab, which flips the
-        // view model to loading synchronously before the spawned task
-        // resolves. With the mock service resolving almost instantly the
-        // load may already be complete by the time we read state here, so
-        // we accept either loading or loaded -- what we *do* assert is
-        // that the context and status bar updated, and that the picker
-        // closed. The Reloading state during the transition is covered by
-        // the dedicated `startup_load_is_async_and_transitions_from_
-        // loading_to_populated` test, which uses a gated service to
-        // deterministically observe the loading window.
         shell.read_with(cx, |shell, cx| {
             assert_eq!(
                 shell.context.region, "fleet",
-                "the shell's context must track the picker's selection"
+                "the shell's context must track the region overlay's selection"
             );
             assert_eq!(
                 shell.status_bar.read(cx).region,
                 "fleet",
-                "the status bar's region chip must show the new region"
-            );
-            assert_eq!(
-                shell.status_bar.read(cx).active_quick_picker,
-                None,
-                "the picker must close once a row is selected"
+                "the status bridge's region must show the new region"
             );
         });
 
         wait_until_context_settled(cx, &shell);
-        let (loading, ready, has_instances) = shell.read_with(cx, |shell, cx| {
-            let vm = &shell.ec2_tab.read(cx).list.read(cx).view_model;
-            let loading = vm.is_loading();
-            let status = shell.status_bar.read(cx).status.clone();
-            let has_instances = !vm.instances().is_empty();
-            (loading, status, has_instances)
-        });
-        assert!(
-            !loading,
-            "the context-switch load must settle back out of loading"
-        );
-        assert_eq!(
-            ready,
-            ContextStatusState::Ready,
-            "the status bar must report Ready once the switched-in context has loaded"
-        );
-        assert!(
-            has_instances,
-            "the fleet view must show the selected profile's instances"
-        );
     }
 
-    /// Switching regions through the picker must clear the previously
-    /// selected instance (the inspector closes) and show the standalone
-    /// empty-state prompt in the list-only layout, since `apply_context`
-    /// creates a fresh `EC2Tab` with a fresh view model.
+    /// Switching regions must clear the previously selected instance, since
+    /// the fleet state is reset for the new context.
     #[gpui::test]
-    fn region_picker_switch_clears_selection_and_shows_standalone_prompt(cx: &mut TestAppContext) {
-        let (shell, cx) = cx.add_window_view(|_, cx| AppShell::new_demo(cx));
-        wait_until(cx, "startup load to settle", |cx| {
-            cx.debug_bounds("ec2.instance.row.us-east-1:i-scenario-001")
-                .is_some()
-        });
+    fn region_change_event_clears_the_selected_instance(cx: &mut TestAppContext) {
+        let (shell, cx) = add_rooted_shell(cx, |window, cx| AppShell::new_demo(window, cx));
+        wait_for_row(cx, "table.row.us-east-1:i-scenario-001");
 
-        // Select an instance in the populated default region so the switch
-        // has a selected instance to clear.
         let row = cx
-            .debug_bounds("ec2.instance.row.us-east-1:i-scenario-001")
+            .debug_bounds("table.row.us-east-1:i-scenario-001")
             .expect("a seeded instance row should render after the startup load");
         cx.simulate_click(row.center(), gpui::Modifiers::default());
         cx.run_until_parked();
         assert!(
-            cx.debug_bounds("ec2.tab.split").is_some(),
-            "selecting a row should open the split (list + inspector) layout"
+            shell.read_with(cx, |shell, cx| shell.fleet.read(cx).selected.is_some()),
+            "clicking a row should select it"
         );
 
-        // Switch to the fleet region via the picker.
-        let chip = cx
-            .debug_bounds("statusbar.region")
-            .expect("region chip should render");
-        cx.simulate_click(chip.center(), gpui::Modifiers::default());
-        let region_row = cx
-            .debug_bounds("statusbar.quickpicker.region.row.fleet")
-            .expect("fleet row should render in the demo's region picker");
-        cx.simulate_click(region_row.center(), gpui::Modifiers::default());
+        emit_main_window_event(
+            cx,
+            &shell,
+            MainWindowEvent::RegionsChanged(vec!["fleet".into()]),
+        );
 
-        // After the switch: the old selection is gone (apply_context
-        // creates a fresh EC2Tab with a fresh view model), the status bar
-        // shows the fleet region, and the picker is closed.
-        let (region, selection, picker_closed, standalone) = shell.read_with(cx, |shell, cx| {
-            let vm = &shell.ec2_tab.read(cx).list.read(cx).view_model;
-            let standalone = shell
-                .ec2_tab
-                .read(cx)
-                .list
-                .read(cx)
-                .show_standalone_empty_state;
+        let (region, selection) = shell.read_with(cx, |shell, cx| {
             (
                 shell.context.region.clone(),
-                vm.selected_instance_id().map(str::to_owned),
-                shell.status_bar.read(cx).active_quick_picker.is_none(),
-                standalone,
+                shell.fleet.read(cx).selected.clone(),
             )
         });
         assert_eq!(
             region, "fleet",
-            "the shell's context must track the picker's region selection"
+            "the shell's context must track the selection"
         );
         assert!(
             selection.is_none(),
             "the old selection must not survive a context switch"
         );
-        assert!(
-            picker_closed,
-            "the picker must be closed after a region row is selected"
-        );
-        assert!(
-            standalone,
-            "with no selection after the switch the list-only (standalone prompt) layout is active"
-        );
 
         wait_until_context_settled(cx, &shell);
-        let (ready, has_instances) = shell.read_with(cx, |shell, cx| {
-            let vm = &shell.ec2_tab.read(cx).list.read(cx).view_model;
-            (
-                shell.status_bar.read(cx).status.clone(),
-                !vm.instances().is_empty(),
-            )
-        });
-        assert!(
-            matches!(ready, ContextStatusState::Ready),
-            "the status bar must settle back to Ready after the region switch load"
-        );
-        assert!(has_instances, "the fleet region must show instances");
     }
 
     /// The empty-state path: a shell launched with the empty-fleet demo
-    /// scenario shows the "No Instances Found" empty panel (not the
-    /// loading or error panel) once the load settles, and the status bar
-    /// reports Ready -- proving the empty state is visible after the
-    /// initial load completes, not just during it.
+    /// scenario settles with no instances and no error, and the centered
+    /// empty state renders once the load completes.
     #[gpui::test]
-    fn empty_demo_shows_empty_panel_and_ready_status(cx: &mut TestAppContext) {
-        let (shell, cx) = cx.add_window_view(|_, cx| AppShell::new_demo_empty(cx));
-        // The empty-fleet load resolves almost instantly; poll for the
-        // empty panel to appear (it only renders once `is_loading` clears
-        // and `instances` is empty).
-        wait_until(cx, "empty panel to render", |cx| {
-            cx.debug_bounds("ec2.instance.empty").is_some()
+    fn empty_demo_settles_with_no_instances_and_no_error(cx: &mut TestAppContext) {
+        let (shell, cx) = add_rooted_shell(cx, |window, cx| AppShell::new_demo_empty(window, cx));
+        wait_until(cx, "the empty load to settle", |cx| {
+            shell.read_with(cx, |shell, cx| {
+                !shell.fleet.read(cx).view_model.is_loading()
+            }) && cx.debug_bounds("main.center-state").is_some()
         });
-        let (ready, instances_empty) = shell.read_with(cx, |shell, cx| {
-            let vm = &shell.ec2_tab.read(cx).list.read(cx).view_model;
-            (
-                shell.status_bar.read(cx).status.clone(),
+
+        shell.read_with(cx, |shell, cx| {
+            let vm = &shell.fleet.read(cx).view_model;
+            assert!(
                 vm.instances().is_empty(),
-            )
+                "the empty-fleet scenario must have no instances"
+            );
+            assert!(
+                vm.error_message().is_none(),
+                "an empty but successful load must not report an error"
+            );
         });
-        assert!(
-            matches!(ready, ContextStatusState::Ready),
-            "the status bar must report Ready on an empty (but successful) load"
-        );
-        assert!(
-            instances_empty,
-            "the empty-fleet scenario must have no instances"
-        );
     }
 
-    /// The profile picker opens from the status bar chip and its rows are
-    /// wired to the shell. Since the demo fixture has only one profile
-    /// (already selected), the "All Profiles" section is empty — the test
-    /// verifies the picker opens, the Current row renders, and the dismiss
-    /// button closes the picker without changing state.
+    /// The switch-profile action opens the profile overlay, and escape closes
+    /// it without changing the context.
     #[gpui::test]
-    fn profile_picker_opens_and_dismisses_without_changing_context(cx: &mut TestAppContext) {
-        let (shell, cx) = cx.add_window_view(|_, cx| AppShell::new_demo(cx));
-        wait_until(cx, "startup load to settle", |cx| {
-            cx.debug_bounds("ec2.instance.row.us-east-1:i-scenario-001")
-                .is_some()
-        });
+    fn switch_profile_action_opens_and_escape_dismisses_without_changing_context(
+        cx: &mut TestAppContext,
+    ) {
+        let (shell, cx) = add_rooted_shell(cx, |window, cx| AppShell::new_demo(window, cx));
+        wait_for_row(cx, "table.row.us-east-1:i-scenario-001");
 
         let context_before = shell.read_with(cx, |shell, _| shell.context.clone());
 
-        // Open the profile picker.
-        let chip = cx
-            .debug_bounds("statusbar.profile")
-            .expect("profile chip should render");
-        cx.simulate_click(chip.center(), gpui::Modifiers::default());
+        cx.dispatch_action(crate::app_menus::SwitchProfile);
+        cx.run_until_parked();
         assert!(
-            cx.debug_bounds("statusbar.quickpicker").is_some(),
-            "the quick picker popover should open from the profile chip click"
-        );
-        assert!(
-            cx.debug_bounds("statusbar.quickpicker.profile.row.scenario-default")
-                .is_some(),
-            "the Current profile row should render in the picker"
+            cx.debug_bounds("main.overlay.profile").is_some(),
+            "the switch-profile action should open the profile overlay"
         );
 
-        // Dismiss without selecting.
-        let dismiss = cx
-            .debug_bounds("statusbar.quickpicker.dismiss")
-            .expect("dismiss button should render");
-        cx.simulate_click(dismiss.center(), gpui::Modifiers::default());
-
-        let (picker_closed, context_after) = shell.read_with(cx, |shell, cx| {
-            (
-                shell.status_bar.read(cx).active_quick_picker.is_none(),
-                shell.context.clone(),
-            )
-        });
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
         assert!(
-            picker_closed,
-            "dismissing the profile picker should close it"
+            cx.debug_bounds("main.overlay.profile").is_none(),
+            "escape should close the profile overlay"
         );
+
+        let context_after = shell.read_with(cx, |shell, _| shell.context.clone());
         assert_eq!(
             context_after, context_before,
-            "dismissing the picker without selecting must not change the context"
+            "dismissing the profile overlay must not change the context"
         );
     }
 
-    /// Selecting a *different* profile through the real picker must update
-    /// the shell's context, the status bar's profile chip, close the
-    /// picker, and replace the EC2Tab so the fleet reloads for the new
-    /// profile. Injects a second profile into the status bar's picker data
-    /// (the demo fixture only has one) so the "All Profiles" section has a
-    /// selectable row.
+    /// Selecting a different profile must update the shell's context, the
+    /// status bridge's profile, and reload the fleet for the new profile.
     #[gpui::test]
-    fn profile_picker_row_click_drives_shell_context(cx: &mut TestAppContext) {
-        let (shell, cx) = cx.add_window_view(|_, cx| AppShell::new_demo(cx));
-        wait_until(cx, "startup load to settle", |cx| {
-            cx.debug_bounds("ec2.instance.row.us-east-1:i-scenario-001")
-                .is_some()
-        });
+    fn pick_profile_event_drives_shell_context(cx: &mut TestAppContext) {
+        let (shell, cx) = add_rooted_shell(cx, |window, cx| AppShell::new_demo(window, cx));
+        wait_for_row(cx, "table.row.us-east-1:i-scenario-001");
 
-        // Inject a second profile into the status bar's picker data so
-        // the "All Profiles" section has a selectable row. The demo
-        // fixture only has `scenario-default`; this simulates a user who
-        // has multiple AWS profiles configured.
-        shell.update(cx, |shell, cx| {
-            shell.status_bar.update(cx, |bar, cx| {
-                bar.profiles = Some(vec![
-                    crate::quick_picker::AwsProfile {
-                        name: "scenario-default".into(),
-                        hint: "us-east-1".into(),
-                    },
-                    crate::quick_picker::AwsProfile {
-                        name: "other-profile".into(),
-                        hint: "".into(),
-                    },
-                ]);
-                cx.notify();
-            });
-        });
-        cx.run_until_parked();
-
-        // Open the profile picker.
-        let chip = cx
-            .debug_bounds("statusbar.profile")
-            .expect("profile chip should render");
-        cx.simulate_click(chip.center(), gpui::Modifiers::default());
-        assert!(
-            cx.debug_bounds("statusbar.quickpicker").is_some(),
-            "the quick picker popover should open from the profile chip click"
-        );
-        assert!(
-            cx.debug_bounds("statusbar.quickpicker.profile.row.other-profile")
-                .is_some(),
-            "the injected other-profile row should render in the All Profiles section"
+        emit_main_window_event(
+            cx,
+            &shell,
+            MainWindowEvent::PickProfile("other-profile".into()),
         );
 
-        // Click the other-profile row.
-        let row = cx
-            .debug_bounds("statusbar.quickpicker.profile.row.other-profile")
-            .expect("other-profile row should be clickable");
-        cx.simulate_click(row.center(), gpui::Modifiers::default());
-
-        // Assert the shell's context, status bar, and picker state updated.
-        let (context_profile, bar_profile, picker_closed) = shell.read_with(cx, |shell, cx| {
+        let (context_profile, bar_profile) = shell.read_with(cx, |shell, cx| {
             (
                 shell.context.profile.clone(),
                 shell.status_bar.read(cx).profile.clone(),
-                shell.status_bar.read(cx).active_quick_picker.is_none(),
             )
         });
         assert_eq!(
             context_profile, "other-profile",
-            "the shell's context profile must match the picker's selection"
+            "the shell's context profile must match the picked profile"
         );
         assert_eq!(
             bar_profile.as_deref(),
             Some("other-profile"),
-            "the status bar's profile chip must show the selected profile"
-        );
-        assert!(
-            picker_closed,
-            "the picker must close once a profile row is selected"
+            "the status bridge's profile must show the picked profile"
         );
 
-        // The EC2Tab was replaced by apply_context; the new view model
-        // is loading or has already settled. Wait for the load to settle
-        // (is_loading becomes false), then assert the fleet is empty
-        // (the demo service for an unknown profile returns no instances).
+        // The demo service for an unknown profile returns no instances and no error.
         wait_until(cx, "profile switch load to settle", |cx| {
-            cx.debug_bounds("ec2.instance.empty").is_some()
+            shell.read_with(cx, |shell, cx| {
+                let vm = &shell.fleet.read(cx).view_model;
+                !vm.is_loading() && vm.instances().is_empty()
+            })
         });
-        let (is_loading, instances_count, error) = shell.read_with(cx, |shell, cx| {
-            let vm = &shell.ec2_tab.read(cx).list.read(cx).view_model;
-            (
-                vm.is_loading(),
-                vm.instances().len(),
-                vm.error_message().map(str::to_owned),
-            )
-        });
-        assert!(!is_loading, "the profile switch load must have settled");
-        assert_eq!(
-            instances_count, 0,
-            "the demo service for an unknown profile returns no instances"
-        );
         assert!(
-            error.is_none(),
+            fleet_error(cx, &shell).is_none(),
             "the demo service for an unknown profile should not produce an error"
         );
     }
 
-    /// Switching regions through the picker on a failure-scenario shell
-    /// must show the error panel after the load settles. Uses the failure
-    /// demo scenario (all loads fail with a simulated error) so the error
-    /// state is deterministic.
-    ///
-    /// This test checks the *settled* error state after the region switch:
-    /// the context updated, the picker closed, and the error panel
-    /// rendered with the correct error message. The loading state during
-    /// the transition (Reloading status bar, `is_loading` on the view
-    /// model) is covered by
-    /// `region_picker_switch_shows_reloading_state_during_failure_load`,
-    /// which injects a `GatedComputeService` into `apply_context` to
-    /// deterministically observe the loading window.
+    /// A region change on a failure-scenario shell must settle with the
+    /// simulated load error on the fleet.
     #[gpui::test]
-    fn region_picker_switch_shows_error_state_after_failure_load(
-        cx: &mut TestAppContext,
-    ) {
-        let (shell, cx) = cx.add_window_view(|_, cx| AppShell::new_demo_failure(cx));
-
-        // The failure scenario's startup load resolves almost instantly;
-        // wait for the error panel to appear.
-        wait_until(cx, "error panel to render after startup", |cx| {
-            cx.debug_bounds("ec2.instance.error").is_some()
+    fn region_change_on_failure_shell_settles_with_the_simulated_error(cx: &mut TestAppContext) {
+        let (shell, cx) = add_rooted_shell(cx, |window, cx| AppShell::new_demo_failure(window, cx));
+        wait_until(cx, "error to render after startup", |cx| {
+            fleet_error(cx, &shell).is_some()
         });
 
-        // The failure demo starts with region us-east-1 (the profile's
-        // default region), so switching to fleet is a real change.
         let starting_region = shell.read_with(cx, |shell, _| shell.context.region.clone());
         assert_ne!(
             starting_region, "fleet",
             "the test must start in a concrete region so the fleet switch is a meaningful change"
         );
 
-        // Open the region picker and switch to the fleet region.
-        let chip = cx
-            .debug_bounds("statusbar.region")
-            .expect("region chip should render");
-        cx.simulate_click(chip.center(), gpui::Modifiers::default());
-        assert!(
-            cx.debug_bounds("statusbar.quickpicker").is_some(),
-            "the quick picker popover should open"
+        emit_main_window_event(
+            cx,
+            &shell,
+            MainWindowEvent::RegionsChanged(vec!["fleet".into()]),
         );
-        let region_row = cx
-            .debug_bounds("statusbar.quickpicker.region.row.fleet")
-            .expect("fleet row should render in the demo's region picker");
-        cx.simulate_click(region_row.center(), gpui::Modifiers::default());
 
-        // After the click: the context and status bar updated, the picker
-        // closed. The new tab's load resolves almost instantly (mock
-        // failure service), so the error may already be set.
-        let (region, picker_closed) = shell.read_with(cx, |shell, cx| {
-            (
-                shell.context.region.clone(),
-                shell.status_bar.read(cx).active_quick_picker.is_none(),
-            )
-        });
+        let region = shell.read_with(cx, |shell, _| shell.context.region.clone());
         assert_eq!(
             region, "fleet",
-            "the shell's context must track the picker's region selection"
-        );
-        assert!(
-            picker_closed,
-            "the picker must be closed after a region row is selected"
+            "the shell's context must track the region overlay's selection"
         );
 
-        // Wait for the new tab's view model to settle with an error
-        // (the failure scenario always produces an error, so this is
-        // deterministic). Poll the view model directly to avoid racing
-        // with stale `debug_bounds` from the old tab.
-        for _ in 0..200 {
-            if shell.read_with(cx, |shell, cx| {
-                shell
-                    .ec2_tab
-                    .read(cx)
-                    .list
-                    .read(cx)
-                    .view_model
-                    .error_message()
-                    .is_some()
-            }) {
-                break;
-            }
-            cx.run_until_parked();
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
-
-        // After settling: the view model has an error, the status bar
-        // reports the error state, and the error message is the simulated
-        // demo failure.
-        let (has_error, status_after, error_msg) = shell.read_with(cx, |shell, cx| {
-            let vm = &shell.ec2_tab.read(cx).list.read(cx).view_model;
-            (
-                vm.error_message().is_some(),
-                shell.status_bar.read(cx).status.clone(),
-                vm.error_message().map(str::to_owned),
-            )
+        wait_until(cx, "the switched failure load to settle", |cx| {
+            fleet_error(cx, &shell).is_some()
         });
-        assert!(
-            has_error,
-            "the failure scenario must produce an error after the region switch"
-        );
-        assert!(
-            matches!(status_after, ContextStatusState::Error(_)),
-            "the status bar must report the error state after the failure load settles"
-        );
+        let error_msg = fleet_error(cx, &shell);
         assert!(
             error_msg
                 .as_deref()
@@ -1771,148 +1412,79 @@ mod tests {
         );
     }
 
-    /// Switching regions through the picker while a `GatedComputeService`
-    /// is injected into `apply_context` must show the Reloading state on
-    /// the status bar and `is_loading` on the view model while the load
-    /// is in flight, then the settled error state after the gate is
-    /// released. This is the deterministic, picker-switch-specific version
-    /// of the loading-window assertion that
-    /// `startup_load_is_async_and_transitions_from_loading_to_populated`
-    /// covers for the startup path.
+    /// A region change with a gated service injected into `apply_context`
+    /// must show the fleet loading while the load is in flight, then the
+    /// simulated error once the gate is released.
     #[gpui::test]
-    fn region_picker_switch_shows_reloading_state_during_failure_load(
-        cx: &mut TestAppContext,
-    ) {
+    fn region_change_shows_loading_state_during_failure_load(cx: &mut TestAppContext) {
         let gate = std::sync::Arc::new(tokio::sync::Notify::new());
-        let (shell, cx) = cx.add_window_view(|_, cx| {
-            let shell = AppShell::new_demo_failure(cx);
-            shell
+        let (shell, cx) = add_rooted_shell(cx, |window, cx| AppShell::new_demo_failure(window, cx));
+        wait_until(cx, "error to render after startup", |cx| {
+            fleet_error(cx, &shell).is_some()
         });
 
-        // The failure scenario's startup load resolves almost instantly
-        // (MockComputeService); wait for the error panel to appear so the
-        // shell is in a settled state before we inject the gated service.
-        wait_until(cx, "error panel to render after startup", |cx| {
-            cx.debug_bounds("ec2.instance.error").is_some()
-        });
-
-        // The failure demo starts with region us-east-1 (the profile's
-        // default region), so switching to fleet is a real change.
         let starting_region = shell.read_with(cx, |shell, _| shell.context.region.clone());
         assert_ne!(
             starting_region, "fleet",
             "the test must start in a concrete region so the fleet switch is a meaningful change"
         );
 
-        // Inject a GatedComputeService that will produce the same simulated
-        // failure error as the failure scenario once the gate is released.
-        // This overrides what `apply_context` would normally use
-        // (MockComputeService) for the picker-driven context switch.
         shell.update(cx, |shell, _| {
             let service = GatedComputeService {
                 gate: gate.clone(),
                 instances: vec![],
-                error: Some(
-                    std::sync::Arc::new(std::io::Error::other(
-                        "Simulated demo load failure",
-                    )) as std::sync::Arc<dyn std::error::Error + Send + Sync>,
-                ),
+                error: Some(std::sync::Arc::new(std::io::Error::other(
+                    "Simulated demo load failure",
+                ))
+                    as std::sync::Arc<dyn std::error::Error + Send + Sync>),
             };
             shell.set_test_service_override(std::sync::Arc::new(service));
         });
 
-        // Open the region picker and switch to the fleet region. This
-        // triggers `apply_context`, which uses the injected gated service.
-        let chip = cx
-            .debug_bounds("statusbar.region")
-            .expect("region chip should render");
-        cx.simulate_click(chip.center(), gpui::Modifiers::default());
-        let region_row = cx
-            .debug_bounds("statusbar.quickpicker.region.row.fleet")
-            .expect("fleet row should render in the demo's region picker");
-        cx.simulate_click(region_row.center(), gpui::Modifiers::default());
+        emit_main_window_event(
+            cx,
+            &shell,
+            MainWindowEvent::RegionsChanged(vec!["fleet".into()]),
+        );
 
-        // After the click: the context updated, the picker closed, and the
-        // gated load is in flight (is_loading == true, status bar is
-        // Reloading). The gate has not been released yet, so the error
-        // state must NOT be visible.
-        // Run one park cycle so `AppShell::render` has a chance to update
-        // `status_bar.status` to `Reloading` based on the now-loading view
-        // model (the `status` field is only set during render).
-        cx.run_until_parked();
-        let (region, picker_closed, is_loading, status_during) = shell.read_with(cx, |shell, cx| {
-            let vm = &shell.ec2_tab.read(cx).list.read(cx).view_model;
+        let (region, is_loading) = shell.read_with(cx, |shell, cx| {
             (
                 shell.context.region.clone(),
-                shell.status_bar.read(cx).active_quick_picker.is_none(),
-                vm.is_loading(),
-                shell.status_bar.read(cx).status.clone(),
+                shell.fleet.read(cx).view_model.is_loading(),
             )
         });
         assert_eq!(
             region, "fleet",
-            "the shell's context must track the picker's region selection"
-        );
-        assert!(
-            picker_closed,
-            "the picker must be closed after a region row is selected"
+            "the shell's context must track the region overlay's selection"
         );
         assert!(
             is_loading,
-            "the view model must report loading while the gated load is in flight"
+            "the fleet must report loading while the gated load is in flight"
         );
         assert!(
-            matches!(status_during, ContextStatusState::Reloading),
-            "the status bar must report Reloading while the picker-driven load is in flight, got: {status_during:?}"
+            fleet_error(cx, &shell).is_none(),
+            "the error state must not be visible before the gate is released"
         );
 
-        // Release the gate: the gated service now resolves with the
-        // simulated failure error.
         gate.notify_one();
+        wait_until(cx, "the gated failure load to settle", |cx| {
+            fleet_error(cx, &shell).is_some()
+        });
 
-        // Wait for the load to settle with an error (poll the view model
-        // directly to avoid racing with stale `debug_bounds` from the old
-        // tab).
-        for _ in 0..200 {
-            if shell.read_with(cx, |shell, cx| {
+        let (is_loading_after, error_msg) = shell.read_with(cx, |shell, cx| {
+            (
+                shell.fleet.read(cx).view_model.is_loading(),
                 shell
-                    .ec2_tab
-                    .read(cx)
-                    .list
+                    .fleet
                     .read(cx)
                     .view_model
                     .error_message()
-                    .is_some()
-            }) {
-                break;
-            }
-            cx.run_until_parked();
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
-
-        // After settling: the view model has the expected error, is no
-        // longer loading, the status bar reports the error state, and the
-        // error message is the simulated demo failure.
-        let (has_error, is_loading_after, status_after, error_msg) = shell.read_with(cx, |shell, cx| {
-            let vm = &shell.ec2_tab.read(cx).list.read(cx).view_model;
-            (
-                vm.error_message().is_some(),
-                vm.is_loading(),
-                shell.status_bar.read(cx).status.clone(),
-                vm.error_message().map(str::to_owned),
+                    .map(str::to_owned),
             )
         });
         assert!(
-            has_error,
-            "the gated service must produce an error after the gate is released"
-        );
-        assert!(
             !is_loading_after,
             "the view model must no longer be loading after the gated load settles"
-        );
-        assert!(
-            matches!(status_after, ContextStatusState::Error(_)),
-            "the status bar must report the error state after the gated failure load settles, got: {status_after:?}"
         );
         assert!(
             error_msg
@@ -1925,34 +1497,29 @@ mod tests {
 
     #[gpui::test]
     fn applying_a_new_demo_context_updates_context_and_clears_old_rows(cx: &mut TestAppContext) {
-        let (shell, cx) = cx.add_window_view(|_, cx| AppShell::new_demo(cx));
-        shell.update(cx, |shell, cx| {
+        let (shell, cx) = add_rooted_shell(cx, |window, cx| AppShell::new_demo(window, cx));
+        wait_for_row(cx, "table.row.us-east-1:i-scenario-001");
+
+        shell.update_in(cx, |shell, window, cx| {
             shell.apply_context(
                 WorkspaceContext {
                     profile: "scenario-default".into(),
                     region: "us-west-2".into(),
                 },
+                window,
                 cx,
             );
         });
 
-        wait_until(cx, "startup load to settle", |cx| {
-            cx.debug_bounds("ec2.instance.row.us-east-1:i-scenario-001")
-                .is_some()
+        wait_until(cx, "the new context load to settle", |cx| {
+            shell.read_with(cx, |shell, cx| {
+                !shell.fleet.read(cx).view_model.is_loading()
+            })
         });
         shell.read_with(cx, |shell, cx| {
             assert_eq!(shell.context.region, "us-west-2");
             assert_eq!(shell.status_bar.read(cx).region, "us-west-2");
-            assert!(
-                shell
-                    .ec2_tab
-                    .read(cx)
-                    .list
-                    .read(cx)
-                    .view_model
-                    .instances()
-                    .is_empty()
-            );
+            assert!(shell.fleet.read(cx).view_model.instances().is_empty());
         });
     }
 }
