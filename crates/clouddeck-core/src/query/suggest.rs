@@ -187,6 +187,7 @@ fn tag_items(
     match seg.split_once('=') {
         None => known_tag_keys
             .iter()
+            .filter(|key| !key.contains(char::is_whitespace))
             .filter(|key| starts_with_ignore_case(key, seg))
             .take(MAX_VALUE_ITEMS)
             .map(|key| Suggestion {
@@ -240,12 +241,20 @@ fn tag_value_items(
         .take(MAX_VALUE_ITEMS)
         .map(|(value, count)| Suggestion {
             label: format!("{label_prefix}{value}"),
-            insert: format!("{insert_prefix}{value}"),
+            insert: format!("{insert_prefix}{}", quote_if_spaced(&value)),
             hint: None,
             count: Some(count),
             kind: SuggestionKind::Value,
         })
         .collect()
+}
+
+fn quote_if_spaced(value: &str) -> String {
+    if value.contains(char::is_whitespace) {
+        format!("\"{value}\"")
+    } else {
+        value.to_string()
+    }
 }
 
 fn tag_value_counts(instances: &[EC2Instance], key: &str) -> BTreeMap<String, usize> {
@@ -404,6 +413,7 @@ fn field_hint(field: QueryField) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::EC2InstanceTag;
     use crate::query::fixtures::fleet;
     use crate::query::known_tag_keys;
 
@@ -855,6 +865,77 @@ mod tests {
         assert_eq!(
             apply_suggestion("state:r", &s, 0).as_deref(),
             Some("state:running ")
+        );
+    }
+
+    fn spaced_fleet() -> Vec<EC2Instance> {
+        let base = fleet()[0].clone();
+        [
+            vec![("Team", "Data Platform")],
+            vec![("Team", "search")],
+            vec![("Cost Center", "cc-1")],
+        ]
+        .into_iter()
+        .map(|tags| {
+            let mut instance = base.clone();
+            instance.tags = tags
+                .into_iter()
+                .map(|(key, value)| EC2InstanceTag {
+                    key: key.to_string(),
+                    value: value.to_string(),
+                })
+                .collect();
+            instance
+        })
+        .collect()
+    }
+
+    #[test]
+    fn tag_key_with_whitespace_is_not_suggested() {
+        let instances = spaced_fleet();
+        let s = suggest("tag:", &instances, &known_tag_keys(&instances));
+        assert_eq!(
+            s.items.iter().map(|i| i.label.as_str()).collect::<Vec<_>>(),
+            ["Team"]
+        );
+    }
+
+    #[test]
+    fn tag_value_with_whitespace_is_quoted_in_insert() {
+        let instances = spaced_fleet();
+        let s = suggest("tag:team=", &instances, &known_tag_keys(&instances));
+        assert_eq!(
+            s.items
+                .iter()
+                .map(|i| (i.label.as_str(), i.insert.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                ("Team=Data Platform", "tag:Team=\"Data Platform\""),
+                ("Team=search", "tag:Team=search"),
+            ]
+        );
+    }
+
+    #[test]
+    fn shorthand_value_with_whitespace_is_quoted_in_insert() {
+        let instances = spaced_fleet();
+        let s = suggest("team:d", &instances, &known_tag_keys(&instances));
+        assert_eq!(
+            s.items
+                .iter()
+                .map(|i| (i.label.as_str(), i.insert.as_str()))
+                .collect::<Vec<_>>(),
+            [("Data Platform", "team:\"Data Platform\"")]
+        );
+    }
+
+    #[test]
+    fn apply_quoted_tag_value_adds_trailing_space() {
+        let instances = spaced_fleet();
+        let s = suggest("tag:team=d", &instances, &known_tag_keys(&instances));
+        assert_eq!(
+            apply_suggestion("tag:team=d", &s, 0).as_deref(),
+            Some("tag:Team=\"Data Platform\" ")
         );
     }
 }
