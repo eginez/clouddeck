@@ -506,7 +506,7 @@ impl MainWindow {
             .map(|failure| RegionFailure {
                 region: failure.region.clone(),
                 message: failure.message.clone(),
-                error: CloudDeckError::Unknown(failure.message.clone()),
+                error: failure.error.clone(),
                 stale_instances: stale_count(instances, &failure.region),
                 retry_in_seconds: None,
             })
@@ -1408,6 +1408,7 @@ mod tests {
             main.failures = vec![ComputeServicePartialFailure {
                 region: "eu-central-1".to_string(),
                 message: "throttled".to_string(),
+                error: CloudDeckError::Throttled,
             }];
             cx.notify();
         });
@@ -1416,6 +1417,29 @@ mod tests {
         click_center_of("bar.failure", cx);
 
         assert_eq!(rendered_overlay(&main, cx), Some("main.overlay.failure"));
+    }
+
+    #[gpui::test]
+    fn region_failures_keep_the_typed_error(cx: &mut TestAppContext) {
+        let (_fleet, main, cx) = rooted_main_window(cx, three_instances(), 1280.0, 760.0);
+        main.update(cx, |main, cx| {
+            main.failures = vec![ComputeServicePartialFailure {
+                region: "eu-central-1".to_string(),
+                message: "throttled".to_string(),
+                error: CloudDeckError::Throttled,
+            }];
+            cx.notify();
+        });
+        cx.run_until_parked();
+
+        let errors = main.read_with(cx, |main, cx| {
+            main.region_failures(cx)
+                .into_iter()
+                .map(|failure| failure.error)
+                .collect::<Vec<_>>()
+        });
+
+        assert_eq!(errors, vec![CloudDeckError::Throttled]);
     }
 
     #[gpui::test]

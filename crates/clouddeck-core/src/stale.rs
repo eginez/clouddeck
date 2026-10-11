@@ -70,6 +70,7 @@ pub fn stale_count(instances: &[EC2Instance], region: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::CloudDeckError;
     use crate::models::ComputeServicePartialFailure;
 
     fn instance(region: &str, instance_id: &str) -> EC2Instance {
@@ -100,6 +101,7 @@ mod tests {
         ComputeServicePartialFailure {
             region: region.to_string(),
             message: "request failed".to_string(),
+            error: CloudDeckError::Unknown("request failed".to_string()),
         }
     }
 

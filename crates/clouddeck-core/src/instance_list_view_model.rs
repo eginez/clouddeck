@@ -829,6 +829,7 @@ mod tests {
         vm.partial_failures = vec![ComputeServicePartialFailure {
             region: "us-west-2".to_string(),
             message: "boom".to_string(),
+            error: CloudDeckError::Unknown("boom".to_string()),
         }];
         assert_eq!(
             vm.partial_failure_summary(),
@@ -839,10 +840,12 @@ mod tests {
             ComputeServicePartialFailure {
                 region: "us-west-2".to_string(),
                 message: "boom".to_string(),
+                error: CloudDeckError::Unknown("boom".to_string()),
             },
             ComputeServicePartialFailure {
                 region: "eu-west-1".to_string(),
                 message: "boom".to_string(),
+                error: CloudDeckError::Unknown("boom".to_string()),
             },
         ];
         assert_eq!(
@@ -895,6 +898,7 @@ mod tests {
                 .map(|region| ComputeServicePartialFailure {
                     region: region.to_string(),
                     message: "request failed".to_string(),
+                    error: CloudDeckError::Unknown("request failed".to_string()),
                 })
                 .collect(),
         })

@@ -193,30 +193,14 @@ fn validate_context(profile: &str, region: &str) -> std::io::Result<()> {
 }
 
 fn aws_request_error(operation: &str, code: Option<&str>, detail: &str) -> BoxError {
-    let classification = CloudDeckError::from_aws_error_code(code, detail);
-    let message = match classification {
-        CloudDeckError::Permission => {
-            format!(
-                "{operation} was denied. Verify the selected profile has ec2:DescribeInstances permission."
-            )
-        }
-        CloudDeckError::Auth => {
-            format!(
-                "{operation} could not authenticate. Sign in to the selected AWS profile, then retry."
-            )
-        }
-        CloudDeckError::Throttled => {
-            format!("{operation} was throttled. Retry after a short delay.")
-        }
-        CloudDeckError::Timeout => format!("{operation} timed out. Retry the request."),
-        CloudDeckError::Network => format!("{operation} could not reach AWS. Check connectivity."),
-        CloudDeckError::NotFound => format!("{operation} could not find the requested resource."),
-        CloudDeckError::Unknown(_) => format!(
+    match CloudDeckError::from_aws_error_code(code, detail) {
+        CloudDeckError::Unknown(_) => std::io::Error::other(format!(
             "{operation} failed{}.",
             code.map_or(String::new(), |code| format!(" ({code})"))
-        ),
-    };
-    std::io::Error::other(message).into()
+        ))
+        .into(),
+        classified => Box::new(classified),
+    }
 }
 
 fn map_instance(instance: &aws_sdk_ec2::types::Instance, region: &str) -> Option<EC2Instance> {
@@ -324,6 +308,25 @@ mod tests {
             private_dns_name: None,
             public_dns_name: None,
         }
+    }
+
+    #[test]
+    fn request_errors_keep_their_typed_classification() {
+        let not_found = aws_request_error("EC2 DescribeInstances", Some("InstanceNotFound"), "");
+        assert_eq!(
+            not_found.downcast_ref::<CloudDeckError>(),
+            Some(&CloudDeckError::NotFound)
+        );
+
+        let network = aws_request_error(
+            "EC2 DescribeInstances",
+            None,
+            "dispatch failure: connection refused",
+        );
+        assert_eq!(
+            network.downcast_ref::<CloudDeckError>(),
+            Some(&CloudDeckError::Network)
+        );
     }
 
     #[tokio::test]

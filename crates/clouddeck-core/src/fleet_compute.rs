@@ -127,10 +127,14 @@ impl ComputeService for FleetComputeService {
                     partial_failures.extend(result.partial_failures);
                 }
                 Err(error) => {
-                    let cloud_deck_error = CloudDeckError::from_service_error(error.as_ref());
+                    let cloud_deck_error = error
+                        .downcast_ref::<CloudDeckError>()
+                        .cloned()
+                        .unwrap_or_else(|| CloudDeckError::from_service_error(error.as_ref()));
                     partial_failures.push(ComputeServicePartialFailure {
                         region: region.clone(),
                         message: cloud_deck_error.user_message(),
+                        error: cloud_deck_error,
                     });
                 }
             }
@@ -296,6 +300,40 @@ mod tests {
         assert_eq!(result.partial_failures.len(), 1);
         assert_eq!(result.partial_failures[0].region, "us-west-2");
         assert_eq!(result.partial_failures[0].message, "us-west-2 boom");
+    }
+
+    struct ThrottledService;
+
+    #[async_trait::async_trait]
+    impl ComputeService for ThrottledService {
+        async fn list_instances(
+            &self,
+            _filters: Option<ComputeInstanceFilters>,
+        ) -> Result<ComputeInstanceLoadResult, BoxError> {
+            Err(Box::new(CloudDeckError::Throttled))
+        }
+    }
+
+    #[tokio::test]
+    async fn partial_failure_keeps_classified_error() {
+        let service = FleetComputeService::new(
+            vec!["us-east-1".to_string(), "us-west-2".to_string()],
+            |region: &str| -> Box<dyn ComputeService + Send + Sync> {
+                if region == "us-west-2" {
+                    Box::new(ThrottledService)
+                } else {
+                    Box::new(MockComputeService::new(vec![instance("i-1")], None))
+                }
+            },
+        );
+
+        let result = service.list_instances(None).await.unwrap();
+        assert_eq!(result.partial_failures.len(), 1);
+        assert_eq!(result.partial_failures[0].error, CloudDeckError::Throttled);
+        assert_eq!(
+            result.partial_failures[0].message,
+            CloudDeckError::Throttled.user_message()
+        );
     }
 
     #[tokio::test]

@@ -1,5 +1,7 @@
 use std::time::{Duration, SystemTime};
 
+use crate::error::CloudDeckError;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct EC2InstanceTag {
     pub key: String,
@@ -195,6 +197,7 @@ impl ComputeInstanceFilters {
 pub struct ComputeServicePartialFailure {
     pub region: String,
     pub message: String,
+    pub error: CloudDeckError,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
