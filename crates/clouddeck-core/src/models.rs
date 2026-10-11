@@ -33,8 +33,8 @@ pub struct EC2Instance {
     pub key_name: Option<String>,
     /// Architecture from describe-instances.
     pub architecture: Option<String>,
-    /// StateTransitionReason ("code message"), why the instance is in its
-    /// state (e.g. stopped).
+    /// StateTransitionReason from describe-instances, e.g.
+    /// "User initiated (2026-10-03 09:12:15 GMT)". None when EC2 returns no reason or it is blank.
     pub state_transition_reason: Option<String>,
     /// IamInstanceProfile.Arn from describe-instances.
     pub iam_instance_profile_arn: Option<String>,
