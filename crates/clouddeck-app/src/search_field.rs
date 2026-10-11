@@ -8,8 +8,9 @@ use clouddeck_core::{
     TermKind, apply_suggestion, compile, known_tag_keys, push_recent, suggest,
 };
 use gpui::{
-    App, ClickEvent, Context, Entity, Focusable, Font, Hsla, IntoElement, KeyBinding, Render,
-    SharedString, StyledText, TextRun, UnderlineStyle, Window, actions, div, prelude::*, px, rems,
+    AnyWindowHandle, App, ClickEvent, Context, Entity, Focusable, Font, Global, Hsla, IntoElement,
+    KeyBinding, Render, SharedString, StyledText, TextRun, UnderlineStyle, WeakEntity, Window,
+    actions, div, prelude::*, px, rems,
 };
 use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::{Sizable, Size};
@@ -341,6 +342,16 @@ fn suggestions_for(state: &FleetState) -> Suggestions {
     suggest(state.query(), instances, &known_tag_keys(instances))
 }
 
+struct FocusSearchTarget {
+    window: AnyWindowHandle,
+    input: WeakEntity<InputState>,
+}
+
+#[derive(Default)]
+struct FocusSearchTargets(Vec<FocusSearchTarget>);
+
+impl Global for FocusSearchTargets {}
+
 pub struct SearchField {
     state: Entity<FleetState>,
     pub input: Entity<InputState>,
@@ -380,16 +391,38 @@ impl SearchField {
         })
         .detach();
 
-        let window_handle = window.window_handle();
-        let input_weak = input.downgrade();
-        App::on_action(cx, move |_: &FocusSearch, cx| {
-            let input_weak = input_weak.clone();
-            cx.defer(move |cx| {
-                let _ = window_handle.update(cx, |_, window, cx| {
-                    let _ = input_weak.update(cx, |input, cx| input.focus(window, cx));
+        let first_search_field = !cx.has_global::<FocusSearchTargets>();
+        let targets = cx.default_global::<FocusSearchTargets>();
+        targets.0.retain(|target| target.input.upgrade().is_some());
+        targets.0.push(FocusSearchTarget {
+            window: window.window_handle(),
+            input: input.downgrade(),
+        });
+        if first_search_field {
+            App::on_action(cx, |_: &FocusSearch, cx| {
+                let candidates: Vec<_> = cx
+                    .global::<FocusSearchTargets>()
+                    .0
+                    .iter()
+                    .rev()
+                    .map(|target| (target.window, target.input.clone()))
+                    .collect();
+                cx.defer(move |cx| {
+                    for (window_handle, input_weak) in candidates {
+                        let focused = window_handle
+                            .update(cx, |_, window, cx| {
+                                input_weak
+                                    .update(cx, |input, cx| input.focus(window, cx))
+                                    .is_ok()
+                            })
+                            .unwrap_or(false);
+                        if focused {
+                            break;
+                        }
+                    }
                 });
             });
-        });
+        }
 
         Self {
             state,
@@ -761,6 +794,29 @@ mod tests {
 
         assert!(cx.debug_bounds("search.field").is_some());
         assert!(cx.debug_bounds("search.hint").is_none());
+    }
+
+    #[gpui::test]
+    fn focus_search_falls_back_to_an_open_window_when_the_newest_is_closed(
+        cx: &mut TestAppContext,
+    ) {
+        let (state, search, cx) = rooted_search(cx, false);
+        let (_root, newer) = cx.add_window_view(move |window, cx| {
+            let search = cx.new(|cx| SearchField::new(state.clone(), window, cx));
+            gpui_component::Root::new(search, window, cx)
+        });
+        newer.update(|window, _| window.remove_window());
+        newer.run_until_parked();
+
+        cx.dispatch_action(FocusSearch);
+        cx.run_until_parked();
+
+        let input = search.read_with(cx, |search, _| search.input.clone());
+        let focused = cx.update(|window, cx| input.read(cx).focus_handle(cx).is_focused(window));
+        assert!(
+            focused,
+            "FocusSearch should focus the open window's search field"
+        );
     }
 
     #[gpui::test]
