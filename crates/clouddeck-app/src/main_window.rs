@@ -1647,7 +1647,7 @@ mod tests {
         cx.update(|window, cx| apply_appearance(Theme::Light, window, cx));
         assert_eq!(
             cx.update(|_, cx| crate::tokens::palette(cx)),
-            Palette::light()
+            Palette::for_dark(false)
         );
         assert!(!cx.update(|_, cx| gpui_component::Theme::global(cx).is_dark()));
     }
