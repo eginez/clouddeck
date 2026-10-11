@@ -632,10 +632,7 @@ impl SettingsWindow {
         edit: impl FnOnce(&mut UiState),
         cx: &mut Context<Self>,
     ) -> bool {
-        let path = ui_state_path();
-        let mut state = UiState::load(&path);
-        edit(&mut state);
-        match state.save(&path) {
+        match edit_ui_state_file(&ui_state_path(), edit) {
             Ok(()) => {
                 self.show_note(note, None, cx);
                 true
@@ -1280,6 +1277,12 @@ pub fn open_settings_window(cx: &mut App, settings: Settings) -> Option<WindowHa
     Some(handle)
 }
 
+fn edit_ui_state_file(path: &Path, edit: impl FnOnce(&mut UiState)) -> std::io::Result<()> {
+    let mut state = UiState::try_load(path)?;
+    edit(&mut state);
+    state.save(path)
+}
+
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
@@ -1681,5 +1684,25 @@ mod tests {
             vec![0..7, 18..25]
         );
         assert!(match_ranges("Theme", "   ").is_empty());
+    }
+
+    #[test]
+    fn edit_ui_state_file_creates_missing_file() {
+        let path = temp_settings_path().with_file_name("ui-state.json");
+        edit_ui_state_file(&path, |state| state.sidebar_open = false).unwrap();
+        assert!(!UiState::load(&path).sidebar_open);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn edit_ui_state_file_leaves_corrupt_file_untouched() {
+        let path = temp_settings_path().with_file_name("ui-state.json");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, b"{not json").unwrap();
+        let mut called = false;
+        assert!(edit_ui_state_file(&path, |_| called = true).is_err());
+        assert!(!called);
+        assert_eq!(std::fs::read(&path).unwrap(), b"{not json");
+        let _ = std::fs::remove_file(path);
     }
 }

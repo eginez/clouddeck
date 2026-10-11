@@ -102,12 +102,20 @@ impl UiState {
         }
     }
 
+    /// Loads the saved state; a missing file yields defaults, other failures are errors.
+    pub fn try_load(path: &Path) -> std::io::Result<Self> {
+        match std::fs::read(path) {
+            Ok(bytes) => serde_json::from_slice::<Self>(&bytes)
+                .map(Self::normalized)
+                .map_err(std::io::Error::other),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
+            Err(error) => Err(error),
+        }
+    }
+
     /// Loads the saved state, falling back to defaults when the file is missing or invalid.
     pub fn load(path: &Path) -> Self {
-        std::fs::read(path)
-            .ok()
-            .and_then(|bytes| serde_json::from_slice::<Self>(&bytes).ok())
-            .map_or_else(Self::default, Self::normalized)
+        Self::try_load(path).unwrap_or_default()
     }
 
     /// Writes the state atomically by replacing the file through a temporary sibling.
@@ -233,6 +241,28 @@ mod tests {
         let path = temp_path("invalid");
         std::fs::write(&path, b"not json").unwrap();
         assert_eq!(UiState::load(&path), UiState::default());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn try_load_missing_file_returns_default() {
+        let path = temp_path("try-missing");
+        assert_eq!(UiState::try_load(&path).unwrap(), UiState::default());
+    }
+
+    #[test]
+    fn try_load_unreadable_path_is_an_error() {
+        let path = temp_path("try-unreadable");
+        std::fs::create_dir_all(&path).unwrap();
+        assert!(UiState::try_load(&path).is_err());
+        let _ = std::fs::remove_dir(path);
+    }
+
+    #[test]
+    fn try_load_invalid_json_is_an_error() {
+        let path = temp_path("try-invalid");
+        std::fs::write(&path, b"not json").unwrap();
+        assert!(UiState::try_load(&path).is_err());
         let _ = std::fs::remove_file(path);
     }
 
