@@ -42,6 +42,8 @@ const CATEGORY_ICONS: [AppIcon; 8] = [
 #[derive(Debug, Clone, PartialEq)]
 pub enum SettingsEvent {
     Changed(Settings),
+    RecentSearchesCleared,
+    RememberedScopeForgotten,
 }
 
 pub struct SettingsWindow {
@@ -623,13 +625,19 @@ impl SettingsWindow {
         note: &'static str,
         edit: impl FnOnce(&mut UiState),
         cx: &mut Context<Self>,
-    ) {
+    ) -> bool {
         let path = ui_state_path();
         let mut state = UiState::load(&path);
         edit(&mut state);
         match state.save(&path) {
-            Ok(()) => self.show_note(note, None, cx),
-            Err(error) => self.show_note(format!("Could not save: {error}"), None, cx),
+            Ok(()) => {
+                self.show_note(note, None, cx);
+                true
+            }
+            Err(error) => {
+                self.show_note(format!("Could not save: {error}"), None, cx);
+                false
+            }
         }
     }
 
@@ -914,21 +922,25 @@ impl SettingsWindow {
                     .child(
                         button("settings-clear-searches", "Clear recent searches", palette)
                             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                                this.edit_ui_state(
+                                if this.edit_ui_state(
                                     "Recent searches cleared",
                                     |state| state.recent_searches.clear(),
                                     cx,
-                                );
+                                ) {
+                                    cx.emit(SettingsEvent::RecentSearchesCleared);
+                                }
                             })),
                     )
                     .child(
                         button("settings-forget-scope", "Forget remembered scope", palette)
                             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                                this.edit_ui_state(
+                                if this.edit_ui_state(
                                     "Remembered scope forgotten",
                                     |state| state.selected_regions.clear(),
                                     cx,
-                                );
+                                ) {
+                                    cx.emit(SettingsEvent::RememberedScopeForgotten);
+                                }
                             })),
                     ),
             )

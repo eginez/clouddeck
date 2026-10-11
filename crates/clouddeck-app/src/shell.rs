@@ -44,6 +44,7 @@ pub struct AppShell {
     quit_observer: Subscription,
     settings_subscription: Option<Subscription>,
     applied_scope: RegionScope,
+    remembered_scope: Vec<String>,
     /// Test-only: an optional compute service injected into `apply_context`
     /// so that a test can deterministically hold a picker-driven context
     /// switch load open (via `GatedComputeService`) and observe the
@@ -436,6 +437,7 @@ impl AppShell {
                 region: p.region.clone(),
             })
             .collect();
+        let remembered_scope = Self::remembered_regions(&scope, &available);
         let applied_scope = scope.clone();
         let main_window = Self::new_main_window(
             fleet.clone(),
@@ -476,6 +478,7 @@ impl AppShell {
             quit_observer,
             settings_subscription: None,
             applied_scope,
+            remembered_scope,
             wizard: None,
             #[cfg(test)]
             test_service_override: None,
@@ -514,15 +517,42 @@ impl AppShell {
         }
     }
 
+    fn remembered_regions(scope: &RegionScope, available: &[String]) -> Vec<String> {
+        if scope.is_all(available) {
+            Vec::new()
+        } else {
+            scope.selected().to_vec()
+        }
+    }
+
+    fn handle_settings_event(&mut self, event: &SettingsEvent, cx: &mut Context<Self>) {
+        match event {
+            SettingsEvent::Changed(settings) => {
+                let main_window = self.main_window.clone();
+                let _ = self.window_handle.update(cx, |_, window, cx| {
+                    main_window.update(cx, |main_window, cx| {
+                        main_window.apply_settings(settings, window, cx)
+                    })
+                });
+            }
+            SettingsEvent::RecentSearchesCleared => {
+                self.ui_state_saved.recent_searches.clear();
+                self.fleet.update(cx, |fleet, cx| {
+                    fleet.recent_searches.clear();
+                    cx.notify();
+                });
+            }
+            SettingsEvent::RememberedScopeForgotten => {
+                self.ui_state_saved.selected_regions.clear();
+                self.remembered_scope.clear();
+            }
+        }
+    }
+
     fn ui_state_snapshot(&self, cx: &App) -> UiState {
         let fleet = self.fleet.read(cx);
-        let available = Self::available_regions(self.demo, self.demo_scenario);
         UiState {
-            selected_regions: if self.applied_scope.is_all(&available) {
-                Vec::new()
-            } else {
-                self.applied_scope.selected().to_vec()
-            },
+            selected_regions: self.remembered_scope.clone(),
             pinned_searches: fleet.pinned_searches.clone(),
             recent_searches: fleet.recent_searches.clone(),
             recent_instances: fleet.recent_instances.clone(),
@@ -612,16 +642,9 @@ impl AppShell {
         }) else {
             return;
         };
-        let main_window = self.main_window.clone();
-        let window_handle = self.window_handle;
         self.settings_subscription =
-            Some(cx.subscribe(&view, move |_, _, event: &SettingsEvent, cx| {
-                let SettingsEvent::Changed(settings) = event;
-                let _ = window_handle.update(cx, |_, window, cx| {
-                    main_window.update(cx, |main_window, cx| {
-                        main_window.apply_settings(settings, window, cx)
-                    })
-                });
+            Some(cx.subscribe(&view, |this, _, event: &SettingsEvent, cx| {
+                this.handle_settings_event(event, cx)
             }));
     }
 
@@ -639,6 +662,9 @@ impl AppShell {
         let available = Self::available_regions(self.demo, self.demo_scenario);
         let scope = Self::scope_for_region(&self.context.region, scope, &available);
         let fleet_regions = Self::fleet_regions(&scope, &available);
+        if scope != self.applied_scope {
+            self.remembered_scope = Self::remembered_regions(&scope, &available);
+        }
         self.applied_scope = scope.clone();
         #[cfg(test)]
         let service: Box<dyn ComputeService + Send + Sync> = self
@@ -1399,6 +1425,62 @@ mod tests {
         cx.cx.update(|cx| cx.shutdown());
 
         assert_eq!(UiState::load(&path).sidebar_open, sidebar_open);
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
+    #[gpui::test]
+    fn settings_clears_are_not_written_back_by_the_next_save(cx: &mut TestAppContext) {
+        let path = temp_ui_state_path("settings-clears");
+        UiState {
+            selected_regions: vec!["us-east-1".into(), "eu-west-1".into()],
+            recent_searches: vec!["owner:esteban".into()],
+            ..UiState::default()
+        }
+        .save(&path)
+        .unwrap();
+        let build_path = path.clone();
+        let (shell, cx) = add_rooted_shell(cx, move |window, cx| {
+            AppShell::build(window, true, DemoScenario::Partial, Some(build_path), cx)
+        });
+
+        let mut on_disk = UiState::load(&path);
+        on_disk.recent_searches.clear();
+        on_disk.selected_regions.clear();
+        on_disk.save(&path).unwrap();
+        shell.update(cx, |shell, cx| {
+            shell.handle_settings_event(&SettingsEvent::RecentSearchesCleared, cx);
+            shell.handle_settings_event(&SettingsEvent::RememberedScopeForgotten, cx);
+            shell.fleet.update(cx, |fleet, cx| {
+                fleet.sidebar_open = !fleet.sidebar_open;
+                cx.notify();
+            });
+            shell.save_ui_state(cx);
+        });
+
+        let saved = UiState::load(&path);
+        assert!(saved.recent_searches.is_empty());
+        assert!(saved.selected_regions.is_empty());
+        shell.read_with(cx, |shell, cx| {
+            assert!(shell.fleet.read(cx).recent_searches.is_empty());
+            assert_eq!(
+                shell.main_window.read(cx).scope.selected(),
+                ["us-east-1".to_string(), "eu-west-1".to_string()]
+            );
+        });
+
+        shell.update(cx, |shell, cx| {
+            shell.fleet.update(cx, |fleet, cx| {
+                fleet.recent_searches = vec!["owner:esteban".into()];
+                cx.notify();
+            });
+            shell.save_ui_state(cx);
+        });
+        assert_eq!(
+            UiState::load(&path).recent_searches,
+            vec!["owner:esteban".to_string()]
+        );
         if let Some(dir) = path.parent() {
             let _ = std::fs::remove_dir_all(dir);
         }
