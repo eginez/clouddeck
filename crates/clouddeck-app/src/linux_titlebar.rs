@@ -1,14 +1,20 @@
 //! Linux client-side titlebar and in-window app menu.
 
 use gpui::{
-    App, ClickEvent, Context, IntoElement, MenuItem, Render, RenderOnce, Window, deferred, div,
-    prelude::*, px,
+    App, ClickEvent, Context, FocusHandle, IntoElement, KeyBinding, MenuItem, MouseButton,
+    MouseDownEvent, Render, RenderOnce, Window, actions, deferred, div, prelude::*, px,
 };
 use gpui_component::Sizable;
 
 use crate::app_menus::app_menus;
 use crate::icons::AppIcon;
 use crate::tokens::{FONT_SIZE, Palette};
+
+actions!(linux_titlebar, [CloseAppMenu]);
+
+pub fn key_bindings() -> [KeyBinding; 1] {
+    [KeyBinding::new("escape", CloseAppMenu, Some("AppMenu"))]
+}
 
 const CONTROL_SIZE: f32 = 28.0;
 const CONTROL_GLYPH_SIZE: f32 = 13.0;
@@ -61,11 +67,33 @@ fn window_control(
 #[derive(Default)]
 pub struct AppMenuButton {
     open: bool,
+    focus: Option<FocusHandle>,
+    return_focus: Option<FocusHandle>,
+}
+
+impl AppMenuButton {
+    fn show(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.open = true;
+        self.return_focus = window.focused(cx);
+        window.prevent_default();
+        let focus = self.focus.get_or_insert_with(|| cx.focus_handle()).clone();
+        focus.focus(window);
+        cx.notify();
+    }
+
+    fn dismiss(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.open = false;
+        if let Some(focus) = self.return_focus.take() {
+            focus.focus(window);
+        }
+        cx.notify();
+    }
 }
 
 impl Render for AppMenuButton {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = crate::tokens::palette(cx);
+        let was_open = self.open;
         let trigger = div()
             .id("linux.menu")
             .debug_selector(|| "linux.menu".into())
@@ -76,20 +104,42 @@ impl Render for AppMenuButton {
             .h(px(CONTROL_SIZE))
             .rounded(px(BUTTON_RADIUS))
             .hover(|button| button.bg(palette.hover))
-            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                this.open = !this.open;
-                cx.notify();
-            }))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _: &MouseDownEvent, window, cx| {
+                    // The panel's click-away handler has already run for this press,
+                    // so decide from the state at render time rather than this.open.
+                    if was_open {
+                        this.dismiss(window, cx);
+                    } else {
+                        this.show(window, cx);
+                    }
+                }),
+            )
             .child(AppIcon::Ellipsis.icon().small().text_color(palette.dim));
 
         div().relative().child(trigger).when(self.open, |root| {
-            root.child(deferred(dropdown(&palette, cx)))
+            root.when_some(self.focus.clone(), |root, focus| {
+                root.child(deferred(dropdown(&palette, &focus, cx)))
+            })
         })
     }
 }
 
-fn dropdown(palette: &Palette, cx: &Context<AppMenuButton>) -> impl IntoElement {
+fn dropdown(
+    palette: &Palette,
+    focus: &FocusHandle,
+    cx: &Context<AppMenuButton>,
+) -> impl IntoElement {
     let mut panel = div()
+        .key_context("AppMenu")
+        .track_focus(focus)
+        .on_action(cx.listener(|this, _: &CloseAppMenu, window, cx| {
+            this.dismiss(window, cx);
+        }))
+        .on_mouse_down_out(cx.listener(|this, _: &MouseDownEvent, window, cx| {
+            this.dismiss(window, cx);
+        }))
         .absolute()
         .top(px(CONTROL_SIZE + 4.0))
         .left(px(0.0))
@@ -129,9 +179,8 @@ fn dropdown(palette: &Palette, cx: &Context<AppMenuButton>) -> impl IntoElement 
                             .h(px(26.0))
                             .hover(|row| row.bg(palette.hover))
                             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                                this.open = false;
+                                this.dismiss(window, cx);
                                 window.dispatch_action(action.boxed_clone(), cx);
-                                cx.notify();
                             }))
                             .child(name),
                     );
@@ -146,4 +195,97 @@ fn dropdown(palette: &Palette, cx: &Context<AppMenuButton>) -> impl IntoElement 
         }
     }
     panel
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{Entity, KeyBinding, Point, TestAppContext, VisualTestContext, point};
+
+    actions!(linux_titlebar_tests, [HostEscape]);
+
+    struct Host {
+        menu: Entity<AppMenuButton>,
+        host_escapes: usize,
+    }
+
+    impl Render for Host {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .key_context("TestHost")
+                .on_action(cx.listener(|this, _: &HostEscape, _, _| this.host_escapes += 1))
+                .child(self.menu.clone())
+        }
+    }
+
+    fn open_button(cx: &mut TestAppContext) -> (Entity<AppMenuButton>, &mut VisualTestContext) {
+        cx.update(|cx| cx.bind_keys(key_bindings()));
+        cx.add_window_view(|_, _| AppMenuButton::default())
+    }
+
+    fn is_open(view: &Entity<AppMenuButton>, cx: &mut VisualTestContext) -> bool {
+        view.read_with(cx, |menu, _| menu.open)
+    }
+
+    fn click_trigger(cx: &mut VisualTestContext) {
+        let trigger = cx.debug_bounds("linux.menu").expect("trigger renders");
+        cx.simulate_click(trigger.center(), Default::default());
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    fn trigger_click_opens_then_closes_the_menu(cx: &mut TestAppContext) {
+        let (view, cx) = open_button(cx);
+
+        click_trigger(cx);
+        assert!(is_open(&view, cx));
+        assert!(cx.debug_bounds("linux.menu.item.0").is_some());
+
+        click_trigger(cx);
+        assert!(!is_open(&view, cx));
+    }
+
+    #[gpui::test]
+    fn click_outside_the_panel_closes_the_menu(cx: &mut TestAppContext) {
+        let (view, cx) = open_button(cx);
+        click_trigger(cx);
+        assert!(is_open(&view, cx));
+
+        let outside: Point<gpui::Pixels> = point(px(400.0), px(300.0));
+        cx.simulate_click(outside, Default::default());
+        cx.run_until_parked();
+
+        assert!(!is_open(&view, cx));
+    }
+
+    #[gpui::test]
+    fn escape_closes_the_menu(cx: &mut TestAppContext) {
+        let (view, cx) = open_button(cx);
+        click_trigger(cx);
+        assert!(is_open(&view, cx));
+
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+
+        assert!(!is_open(&view, cx));
+    }
+
+    #[gpui::test]
+    fn escape_is_consumed_by_the_menu_before_the_enclosing_context(cx: &mut TestAppContext) {
+        cx.update(|cx| cx.bind_keys([KeyBinding::new("escape", HostEscape, Some("TestHost"))]));
+        cx.update(|cx| cx.bind_keys(key_bindings()));
+        let (host, cx) = cx.add_window_view(|_, cx| Host {
+            menu: cx.new(|_| AppMenuButton::default()),
+            host_escapes: 0,
+        });
+        let menu = host.read_with(cx, |host, _| host.menu.clone());
+        click_trigger(cx);
+        assert!(is_open(&menu, cx));
+
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+
+        assert!(!is_open(&menu, cx));
+        assert_eq!(host.read_with(cx, |host, _| host.host_escapes), 0);
+    }
 }

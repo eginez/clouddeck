@@ -151,6 +151,7 @@ impl MainWindow {
             cx.bind_keys(table_key_bindings());
             cx.bind_keys(search_key_bindings());
             cx.bind_keys([KeyBinding::new("escape", EscapePressed, Some("MainWindow"))]);
+            cx.bind_keys(crate::linux_titlebar::key_bindings());
             cx.set_global(MenusInstalled);
         }
         let focus_handle = cx.focus_handle();
