@@ -33,9 +33,8 @@ use clouddeck_core::{
 /// re-dispatches the same request.
 pub fn drive(wizard: &Entity<AccountWindowView>, cx: &mut App) {
     // Note: `demo_requested` is deliberately left untouched here -- the demo
-    // route isn't this module's concern (see the shell's own wizard
-    // observer, which proxies it into the status bar's already-wired demo
-    // toggle) -- so only the four flags this module actually drives are
+    // route isn't this module's concern (the shell's own wizard observer
+    // handles it) -- so only the four flags this module actually drives are
     // cleared.
     let (connect, sign_in, rescan_requested) = wizard.update(cx, |view, _cx| {
         let flags = (

@@ -1,7 +1,6 @@
 use crate::{
     fleet_state::FleetState,
     main_window::{MainWindow, MainWindowEvent},
-    status_bar::CloudContextStatusBar,
     theme::SurgicalTheme,
 };
 use clouddeck_core::{
@@ -10,8 +9,8 @@ use clouddeck_core::{
     UiState, WindowFrame, WorkspaceContext,
 };
 use gpui::{
-    App, Context, Entity, IntoElement, KeyBinding, ParentElement, Render, Styled, Subscription,
-    Task, Window, actions, div, prelude::*, px,
+    AnyWindowHandle, App, Context, Entity, IntoElement, KeyBinding, ParentElement, Render, Styled,
+    Subscription, Task, Window, actions, div, prelude::*, px,
 };
 use std::{path::PathBuf, time::Duration};
 
@@ -29,7 +28,7 @@ pub fn app_key_bindings() -> [KeyBinding; 2] {
 pub struct AppShell {
     fleet: Entity<FleetState>,
     main_window: Entity<MainWindow>,
-    status_bar: Entity<CloudContextStatusBar>,
+    window_handle: AnyWindowHandle,
     context: WorkspaceContext,
     demo: bool,
     demo_scenario: DemoScenario,
@@ -92,13 +91,9 @@ fn scenario_for(kind: DemoScenario) -> EC2Scenario {
     clouddeck_core::parse_scenario(fixture).expect("bundled demo")
 }
 
-/// True when the shell is running against real AWS credentials (as opposed
-/// to the bundled demo scenario). Public so the fleet view's
-/// no-profiles onboarding affordance can decide whether "Connect to AWS"
-/// and "Rescan profiles" make sense at all (they do not in demo mode,
-/// where the fleet is scenario data). Tests never pass `--demo`, so
-/// `cargo test` runs always see real mode here.
-pub fn is_real_mode() -> bool {
+/// Tests never pass `--demo`, so `cargo test` runs always see real mode here.
+#[cfg(test)]
+fn is_real_mode() -> bool {
     !std::env::args_os().any(|arg| arg == "--demo")
 }
 
@@ -417,53 +412,10 @@ impl AppShell {
             this.schedule_ui_state_save(cx);
         });
         fleet.update(cx, |fleet, cx| fleet.refresh(cx));
-        let status_bar = cx.new(|_| CloudContextStatusBar {
-            provider: if demo {
-                "DEMO · AWS".into()
-            } else {
-                "AWS".into()
-            },
-            profile: (!context.profile.is_empty()).then(|| context.profile.clone()),
-            region: context.region.clone(),
-            profiles: Some(
-                profiles
-                    .into_iter()
-                    .map(|p| crate::quick_picker::AwsProfile {
-                        name: p.name,
-                        hint: p.region.unwrap_or_default(),
-                    })
-                    .collect(),
-            ),
-            regions: Some(Self::regions(demo, demo_scenario)),
-            ..Default::default()
-        });
-        cx.observe_in(&status_bar, window, |this: &mut Self, bar, window, cx| {
-            if bar.read(cx).demo_requested {
-                let demo = !this.demo;
-                let scenario = this.demo_scenario;
-                bar.update(cx, |bar, _| bar.demo_requested = false);
-                this.save_ui_state(cx);
-                *this = Self::build_with_scenario(window, demo, scenario, cx);
-                cx.notify();
-                return;
-            }
-            let next = WorkspaceContext {
-                profile: bar.read(cx).profile.clone().unwrap_or_default(),
-                region: bar.read(cx).region.clone(),
-            };
-            if bar.read(cx).manage_requested {
-                bar.update(cx, |bar, _| bar.manage_requested = false);
-                this.open_setup(cx);
-            }
-            if next != this.context {
-                this.apply_context(next, window, cx);
-            }
-        })
-        .detach();
         Self {
             fleet,
             main_window,
-            status_bar,
+            window_handle: window.window_handle(),
             context,
             demo,
             demo_scenario,
@@ -478,6 +430,14 @@ impl AppShell {
             #[cfg(test)]
             test_service_override: None,
         }
+    }
+
+    pub fn toggle_demo(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let demo = !self.demo;
+        let scenario = self.demo_scenario;
+        self.save_ui_state(cx);
+        *self = Self::build_with_scenario(window, demo, scenario, cx);
+        cx.notify();
     }
 
     fn schedule_ui_state_save(&mut self, cx: &mut Context<Self>) {
@@ -568,18 +528,20 @@ impl AppShell {
             window,
             |this: &mut Self, _, event: &MainWindowEvent, window, cx| match event {
                 MainWindowEvent::PickProfile(name) => {
-                    let name = name.clone();
-                    this.status_bar.update(cx, |bar, cx| {
-                        bar.profile = Some(name);
-                        cx.notify();
-                    });
+                    let next = WorkspaceContext {
+                        profile: name.clone(),
+                        region: this.context.region.clone(),
+                    };
+                    if next != this.context {
+                        this.apply_context(next, window, cx);
+                    }
                 }
                 MainWindowEvent::RegionsChanged(regions) => {
                     let region = match regions.as_slice() {
                         [only] => only.clone(),
                         _ => "fleet".into(),
                     };
-                    let profile = this.status_bar.read(cx).profile.clone().unwrap_or_default();
+                    let profile = this.context.profile.clone();
                     this.apply_context(WorkspaceContext { profile, region }, window, cx);
                 }
                 MainWindowEvent::ConnectToAws => this.open_setup(cx),
@@ -598,10 +560,6 @@ impl AppShell {
         cx: &mut Context<Self>,
     ) {
         self.context = context;
-        self.status_bar.update(cx, |bar, _| {
-            bar.profile = (!self.context.profile.is_empty()).then(|| self.context.profile.clone());
-            bar.region = self.context.region.clone();
-        });
         let (profiles, scope) = {
             let main_window = self.main_window.read(cx);
             (main_window.profiles.clone(), main_window.scope.clone())
@@ -686,20 +644,6 @@ impl AppShell {
                 vec![]
             }
         };
-        let picker_profiles = profiles
-            .iter()
-            .cloned()
-            .map(|profile| crate::quick_picker::AwsProfile {
-                name: profile.name,
-                hint: profile.region.unwrap_or_default(),
-            })
-            .collect();
-        // Re-scan every time setup opens so an `aws configure`/`aws sso login`
-        // performed while CloudDeck is running is reflected immediately.
-        self.status_bar.update(cx, |bar, cx| {
-            bar.profiles = Some(picker_profiles);
-            cx.notify();
-        });
         let profile = self.context.profile.clone();
         let region = self.context.region.clone();
         let mode = if profile.is_empty() {
@@ -709,7 +653,8 @@ impl AppShell {
         };
         let demo = self.demo;
         let demo_scenario = self.demo_scenario;
-        let bar = self.status_bar.clone();
+        let shell = cx.weak_entity();
+        let window_handle = self.window_handle;
         let bounds = gpui::Bounds::centered(None, gpui::size(px(1000.0), px(760.0)), cx);
         let result = cx.open_window(
             gpui::WindowOptions {
@@ -734,19 +679,12 @@ impl AppShell {
                     ..Default::default()
                 });
                 cx.observe(&wizard, move |wizard, cx| {
-                    // "Explore demo fleet" is handled here, not by
-                    // `account_connect::drive`: it doesn't touch AWS at all,
-                    // it just needs to flip the whole shell into demo mode,
-                    // which requires the AppShell entity `drive` doesn't have
-                    // access to. Proxy it into the status bar's own
-                    // `demo_requested` flag, which the AppShell-level
-                    // observer set up in `build_with_scenario` already knows
-                    // how to act on.
+                    // Demo mode rebuilds the whole shell, so it needs the AppShell
+                    // and its window, which `account_connect::drive` does not have.
                     if wizard.read(cx).demo_requested {
                         wizard.update(cx, |view, _cx| view.demo_requested = false);
-                        bar.update(cx, |bar, cx| {
-                            bar.demo_requested = true;
-                            cx.notify();
+                        let _ = window_handle.update(cx, |_, window, cx| {
+                            let _ = shell.update(cx, |shell, cx| shell.toggle_demo(window, cx));
                         });
                         return;
                     }
@@ -757,12 +695,16 @@ impl AppShell {
                     // module rather than inline here.
                     crate::account_connect::drive(&wizard, cx);
                     if wizard.read(cx).finished {
-                        let profile = wizard.read(cx).selected_profile.clone();
-                        let region = wizard.read(cx).selected_region.clone();
-                        bar.update(cx, |bar, cx| {
-                            bar.profile = profile;
-                            bar.region = region;
-                            cx.notify();
+                        let next = WorkspaceContext {
+                            profile: wizard.read(cx).selected_profile.clone().unwrap_or_default(),
+                            region: wizard.read(cx).selected_region.clone(),
+                        };
+                        let _ = window_handle.update(cx, |_, window, cx| {
+                            let _ = shell.update(cx, |shell, cx| {
+                                if next != shell.context {
+                                    shell.apply_context(next, window, cx);
+                                }
+                            });
                         });
                     }
                 })
@@ -983,7 +925,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn renders_main_window_regions_and_not_the_old_status_bar(cx: &mut TestAppContext) {
+    fn renders_main_window_regions(cx: &mut TestAppContext) {
         let (_view, cx) = add_rooted_shell(cx, |window, cx| AppShell::new_demo(window, cx));
         wait_for_row(cx, "table.row.us-east-1:i-scenario-001");
 
@@ -998,10 +940,6 @@ mod tests {
         assert!(
             cx.debug_bounds("main.statusbar").is_some(),
             "the main window status bar should render"
-        );
-        assert!(
-            cx.debug_bounds("statusbar.root").is_none(),
-            "the old CloudContextStatusBar is a hidden bridge and must not render"
         );
     }
 
@@ -1171,7 +1109,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn opening_setup_creates_the_wizard_and_finishing_it_updates_the_status_bar(
+    fn opening_setup_creates_the_wizard_and_finishing_it_updates_the_context(
         cx: &mut TestAppContext,
     ) {
         use crate::account_window::AccountConnectionState;
@@ -1180,9 +1118,8 @@ mod tests {
 
         // The trigger: nothing opens the account-connect window on its own
         // (per clouddeck-rs-w6s.18's design, existing profiles need minimal
-        // interaction), but `open_setup` -- reached from the status bar's
-        // "Set up AWS"/"Manage AWS" chip and the quick picker's "Manage
-        // Accounts..." row -- must actually create a wizard window.
+        // interaction), but `open_setup` -- reached from the main window's
+        // `ConnectToAws` event -- must actually create a wizard window.
         shell.update(cx, |shell, cx| {
             assert!(shell.wizard.is_none(), "no wizard until setup is opened");
             shell.open_setup(cx);
@@ -1198,8 +1135,7 @@ mod tests {
 
         // Drive the wizard to a finished connection the same way a real
         // connect (account_connect::drive) would, then confirm the shell's
-        // observer flows the result back into the live status bar chips --
-        // not `quick_picker::mock_profiles()`/`mock_regions()`.
+        // observer applies the selected profile and region as the context.
         wizard.update(cx, |wizard, cx| {
             wizard.selected_profile = Some("scenario-default".into());
             wizard.selected_region = "us-west-2".into();
@@ -1210,13 +1146,12 @@ mod tests {
             cx.notify();
         });
 
-        shell.read_with(cx, |shell, cx| {
+        shell.read_with(cx, |shell, _| {
             assert_eq!(
-                shell.status_bar.read(cx).profile.as_deref(),
-                Some("scenario-default"),
-                "finishing the wizard should flow its selected profile into the status bar"
+                shell.context.profile, "scenario-default",
+                "finishing the wizard should apply its selected profile to the context"
             );
-            assert_eq!(shell.status_bar.read(cx).region, "us-west-2");
+            assert_eq!(shell.context.region, "us-west-2");
         });
     }
 
@@ -1407,12 +1342,9 @@ mod tests {
     // action (`demo_requested`) was read and cleared by
     // `account_connect::drive` -- which never acts on it -- every render
     // cycle, so the button was a silent no-op. The wizard's observer must
-    // intercept `demo_requested` itself and proxy it into the status bar's
-    // own `demo_requested` flag, which `build_with_scenario`'s
-    // shell-level observer already knows how to turn into a demo-mode
-    // rebuild.
+    // intercept `demo_requested` itself and flip the shell's demo mode.
     #[gpui::test]
-    fn wizard_demo_request_proxies_into_the_status_bars_demo_toggle(cx: &mut TestAppContext) {
+    fn wizard_demo_request_toggles_the_shell_demo_mode(cx: &mut TestAppContext) {
         let (shell, cx) = add_rooted_shell(cx, |window, cx| AppShell::new_demo(window, cx));
 
         shell.update(cx, |shell, cx| shell.open_setup(cx));
@@ -1506,8 +1438,8 @@ mod tests {
     }
 
     /// A region change from the main window's region overlay must drive the
-    /// shell: the context and status bridge update and the fleet reloads
-    /// for the selected region.
+    /// shell: the context updates and the fleet reloads for the selected
+    /// region.
     #[gpui::test]
     fn region_change_event_drives_shell_context_and_fleet_reload(cx: &mut TestAppContext) {
         let (shell, cx) = add_rooted_shell(cx, |window, cx| AppShell::new_demo(window, cx));
@@ -1519,15 +1451,10 @@ mod tests {
             MainWindowEvent::RegionsChanged(vec!["fleet".into()]),
         );
 
-        shell.read_with(cx, |shell, cx| {
+        shell.read_with(cx, |shell, _| {
             assert_eq!(
                 shell.context.region, "fleet",
                 "the shell's context must track the region overlay's selection"
-            );
-            assert_eq!(
-                shell.status_bar.read(cx).region,
-                "fleet",
-                "the status bridge's region must show the new region"
             );
         });
 
@@ -1632,8 +1559,8 @@ mod tests {
         );
     }
 
-    /// Selecting a different profile must update the shell's context, the
-    /// status bridge's profile, and reload the fleet for the new profile.
+    /// Selecting a different profile must update the shell's context and
+    /// reload the fleet for the new profile.
     #[gpui::test]
     fn pick_profile_event_drives_shell_context(cx: &mut TestAppContext) {
         let (shell, cx) = add_rooted_shell(cx, |window, cx| AppShell::new_demo(window, cx));
@@ -1645,20 +1572,10 @@ mod tests {
             MainWindowEvent::PickProfile("other-profile".into()),
         );
 
-        let (context_profile, bar_profile) = shell.read_with(cx, |shell, cx| {
-            (
-                shell.context.profile.clone(),
-                shell.status_bar.read(cx).profile.clone(),
-            )
-        });
+        let context_profile = shell.read_with(cx, |shell, _| shell.context.profile.clone());
         assert_eq!(
             context_profile, "other-profile",
             "the shell's context profile must match the picked profile"
-        );
-        assert_eq!(
-            bar_profile.as_deref(),
-            Some("other-profile"),
-            "the status bridge's profile must show the picked profile"
         );
 
         // The demo service for an unknown profile returns no instances and no error.
@@ -1820,7 +1737,6 @@ mod tests {
         });
         shell.read_with(cx, |shell, cx| {
             assert_eq!(shell.context.region, "us-west-2");
-            assert_eq!(shell.status_bar.read(cx).region, "us-west-2");
             assert!(shell.fleet.read(cx).view_model.instances().is_empty());
         });
     }

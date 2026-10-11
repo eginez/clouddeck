@@ -12,18 +12,14 @@ mod context_bar;
 // provider-selection step added nothing) folded profile/region selection
 // directly into `account_window::AccountWindowView`. Nothing outside their
 // own files referenced them.
-mod ec2_tab;
 mod failure_popover;
 mod fleet_state;
 mod icons;
 mod inspector_pane;
-mod instance_detail;
-mod instance_list;
 mod instance_table;
 mod linux_titlebar;
 mod main_window;
 mod profile_picker_view;
-mod quick_picker;
 mod region_picker_view;
 mod row_context_menu;
 mod runtime;
@@ -31,8 +27,6 @@ mod search_field;
 mod settings_window;
 mod shell;
 mod sidebar;
-mod status_badge;
-mod status_bar;
 #[cfg(test)]
 mod test_support;
 mod theme;

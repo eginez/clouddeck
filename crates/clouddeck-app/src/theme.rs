@@ -30,14 +30,8 @@ impl SurgicalTheme {
     pub fn surface_high() -> Hsla {
         rgb(0xdadeeb).into()
     }
-    pub fn surface_highest() -> Hsla {
-        rgb(0xccd2e2).into()
-    }
     pub fn workspace_canvas() -> Hsla {
         rgb(0xf9f9fc).into()
-    }
-    pub fn chrome() -> Hsla {
-        rgb(0xe0e3ed).into()
     }
     pub fn chrome_dark() -> Hsla {
         rgb(0xd6dae7).into()
@@ -57,64 +51,16 @@ impl SurgicalTheme {
     pub fn text_tertiary() -> Hsla {
         rgb(0x8087a1).into()
     }
-    pub fn outline_variant() -> Hsla {
-        rgb(0x737a94).into()
-    }
 
     // Accent / state colors.
     pub fn primary() -> Hsla {
         rgb(0x005bc1).into()
-    }
-    pub fn primary_dim() -> Hsla {
-        rgb(0x004faa).into()
-    }
-    pub fn primary_fixed_dim() -> Hsla {
-        rgb(0xc2d4ff).into()
     }
     pub fn error() -> Hsla {
         rgb(0xb74743).into()
     }
     pub fn warning() -> Hsla {
         rgb(0xbe8519).into()
-    }
-    pub fn inactive() -> Hsla {
-        rgb(0x989faf).into()
-    }
-
-    /// `SurgicalTheme.shadow`: `textPrimary` at 8% opacity.
-    pub fn shadow() -> Hsla {
-        let mut c = Self::text_primary();
-        c.a = 0.08;
-        c
-    }
-
-    /// Port of `SurgicalTheme.stateColor(for:)`: maps an EC2-style status
-    /// string to its semantic color.
-    pub fn state_color(status: Option<&str>) -> Hsla {
-        match status.unwrap_or("unknown").to_lowercase().as_str() {
-            "running" => Self::primary(),
-            "stopped" | "terminated" => Self::error(),
-            "pending" | "stopping" | "shutting-down" => Self::warning(),
-            _ => Self::inactive(),
-        }
-    }
-
-    /// Port of `SurgicalTheme.rowFill(selected:hovered:emphasized:)`.
-    pub fn row_fill(selected: bool, hovered: bool, emphasized: bool) -> Option<Hsla> {
-        if selected {
-            let mut c = Self::primary_fixed_dim();
-            c.a = 0.78;
-            return Some(c);
-        }
-        if hovered {
-            let mut c = Self::surface_container();
-            c.a = 0.92;
-            return Some(c);
-        }
-        if emphasized {
-            return Some(Self::surface_low());
-        }
-        None
     }
 }
 
@@ -138,7 +84,6 @@ pub mod radius {
 pub struct SurgicalTypography;
 
 impl SurgicalTypography {
-    pub const VIEW_TITLE_SIZE: f32 = 24.0;
     // Not yet used by any ported view — part of the oracle's full type
     // scale (`SurgicalTypography.sectionTitle`), kept for parity and future
     // use.
@@ -146,53 +91,13 @@ impl SurgicalTypography {
     pub const SECTION_TITLE_SIZE: f32 = 18.0;
     pub const BODY_SIZE: f32 = 14.0;
     pub const BODY_EMPHASIS_SIZE: f32 = 14.0;
-    pub const METADATA_SIZE: f32 = 12.0;
     pub const CAPTION_SIZE: f32 = 12.0;
     pub const LABEL_SIZE: f32 = 11.0;
-    pub const MONO_SIZE: f32 = 12.0;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn state_color_matches_oracle_semantics() {
-        assert_eq!(
-            SurgicalTheme::state_color(Some("running")),
-            SurgicalTheme::primary()
-        );
-        assert_eq!(
-            SurgicalTheme::state_color(Some("STOPPED")),
-            SurgicalTheme::error()
-        );
-        assert_eq!(
-            SurgicalTheme::state_color(Some("terminated")),
-            SurgicalTheme::error()
-        );
-        assert_eq!(
-            SurgicalTheme::state_color(Some("pending")),
-            SurgicalTheme::warning()
-        );
-        assert_eq!(
-            SurgicalTheme::state_color(Some("shutting-down")),
-            SurgicalTheme::warning()
-        );
-        assert_eq!(SurgicalTheme::state_color(None), SurgicalTheme::inactive());
-        assert_eq!(
-            SurgicalTheme::state_color(Some("bogus")),
-            SurgicalTheme::inactive()
-        );
-    }
-
-    #[test]
-    fn row_fill_matches_oracle_precedence() {
-        // Selected wins over everything else.
-        assert!(SurgicalTheme::row_fill(true, true, true).is_some());
-        assert!(SurgicalTheme::row_fill(false, true, true).is_some());
-        assert!(SurgicalTheme::row_fill(false, false, true).is_some());
-        assert_eq!(SurgicalTheme::row_fill(false, false, false), None);
-    }
 
     #[test]
     fn surface_tiers_are_distinct() {
@@ -201,7 +106,6 @@ mod tests {
             SurgicalTheme::surface_low(),
             SurgicalTheme::surface_container(),
             SurgicalTheme::surface_high(),
-            SurgicalTheme::surface_highest(),
         ];
         for i in 0..tiers.len() {
             for j in (i + 1)..tiers.len() {

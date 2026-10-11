@@ -17,8 +17,8 @@ use clouddeck_core::{
 /// and its result landing (and `AppShell::build_with_scenario`'s startup
 /// load can't be caught mid-flight against it at all). This double lets a
 /// test deterministically observe both halves of that transition on the
-/// `cx.spawn`-bridged tokio path `EC2Tab`/`InstanceListView::refresh` use,
-/// without racing real wall-clock scheduling.
+/// `cx.spawn`-bridged tokio path the fleet refresh uses, without racing real
+/// wall-clock scheduling.
 pub struct GatedComputeService {
     pub gate: std::sync::Arc<tokio::sync::Notify>,
     pub instances: Vec<EC2Instance>,
