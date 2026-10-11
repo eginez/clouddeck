@@ -18,7 +18,7 @@ use gpui::{
 };
 
 use crate::app_menus;
-use crate::center_state_view::CenterStateView;
+use crate::center_state_view::{CenterEvent, CenterStateView};
 use crate::command_palette::{CommandPalette, PaletteEvent};
 use crate::context_bar::{ContextBar, ContextBarEvent};
 use crate::failure_popover::{FailurePopover, FailurePopoverEvent, RegionFailure};
@@ -180,6 +180,13 @@ impl MainWindow {
             )
         });
 
+        cx.subscribe(&center, |this, _, event: &CenterEvent, cx| match event {
+            CenterEvent::Action(CenterState::SignedOut | CenterState::Error { .. }) => {
+                this.refresh(cx)
+            }
+            CenterEvent::Action(_) => {}
+        })
+        .detach();
         cx.observe(&fleet, |_, _, cx| cx.notify()).detach();
         cx.subscribe(&toolbar, |this, _, event: &ToolbarEvent, cx| match event {
             ToolbarEvent::ToggleSidebar => this.toggle_sidebar(cx),
@@ -1301,6 +1308,44 @@ mod tests {
         let (_fleet, main, cx) = rooted_main_window_with_service(cx, service, 1280.0, 760.0);
 
         assert_eq!(center_state_of(&main, cx), Some(CenterState::SignedOut));
+    }
+
+    #[gpui::test]
+    fn signed_out_retry_reloads_the_fleet(cx: &mut TestAppContext) {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let service = counting_service(
+            &calls,
+            Some("The security token included in the request is expired"),
+        );
+        let (_fleet, main, cx) = rooted_main_window_with_service(cx, service, 1280.0, 760.0);
+        assert_eq!(center_state_of(&main, cx), Some(CenterState::SignedOut));
+
+        click_center_of("center.action", cx);
+        wait_until(cx, |cx| {
+            loads(&calls) == 2 && main.read_with(cx, |main, cx| main.center_state_for(cx).is_none())
+        });
+
+        assert_eq!(loads(&calls), 2);
+        assert_eq!(center_state_of(&main, cx), None);
+    }
+
+    #[gpui::test]
+    fn error_retry_reloads_the_fleet(cx: &mut TestAppContext) {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let service = counting_service(&calls, Some("boom"));
+        let (_fleet, main, cx) = rooted_main_window_with_service(cx, service, 1280.0, 760.0);
+        assert!(matches!(
+            center_state_of(&main, cx),
+            Some(CenterState::Error { .. })
+        ));
+
+        click_center_of("center.action", cx);
+        wait_until(cx, |cx| {
+            loads(&calls) == 2 && main.read_with(cx, |main, cx| main.center_state_for(cx).is_none())
+        });
+
+        assert_eq!(loads(&calls), 2);
+        assert_eq!(center_state_of(&main, cx), None);
     }
 
     #[gpui::test]
