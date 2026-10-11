@@ -92,6 +92,8 @@ pub struct MainWindow {
     region_scope_dirty: bool,
     /// Whether the window was narrow on the last render, to reset panes only when it crosses.
     last_narrow: Option<bool>,
+    /// The last load error, kept through the next in-flight load so the status bar doesn't flicker.
+    last_load_error: Option<CloudDeckError>,
     auto_refresh: bool,
     refresh_interval_minutes: u32,
     refresh_on_focus: bool,
@@ -253,6 +255,7 @@ impl MainWindow {
             overlay_subscription: None,
             region_scope_dirty: false,
             last_narrow: Some(rules.narrow),
+            last_load_error: None,
             auto_refresh: settings.auto_refresh,
             refresh_interval_minutes: settings.refresh_interval_minutes,
             refresh_on_focus: settings.refresh_on_focus,
@@ -716,7 +719,7 @@ impl MainWindow {
         });
     }
 
-    fn sync_context_bar(&self, cx: &mut Context<Self>) {
+    fn sync_context_bar(&mut self, cx: &mut Context<Self>) {
         let region_label = region_scope_label(self.scope.selected(), &self.available_regions);
         let failed_regions: Vec<String> = self
             .failures
@@ -726,13 +729,19 @@ impl MainWindow {
         let fleet = self.fleet.read(cx);
         let last_success_text =
             updated_text(fleet.view_model.last_success(), local_offset_minutes());
-        let load_error_text = match fleet.view_model.error() {
+        let shown_error = match fleet.view_model.error() {
+            Some(error) => Some(error.clone()),
+            None if fleet.view_model.is_loading() => self.last_load_error.clone(),
+            None => None,
+        };
+        let load_error_text = match &shown_error {
             Some(error) if !fleet.view_model.instances().is_empty() => Some(format!(
                 "Refresh failed: {}",
                 region_failure_reason(error, fleet.retry_in_seconds)
             )),
             _ => None,
         };
+        self.last_load_error = shown_error;
         self.context_bar.update(cx, |bar, cx| {
             if bar.region_label == region_label
                 && bar.failed_regions == failed_regions
@@ -1698,6 +1707,43 @@ mod tests {
             main.context_bar.read(cx).load_error_text.clone()
         });
         assert_eq!(error_text.as_deref(), Some("Refresh failed: Throttled"));
+    }
+
+    #[gpui::test]
+    fn refresh_error_stays_in_the_status_bar_until_the_next_load_finishes(cx: &mut TestAppContext) {
+        let (fleet, main, cx) = rooted_main_window(cx, three_instances(), 1280.0, 760.0);
+        cx.run_until_parked();
+
+        fleet.update(cx, |fleet, cx| {
+            fleet
+                .view_model
+                .finish_load(Err(std::io::Error::other("Rate exceeded").into()));
+            cx.notify();
+        });
+        cx.run_until_parked();
+
+        fleet.update(cx, |fleet, cx| {
+            let _ = fleet.view_model.begin_load();
+            cx.notify();
+        });
+        cx.run_until_parked();
+        let during_load = main.read_with(cx, |main, cx| {
+            main.context_bar.read(cx).load_error_text.clone()
+        });
+        assert_eq!(during_load.as_deref(), Some("Refresh failed: Throttled"));
+
+        fleet.update(cx, |fleet, cx| {
+            fleet.view_model.finish_load(Ok(ComputeInstanceLoadResult {
+                instances: three_instances(),
+                partial_failures: vec![],
+            }));
+            cx.notify();
+        });
+        cx.run_until_parked();
+        let after_success = main.read_with(cx, |main, cx| {
+            main.context_bar.read(cx).load_error_text.clone()
+        });
+        assert_eq!(after_success, None);
     }
 
     #[gpui::test]

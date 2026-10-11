@@ -111,11 +111,15 @@ impl Render for ContextBar {
             left = left.child(counts);
         }
 
-        let mut right = div().flex().items_center().gap(px(GAP));
+        let mut right = div().flex().items_center().gap(px(GAP)).min_w_0();
         if let Some(error_text) = &self.load_error_text {
             right = right.child(
                 div()
                     .debug_selector(|| "bar.load-error".into())
+                    .min_w_0()
+                    .overflow_hidden()
+                    .text_ellipsis()
+                    .whitespace_nowrap()
                     .text_color(palette.err)
                     .child(error_text.clone()),
             );
@@ -483,6 +487,32 @@ mod tests {
 
         assert_rendered(cx, &["bar.profile", "bar.region", "bar.status"]);
         assert_absent(cx, &["bar.count", "bar.refresh", "bar.updated"]);
+    }
+
+    #[gpui::test]
+    fn long_load_error_is_truncated_inside_a_compact_bar(cx: &mut TestAppContext) {
+        let (bar, _, cx) = open_bar(cx, 520.0, "", &[]);
+        bar.update(cx, |bar, cx| {
+            bar.load_error_text = Some(format!("Refresh failed: {}", "Throttled ".repeat(20)));
+            cx.notify();
+        });
+        cx.run_until_parked();
+
+        assert_rendered(cx, &["bar.profile", "bar.region", "bar.status"]);
+        let bounds = cx
+            .debug_bounds("bar.load-error")
+            .expect("load error should render");
+        assert!(
+            f32::from(bounds.right()) <= 520.0,
+            "load error should stay inside the window, got right edge {:?}",
+            bounds.right()
+        );
+        let status = cx.debug_bounds("bar.status").expect("status should render");
+        assert!(
+            f32::from(status.right()) <= 520.0,
+            "status should stay inside the window, got right edge {:?}",
+            status.right()
+        );
     }
 
     #[gpui::test]
