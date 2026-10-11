@@ -56,8 +56,13 @@ fn last_facet_value(terms: &[Term], field: QueryField) -> Option<String> {
     terms.iter().rev().find_map(|t| match &t.kind {
         TermKind::Field {
             field: f, value, ..
-        } if *f == field && !t.negated && !value.is_empty() && !value.contains(',') => {
-            Some(value.clone())
+        } if *f == field && !t.negated => {
+            let pieces: Vec<&str> = value
+                .split(',')
+                .map(str::trim)
+                .filter(|piece| !piece.is_empty())
+                .collect();
+            (!pieces.is_empty()).then(|| pieces.join(","))
         }
         _ => None,
     })
@@ -129,6 +134,10 @@ mod tests {
             set_field_value("-state:stopped", QueryField::State, "running", &k),
             "-state:stopped state:running"
         );
+        assert_eq!(
+            set_field_value("state:running,stopped web", QueryField::State, "", &k),
+            "web"
+        );
     }
 
     #[test]
@@ -143,10 +152,22 @@ mod tests {
         );
         assert_eq!(
             facet_selection("state:running,pending", &k),
-            FacetSelection::default()
+            FacetSelection {
+                state: Some("running,pending".into()),
+                instance_type: None,
+            }
         );
         assert_eq!(facet_selection("-state:stopped", &k).state, None);
         assert_eq!(facet_selection("state:", &k).state, None);
+        assert_eq!(facet_selection("state:,", &k).state, None);
+        assert_eq!(
+            facet_selection("state:running,", &k).state,
+            Some("running".into())
+        );
+        assert_eq!(
+            facet_selection("state:running,,stopped", &k).state,
+            Some("running,stopped".into())
+        );
         assert_eq!(
             facet_selection("state:running state:stopped", &k).state,
             Some("stopped".into())
