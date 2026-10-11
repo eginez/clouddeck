@@ -70,6 +70,8 @@ pub use refresh::*;
 mod layout;
 mod selection;
 pub use selection::*;
+mod stale;
+pub use stale::*;
 pub use console_url::{
     ConsoleUrlError, Partition, console_url_for, console_url_for_instance, partition_for_region,
 };
