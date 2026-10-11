@@ -4,8 +4,9 @@ use clouddeck_core::{
     CellText, Column, EC2Instance, SortState, cell_text, is_stale_instance, visible_columns,
 };
 use gpui::{
-    Context, Div, Entity, FontWeight, IntoElement, ParentElement, Render, Styled, Window, div,
-    prelude::*, px, uniform_list,
+    ClickEvent, Context, Div, Entity, FocusHandle, Focusable, FontWeight, IntoElement, KeyBinding,
+    ParentElement, Render, ScrollStrategy, SharedString, Stateful, Styled, UniformListScrollHandle,
+    Window, actions, div, prelude::*, px, uniform_list,
 };
 
 use crate::{
@@ -14,14 +15,59 @@ use crate::{
     tokens::{FONT_SIZE, MONO_FONT, Palette, ROW_HEIGHT},
 };
 
+actions!(instance_table, [SelectNext, SelectPrevious]);
+
+pub fn table_key_bindings() -> Vec<KeyBinding> {
+    vec![
+        KeyBinding::new("down", SelectNext, Some("InstanceTable")),
+        KeyBinding::new("j", SelectNext, Some("InstanceTable")),
+        KeyBinding::new("up", SelectPrevious, Some("InstanceTable")),
+        KeyBinding::new("k", SelectPrevious, Some("InstanceTable")),
+    ]
+}
+
 pub struct InstanceTable {
     state: Entity<FleetState>,
+    focus_handle: FocusHandle,
+    scroll: UniformListScrollHandle,
 }
 
 impl InstanceTable {
     pub fn new(state: Entity<FleetState>, cx: &mut Context<Self>) -> Self {
         cx.observe(&state, |_, _, cx| cx.notify()).detach();
-        Self { state }
+        Self {
+            state,
+            focus_handle: cx.focus_handle(),
+            scroll: UniformListScrollHandle::new(),
+        }
+    }
+
+    fn step_selection(&mut self, down: bool, cx: &mut Context<Self>) {
+        self.state
+            .update(cx, |state, cx| state.move_selection(down, cx));
+        let state = self.state.read(cx);
+        let selected = state.selected.as_deref();
+        if let Some(ix) = state
+            .visible_rows()
+            .iter()
+            .position(|instance| Some(instance.id().as_str()) == selected)
+        {
+            self.scroll.scroll_to_item(ix, ScrollStrategy::Center);
+        }
+    }
+
+    fn select_next(&mut self, _: &SelectNext, _: &mut Window, cx: &mut Context<Self>) {
+        self.step_selection(true, cx);
+    }
+
+    fn select_previous(&mut self, _: &SelectPrevious, _: &mut Window, cx: &mut Context<Self>) {
+        self.step_selection(false, cx);
+    }
+}
+
+impl Focusable for InstanceTable {
+    fn focus_handle(&self, _: &gpui::App) -> FocusHandle {
+        self.focus_handle.clone()
     }
 }
 
@@ -29,6 +75,7 @@ impl Render for InstanceTable {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = Palette::light();
         let columns = visible_columns(window.viewport_size().width.into());
+        let entity = self.state.clone();
         let state = self.state.read(cx);
         let sort = state.sort;
         let selected = state.selected.clone();
@@ -49,23 +96,36 @@ impl Render for InstanceTable {
                 columns
                     .iter()
                     .enumerate()
-                    .map(|(ix, column)| header_cell(ix, *column, sort, palette)),
+                    .map(|(ix, column)| header_cell(ix, *column, sort, palette, entity.clone())),
             );
 
+        let row_entity = entity.clone();
         let body = uniform_list("table.rows", row_count, move |range, _window, _cx| {
             range
                 .map(|ix| {
                     let instance = &rows[ix];
                     let is_selected = selected.as_deref() == Some(instance.id().as_str());
                     let is_stale = is_stale_instance(instance, &stale);
-                    row(instance, &columns, is_selected, is_stale, palette)
+                    row(
+                        instance,
+                        &columns,
+                        is_selected,
+                        is_stale,
+                        palette,
+                        row_entity.clone(),
+                    )
                 })
                 .collect()
         })
+        .track_scroll(self.scroll.clone())
         .flex_1()
         .w_full();
 
         div()
+            .key_context("InstanceTable")
+            .track_focus(&self.focus_handle)
+            .on_action(cx.listener(Self::select_next))
+            .on_action(cx.listener(Self::select_previous))
             .size_full()
             .flex()
             .flex_col()
@@ -86,7 +146,13 @@ fn cell_frame(column: Column) -> Div {
     }
 }
 
-fn header_cell(ix: usize, column: Column, sort: SortState, palette: Palette) -> Div {
+fn header_cell(
+    ix: usize,
+    column: Column,
+    sort: SortState,
+    palette: Palette,
+    state: Entity<FleetState>,
+) -> Stateful<Div> {
     let mut label = div()
         .flex()
         .items_center()
@@ -112,7 +178,11 @@ fn header_cell(ix: usize, column: Column, sort: SortState, palette: Palette) -> 
         label = label.child(icon.icon().text_color(palette.dim));
     }
     cell_frame(column)
+        .id(("table.header", ix))
         .debug_selector(move || format!("table.header.{ix}"))
+        .on_click(move |_: &ClickEvent, _, cx| {
+            state.update(cx, |state, cx| state.toggle_sort(column, cx));
+        })
         .child(label)
 }
 
@@ -122,10 +192,17 @@ fn row(
     selected: bool,
     stale: bool,
     palette: Palette,
-) -> Div {
-    let row_key = format!("table.row.{}", instance.id());
+    state: Entity<FleetState>,
+) -> Stateful<Div> {
+    let key = instance.id();
+    let row_key = format!("table.row.{key}");
     let mut row = div()
+        .id(SharedString::from(row_key.clone()))
         .debug_selector(|| row_key.clone())
+        .on_click(move |_: &ClickEvent, _, cx| {
+            let key = key.clone();
+            state.update(cx, |state, cx| state.select(Some(key), cx));
+        })
         .flex()
         .items_center()
         .w_full()
@@ -274,6 +351,16 @@ mod tests {
         state: Entity<FleetState>,
         width: f32,
     ) -> &mut VisualTestContext {
+        open_table_view(cx, state, width).1
+    }
+
+    fn open_table_view(
+        cx: &mut TestAppContext,
+        state: Entity<FleetState>,
+        width: f32,
+    ) -> (Entity<InstanceTable>, &mut VisualTestContext) {
+        let table = cx.new(|cx| InstanceTable::new(state, cx));
+        let root_table = table.clone();
         let bounds = Bounds::new(point(px(0.), px(0.)), size(px(width), px(760.)));
         let window = cx
             .update(|cx| {
@@ -284,15 +371,14 @@ mod tests {
                     },
                     |window, cx| {
                         gpui_component::init(cx);
-                        let table = cx.new(|cx| InstanceTable::new(state, cx));
-                        cx.new(|cx| Root::new(table, window, cx))
+                        cx.new(|cx| Root::new(root_table, window, cx))
                     },
                 )
             })
             .unwrap();
         let cx = VisualTestContext::from_window(window.into(), cx).into_mut();
         cx.run_until_parked();
-        cx
+        (table, cx)
     }
 
     #[gpui::test]
@@ -366,5 +452,130 @@ mod tests {
 
         assert!(cx.debug_bounds("table.header.0").is_some());
         assert!(cx.debug_bounds("table.row.us-east-1:i-1").is_none());
+    }
+
+    const ROW_SELECTORS: [&str; 3] = [
+        "table.row.us-east-1:i-1",
+        "table.row.us-east-1:i-2",
+        "table.row.us-east-1:i-3",
+    ];
+
+    fn click(cx: &mut VisualTestContext, selector: &'static str) {
+        let bounds = cx
+            .debug_bounds(selector)
+            .unwrap_or_else(|| panic!("{selector} should render"));
+        cx.simulate_click(bounds.center(), Default::default());
+        cx.run_until_parked();
+    }
+
+    fn visible_keys(state: &Entity<FleetState>, cx: &mut VisualTestContext) -> Vec<String> {
+        state.read_with(cx, |state, _| {
+            state.visible_rows().iter().map(|i| i.id()).collect()
+        })
+    }
+
+    fn selected_key(state: &Entity<FleetState>, cx: &mut VisualTestContext) -> Option<String> {
+        state.read_with(cx, |state, _| state.selected.clone())
+    }
+
+    #[gpui::test]
+    fn clicking_headers_sorts_and_reverses_direction(cx: &mut TestAppContext) {
+        let state = loaded_state(cx);
+        let cx = open_table(cx, state.clone(), 1280.0);
+
+        click(cx, "table.header.0");
+        state.read_with(cx, |state, _| {
+            assert_eq!(
+                state.sort,
+                SortState {
+                    column: Column::Name,
+                    ascending: false,
+                }
+            );
+        });
+
+        click(cx, "table.header.0");
+        state.read_with(cx, |state, _| {
+            assert_eq!(
+                state.sort,
+                SortState {
+                    column: Column::Name,
+                    ascending: true,
+                }
+            );
+        });
+
+        click(cx, "table.header.2");
+        state.read_with(cx, |state, _| {
+            assert_eq!(
+                state.sort,
+                SortState {
+                    column: Column::State,
+                    ascending: true,
+                }
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn clicking_a_row_selects_it_and_opens_the_inspector(cx: &mut TestAppContext) {
+        let state = loaded_state(cx);
+        let cx = open_table(cx, state.clone(), 1280.0);
+        state.update(cx, |state, _| state.inspector_open = false);
+
+        let second = visible_keys(&state, cx)[1].clone();
+        let selector = ROW_SELECTORS
+            .into_iter()
+            .find(|selector| selector.strip_prefix("table.row.") == Some(second.as_str()))
+            .expect("second visible row is a fixture row");
+        click(cx, selector);
+
+        assert_eq!(selected_key(&state, cx), Some(second));
+        state.read_with(cx, |state, _| assert!(state.inspector_open));
+    }
+
+    #[gpui::test]
+    fn arrow_and_vim_keys_move_the_selection(cx: &mut TestAppContext) {
+        let state = loaded_state(cx);
+        let (table, cx) = open_table_view(cx, state.clone(), 1280.0);
+        cx.update(|_, cx| cx.bind_keys(table_key_bindings()));
+        let focus = table.read_with(cx, |table, _| table.focus_handle.clone());
+        cx.update(|window, _| focus.focus(window));
+        cx.run_until_parked();
+        let ids = visible_keys(&state, cx);
+
+        cx.simulate_keystrokes("down");
+        assert_eq!(selected_key(&state, cx), Some(ids[0].clone()));
+
+        cx.simulate_keystrokes("j");
+        assert_eq!(selected_key(&state, cx), Some(ids[1].clone()));
+
+        cx.simulate_keystrokes("k");
+        assert_eq!(selected_key(&state, cx), Some(ids[0].clone()));
+
+        cx.simulate_keystrokes("down");
+        assert_eq!(selected_key(&state, cx), Some(ids[1].clone()));
+
+        cx.simulate_keystrokes("up");
+        assert_eq!(selected_key(&state, cx), Some(ids[0].clone()));
+
+        cx.simulate_keystrokes("up");
+        assert_eq!(selected_key(&state, cx), Some(ids[0].clone()));
+    }
+
+    #[gpui::test]
+    fn clicking_the_selected_row_keeps_it_selected(cx: &mut TestAppContext) {
+        let state = loaded_state(cx);
+        let cx = open_table(cx, state.clone(), 1280.0);
+
+        let second = visible_keys(&state, cx)[1].clone();
+        let selector = ROW_SELECTORS
+            .into_iter()
+            .find(|selector| selector.strip_prefix("table.row.") == Some(second.as_str()))
+            .expect("second visible row is a fixture row");
+        click(cx, selector);
+        click(cx, selector);
+
+        assert_eq!(selected_key(&state, cx), Some(second));
     }
 }
