@@ -41,6 +41,8 @@ mod console_url;
 mod context;
 mod inspector;
 pub use inspector::*;
+mod status_text;
+pub use status_text::*;
 pub use aws_cli::{AwsCliComputeService, CliVersionError, DEFAULT_REQUEST_TIMEOUT, test_aws_cli};
 pub use aws_identity::{AwsIdentity, AwsIdentityProvider, AwsIdentityService};
 pub use aws_sdk::{AwsSdkComputeService, Ec2Page, Ec2PageSource};
