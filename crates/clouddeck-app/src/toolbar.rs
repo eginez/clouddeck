@@ -2,14 +2,15 @@
 
 use clouddeck_core::layout_rules;
 use gpui::{
-    AnyView, App, ClickEvent, Context, Entity, EventEmitter, FontWeight, IntoElement, Render,
-    Window, div, prelude::*, px,
+    AnyView, App, ClickEvent, Context, Entity, EventEmitter, FontWeight, IntoElement, MouseButton,
+    Render, Window, div, prelude::*, px,
 };
 use gpui_component::Sizable;
 use gpui_component::tooltip::Tooltip;
 
 use crate::fleet_state::FleetState;
 use crate::icons::AppIcon;
+use crate::linux_titlebar::{AppMenuButton, WindowControls};
 use crate::search_field::SearchField;
 use crate::tokens::{FONT_SIZE, Palette, TOOLBAR_HEIGHT};
 
@@ -29,6 +30,7 @@ pub enum ToolbarEvent {
 pub struct Toolbar {
     state: Entity<FleetState>,
     search: Entity<SearchField>,
+    app_menu: Option<Entity<AppMenuButton>>,
     /// Label and accent state from the last render, so tests can check what was drawn.
     #[cfg(test)]
     rendered_filters: (String, bool),
@@ -43,9 +45,11 @@ impl Toolbar {
         cx: &mut Context<Self>,
     ) -> Self {
         cx.observe(&state, |_, _, cx| cx.notify()).detach();
+        let app_menu = cfg!(target_os = "linux").then(|| cx.new(|_| AppMenuButton::default()));
         Self {
             state,
             search,
+            app_menu,
             #[cfg(test)]
             rendered_filters: (String::new(), false),
         }
@@ -79,6 +83,7 @@ impl Render for Toolbar {
         {
             self.rendered_filters = (filters_text(count), count > 0);
         }
+        let linux = cfg!(target_os = "linux");
         let leading = if cfg!(target_os = "macos") {
             TRAFFIC_LIGHT_INSET
         } else {
@@ -96,15 +101,19 @@ impl Render for Toolbar {
             .bg(palette.chrome)
             .border_b_1()
             .border_color(palette.line)
+            .when_some(self.app_menu.clone(), |bar, app_menu| bar.child(app_menu))
             .child(sidebar_button(&palette, cx))
             .when(rules.show_title, |bar| bar.child(title(&palette)))
-            .child(div().flex_1())
+            .child(div().flex_1().when(linux, |spacer| {
+                spacer.on_mouse_down(MouseButton::Left, |_, window, _| window.start_window_move())
+            }))
             .child(filters_button(filters_text(count), count > 0, &palette, cx))
             .child(
                 div()
                     .debug_selector(|| "toolbar.search".into())
                     .child(self.search.clone()),
             )
+            .when(linux, |bar| bar.child(WindowControls))
     }
 }
 
@@ -362,5 +371,42 @@ mod tests {
         cx.run_until_parked();
 
         assert_eq!(*events.borrow(), vec![ToolbarEvent::FiltersClicked]);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[gpui::test]
+    fn linux_toolbar_shows_window_controls_and_app_menu(cx: &mut TestAppContext) {
+        let (_state, _toolbar, _events, cx) = rooted_toolbar(cx, 1280.0);
+
+        assert!(cx.debug_bounds("linux.min").is_some());
+        assert!(cx.debug_bounds("linux.max").is_some());
+        assert!(cx.debug_bounds("linux.close").is_some());
+        assert!(cx.debug_bounds("linux.menu").is_some());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[gpui::test]
+    fn clicking_the_linux_menu_lists_app_menu_items(cx: &mut TestAppContext) {
+        let (_state, _toolbar, _events, cx) = rooted_toolbar(cx, 1280.0);
+
+        assert!(cx.debug_bounds("linux.menu.item.0").is_none());
+        let button = cx
+            .debug_bounds("linux.menu")
+            .expect("app menu button renders");
+        cx.simulate_click(button.center(), Default::default());
+        cx.run_until_parked();
+
+        assert!(cx.debug_bounds("linux.menu.item.0").is_some());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[gpui::test]
+    fn macos_toolbar_has_no_linux_chrome(cx: &mut TestAppContext) {
+        let (_state, _toolbar, _events, cx) = rooted_toolbar(cx, 1280.0);
+
+        assert!(cx.debug_bounds("linux.menu").is_none());
+        assert!(cx.debug_bounds("linux.min").is_none());
+        assert!(cx.debug_bounds("linux.max").is_none());
+        assert!(cx.debug_bounds("linux.close").is_none());
     }
 }
