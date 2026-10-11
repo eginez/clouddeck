@@ -11,7 +11,7 @@ use clouddeck_core::{
 };
 use gpui::{
     AnyWindowHandle, App, Bounds, Context, Entity, IntoElement, KeyBinding, ParentElement, Render,
-    Styled, Subscription, Task, Window, WindowHandle, actions, div, prelude::*, px, size,
+    Styled, Subscription, Task, Window, WindowHandle, actions, div, point, prelude::*, px, size,
 };
 use gpui_component::Root;
 use std::{path::PathBuf, time::Duration};
@@ -105,7 +105,22 @@ pub(crate) fn open_main_window(
     demo: bool,
     demo_scenario: DemoScenario,
 ) -> Option<WindowHandle<Root>> {
-    let bounds = Bounds::centered(None, size(px(1280.0), px(800.0)), cx);
+    let restored = (!demo)
+        .then(|| UiState::load(&clouddeck_core::ui_state_path()).window)
+        .flatten()
+        .map(|frame| {
+            Bounds::new(
+                point(px(frame.x), px(frame.y)),
+                size(px(frame.width), px(frame.height)),
+            )
+        })
+        .filter(|bounds| {
+            cx.displays()
+                .iter()
+                .any(|display| display.bounds().intersects(bounds))
+        });
+    let bounds =
+        restored.unwrap_or_else(|| Bounds::centered(None, size(px(1280.0), px(800.0)), cx));
     cx.open_window(crate::main_window::window_options(bounds), |window, cx| {
         let shell = cx.new(|cx| AppShell::build_with_scenario(window, demo, demo_scenario, cx));
         cx.new(|cx| gpui_component::Root::new(shell, window, cx))
