@@ -9,6 +9,9 @@ use std::{
 pub const INSPECTOR_WIDTH_RANGE: (f32, f32) = (300.0, 420.0);
 /// Sidebar width range in logical pixels.
 pub const SIDEBAR_WIDTH_RANGE: (f32, f32) = (180.0, 320.0);
+/// Narrowest main window in logical pixels; narrower saved frames are dropped on restore.
+/// Name, Instance ID, State and Type are always shown and sum to 527pt.
+pub const MAIN_WINDOW_MIN_WIDTH: f32 = 528.0;
 
 /// Window position and size in logical pixels.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -83,7 +86,7 @@ impl UiState {
             [frame.x, frame.y, frame.width, frame.height]
                 .iter()
                 .all(|value| value.is_finite())
-                && frame.width >= 520.0
+                && frame.width >= MAIN_WINDOW_MIN_WIDTH
                 && frame.height >= 400.0
         });
         Self {
@@ -332,13 +335,13 @@ mod tests {
         assert_eq!(frame(0.0, f32::NAN, 1280.0, 760.0), None);
         assert_eq!(frame(0.0, 0.0, f32::NAN, 760.0), None);
         assert_eq!(frame(0.0, 0.0, 1280.0, f32::NEG_INFINITY), None);
-        assert_eq!(frame(0.0, 0.0, 519.9, 760.0), None);
+        assert_eq!(frame(0.0, 0.0, 527.9, 760.0), None);
         assert_eq!(
-            frame(0.0, 0.0, 520.0, 400.0),
+            frame(0.0, 0.0, 528.0, 400.0),
             Some(WindowFrame {
                 x: 0.0,
                 y: 0.0,
-                width: 520.0,
+                width: 528.0,
                 height: 400.0,
             })
         );

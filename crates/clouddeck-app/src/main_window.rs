@@ -4,9 +4,9 @@ use std::time::Duration;
 
 use clouddeck_core::{
     CenterContext, CenterInput, CenterState, CenterText, CloudDeckError, CommandContext, CommandId,
-    ComputeServicePartialFailure, EC2Instance, EscapeAction, EscapeContext, OPEN_IN_CONSOLE_FLASH,
-    ProfileInput, RegionScope, Settings, Theme, center_state, center_text, clock_text,
-    console_url_for, copied_flash, escape_action, filter_command_query, known_tag_keys,
+    ComputeServicePartialFailure, EC2Instance, EscapeAction, EscapeContext, MAIN_WINDOW_MIN_WIDTH,
+    OPEN_IN_CONSOLE_FLASH, ProfileInput, RegionScope, Settings, Theme, center_state, center_text,
+    clock_text, console_url_for, copied_flash, escape_action, filter_command_query, known_tag_keys,
     layout_rules, region_failure_reason, region_scope_label, settings_path, should_auto_refresh,
     should_refresh_on_focus, stale_count, updated_text,
 };
@@ -40,8 +40,6 @@ actions!(main_window, [EscapePressed]);
 
 const OVERLAY_MAX_FRACTION: f32 = 0.92;
 const SCRIM_ALPHA: f32 = 0.2;
-// Name, Instance ID, State and Type are always shown and sum to 527pt.
-const MIN_WINDOW_WIDTH: f32 = 528.0;
 const MIN_WINDOW_HEIGHT: f32 = 400.0;
 const OVERLAY_ABOVE_STATUS_BAR: f32 = STATUS_BAR_HEIGHT + 4.0;
 const REGION_OVERLAY_LEFT: f32 = 150.0;
@@ -982,7 +980,7 @@ pub fn window_options(bounds: Bounds<Pixels>) -> WindowOptions {
             traffic_light_position: Some(point(px(14.0), px(15.0))),
         }),
         window_bounds: Some(WindowBounds::Windowed(bounds)),
-        window_min_size: Some(size(px(MIN_WINDOW_WIDTH), px(MIN_WINDOW_HEIGHT))),
+        window_min_size: Some(size(px(MAIN_WINDOW_MIN_WIDTH), px(MIN_WINDOW_HEIGHT))),
         ..Default::default()
     }
 }
@@ -1187,7 +1185,10 @@ mod tests {
             .iter()
             .map(|column| column.default_width())
             .sum();
-        assert!(MIN_WINDOW_WIDTH >= fixed, "{MIN_WINDOW_WIDTH} < {fixed}");
+        assert!(
+            MAIN_WINDOW_MIN_WIDTH >= fixed,
+            "{MAIN_WINDOW_MIN_WIDTH} < {fixed}"
+        );
     }
 
     #[gpui::test]
