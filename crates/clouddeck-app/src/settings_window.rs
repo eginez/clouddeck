@@ -51,6 +51,8 @@ pub struct SettingsWindow {
     config_input: Entity<InputState>,
     selects: Vec<(SettingId, Entity<SelectState<Vec<Choice>>>)>,
     _subscriptions: Vec<Subscription>,
+    path: PathBuf,
+    unsaved: bool,
     save_generation: u64,
     note: Option<Note>,
     note_generation: u64,
@@ -403,6 +405,10 @@ impl SettingsWindow {
             .new(|cx| InputState::new(window, cx).default_value(settings.aws_config_file.clone()));
         let mut selects = Vec::new();
         let mut subscriptions = vec![cx.observe(&search, |_, _, cx| cx.notify())];
+        subscriptions.push(cx.on_app_quit(|this: &mut Self, _| {
+            this.flush_pending_save();
+            std::future::ready(())
+        }));
         subscriptions.push(cx.subscribe_in(
             &config_input,
             window,
@@ -440,6 +446,8 @@ impl SettingsWindow {
             config_input,
             selects,
             _subscriptions: subscriptions,
+            path: settings_path(),
+            unsaved: false,
             save_generation: 0,
             note: None,
             note_generation: 0,
@@ -477,6 +485,7 @@ impl SettingsWindow {
             return;
         }
         self.settings = next;
+        self.unsaved = true;
         self.schedule_save(cx);
         cx.emit(SettingsEvent::Changed(self.settings.clone()));
         cx.notify();
@@ -632,28 +641,28 @@ impl SettingsWindow {
     }
 
     fn schedule_save(&mut self, cx: &mut Context<Self>) {
-        if cfg!(test) {
-            return;
-        }
         self.save_generation += 1;
         let generation = self.save_generation;
-        let settings = self.settings.clone();
         cx.spawn(async move |this, cx| {
             cx.background_executor().timer(SAVE_DEBOUNCE).await;
-            let superseded = this
-                .update(cx, |this, _| this.save_generation != generation)
-                .unwrap_or(false);
-            if !superseded {
-                cx.background_executor()
-                    .spawn(async move {
-                        if let Err(error) = settings.save(&settings_path()) {
-                            eprintln!("Could not save settings: {error}");
-                        }
-                    })
-                    .detach();
-            }
+            this.update(cx, |this, _| {
+                if this.save_generation == generation {
+                    this.flush_pending_save();
+                }
+            })
+            .ok();
         })
         .detach();
+    }
+
+    fn flush_pending_save(&mut self) {
+        if !self.unsaved {
+            return;
+        }
+        match self.settings.save(&self.path) {
+            Ok(()) => self.unsaved = false,
+            Err(error) => eprintln!("Could not save settings: {error}"),
+        }
     }
 
     fn category_button(
@@ -1194,9 +1203,10 @@ impl Render for SettingsWindow {
                     .child(
                         button("settings-done", "Done", &palette)
                             .debug_selector(|| "settings.done".into())
-                            .on_click(
-                                cx.listener(|_, _: &ClickEvent, window, _| window.remove_window()),
-                            ),
+                            .on_click(cx.listener(|this, _: &ClickEvent, window, _| {
+                                this.flush_pending_save();
+                                window.remove_window();
+                            })),
                     ),
             );
 
@@ -1246,6 +1256,11 @@ pub fn open_settings_window(cx: &mut App, settings: Settings) -> Option<WindowHa
             },
             move |window, cx| {
                 let view = cx.new(|cx| SettingsWindow::new(settings, window, cx));
+                let weak = view.downgrade();
+                window.on_window_should_close(cx, move |_, cx| {
+                    let _ = weak.update(cx, |this, _| this.flush_pending_save());
+                    true
+                });
                 cx.new(|cx| Root::new(view, window, cx))
             },
         )
@@ -1258,6 +1273,7 @@ pub fn open_settings_window(cx: &mut App, settings: Settings) -> Option<WindowHa
 mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use gpui::{Entity, TestAppContext, VisualTestContext};
 
@@ -1280,7 +1296,16 @@ mod tests {
             .as_ref()
             .expect("settings window should be created")
             .clone();
+        view.update(cx, |view, _| view.path = temp_settings_path());
         (view, cx)
+    }
+
+    fn temp_settings_path() -> PathBuf {
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let index = NEXT.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir()
+            .join(format!("clouddeck-settings-{}-{index}", std::process::id()))
+            .join("settings.json")
     }
 
     fn click(cx: &mut VisualTestContext, selector: &'static str) {
@@ -1355,6 +1380,41 @@ mod tests {
             events.borrow().as_slice(),
             [SettingsEvent::Changed(settings)] if !settings.auto_refresh
         ));
+    }
+
+    #[gpui::test]
+    fn a_change_inside_the_debounce_window_is_saved_on_quit(cx: &mut TestAppContext) {
+        let (view, cx) = rooted(cx, Settings::default());
+        let path = view.read_with(cx, |view, _| view.path.clone());
+
+        view.update(cx, |view, cx| {
+            view.choose(SettingId::Theme, Pick::Theme(Theme::Dark), cx)
+        });
+        cx.run_until_parked();
+        assert!(!path.exists(), "the save should wait out the debounce");
+
+        cx.cx.update(|cx| cx.shutdown());
+
+        assert_eq!(Settings::load(&path).theme, Theme::Dark);
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
+    #[gpui::test]
+    fn done_saves_the_change_before_the_window_closes(cx: &mut TestAppContext) {
+        let (view, cx) = rooted(cx, Settings::default());
+        let path = view.read_with(cx, |view, _| view.path.clone());
+
+        view.update(cx, |view, cx| {
+            view.choose(SettingId::Theme, Pick::Theme(Theme::Dark), cx)
+        });
+        click(cx, "settings.done");
+
+        assert_eq!(Settings::load(&path).theme, Theme::Dark);
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::remove_dir_all(dir);
+        }
     }
 
     #[gpui::test]
