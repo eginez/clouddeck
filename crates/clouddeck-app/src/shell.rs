@@ -1,12 +1,13 @@
 use crate::{
     fleet_state::FleetState,
     main_window::{MainWindow, MainWindowEvent},
+    settings_window::{SettingsEvent, SettingsWindow, open_settings_window},
     theme::SurgicalTheme,
 };
 use clouddeck_core::{
     AwsSdkComputeService, ComputeService, EC2Instance, EC2Scenario, FLEET_REGIONS,
     FleetComputeService, InstanceListViewModel, MockComputeService, ProfileInput, RegionScope,
-    UiState, WindowFrame, WorkspaceContext,
+    Settings, UiState, WindowFrame, WorkspaceContext, settings_path,
 };
 use gpui::{
     AnyWindowHandle, App, Context, Entity, IntoElement, KeyBinding, ParentElement, Render, Styled,
@@ -39,6 +40,7 @@ pub struct AppShell {
     ui_window_frame: Option<WindowFrame>,
     ui_save_task: Option<Task<()>>,
     window_bounds: Subscription,
+    settings_subscription: Option<Subscription>,
     applied_scope: RegionScope,
     /// Test-only: an optional compute service injected into `apply_context`
     /// so that a test can deterministically hold a picker-driven context
@@ -425,6 +427,7 @@ impl AppShell {
             ui_state_path,
             ui_save_task: None,
             window_bounds,
+            settings_subscription: None,
             applied_scope,
             wizard: None,
             #[cfg(test)]
@@ -546,11 +549,33 @@ impl AppShell {
                 }
                 MainWindowEvent::ConnectToAws => this.open_setup(cx),
                 MainWindowEvent::Retry(_) => this.refresh(cx),
-                MainWindowEvent::OpenSettings => {}
+                MainWindowEvent::OpenSettings => this.open_settings(cx),
             },
         )
         .detach();
         main_window
+    }
+
+    fn open_settings(&mut self, cx: &mut Context<Self>) {
+        let Some(handle) = open_settings_window(cx, Settings::load(&settings_path())) else {
+            return;
+        };
+        let Ok(Some(view)) = handle.update(cx, |root, _, _| {
+            root.view().clone().downcast::<SettingsWindow>().ok()
+        }) else {
+            return;
+        };
+        let main_window = self.main_window.clone();
+        let window_handle = self.window_handle;
+        self.settings_subscription =
+            Some(cx.subscribe(&view, move |_, _, event: &SettingsEvent, cx| {
+                let SettingsEvent::Changed(settings) = event;
+                let _ = window_handle.update(cx, |_, window, cx| {
+                    main_window.update(cx, |main_window, cx| {
+                        main_window.apply_settings(settings, window, cx)
+                    })
+                });
+            }));
     }
 
     fn apply_context(

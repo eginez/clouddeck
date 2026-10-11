@@ -267,6 +267,20 @@ impl MainWindow {
         }
     }
 
+    pub fn apply_settings(
+        &mut self,
+        settings: &Settings,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.auto_refresh = settings.auto_refresh;
+        self.refresh_interval_minutes = settings.refresh_interval_minutes;
+        self.refresh_on_focus = settings.refresh_on_focus;
+        self.theme = settings.theme;
+        apply_appearance(self.theme, window, cx);
+        cx.notify();
+    }
+
     fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
         self.fleet.update(cx, |fleet, cx| {
             fleet.sidebar_open = !fleet.sidebar_open;
