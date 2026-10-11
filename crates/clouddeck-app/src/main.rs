@@ -50,8 +50,8 @@ fn main() {
         .with_assets(assets::Assets)
         .run(|cx: &mut App| {
             gpui_component::init(cx);
-            // SurgicalTheme is intentionally light. Keep gpui-component inputs and
-            // popovers on the same palette even when macOS is using dark mode.
+            // Light until a MainWindow syncs the theme (main_window.rs apply_appearance).
+            // The welcome window never does, so this default is what it renders with.
             gpui_component::Theme::change(gpui_component::ThemeMode::Light, None, cx);
             let (demo, demo_scenario) = shell::launch_options();
             let saved = WorkspaceContext::load(&context_path());
