@@ -454,6 +454,106 @@ pub fn changed_count(settings: &Settings) -> usize {
         .count()
 }
 
+/// Keyboard shortcuts listed in the Keymap category, as (action, shortcut).
+pub const KEYMAP: [(&str, &str); 10] = [
+    ("Switch Profile…", "⌘P"),
+    ("Switch Region…", "⌘⇧R"),
+    ("Refresh", "⌘R"),
+    ("Command Palette", "⌘⇧P"),
+    ("Toggle Sidebar", "⌘B"),
+    ("Toggle Inspector", "⌘⌥I"),
+    ("Focus Search", "⌘F"),
+    ("Copy Instance ID", "⌘C"),
+    ("Open in Console", "⌘O"),
+    ("Settings", "⌘,"),
+];
+
+/// Settings and keymap rows matching a search query.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SettingsSearchResults {
+    /// Matching settings grouped by category, in catalog order.
+    pub groups: Vec<(&'static str, Vec<SettingId>)>,
+    /// Matching keymap rows as (action, shortcut), in keymap order.
+    pub keymap_rows: Vec<(&'static str, &'static str)>,
+}
+
+/// Finds settings and keymap rows containing `query`, ignoring case and surrounding spaces.
+pub fn search_settings(query: &str) -> SettingsSearchResults {
+    let query = query.trim().to_lowercase();
+    if query.is_empty() {
+        return SettingsSearchResults {
+            groups: Vec::new(),
+            keymap_rows: Vec::new(),
+        };
+    }
+    let groups = SETTINGS_CATEGORIES
+        .iter()
+        .filter_map(|category| {
+            let ids: Vec<SettingId> = SettingId::ALL
+                .into_iter()
+                .filter(|id| id.category() == *category)
+                .filter(|id| {
+                    [id.category(), id.label(), id.description()]
+                        .iter()
+                        .any(|text| text.to_lowercase().contains(&query))
+                })
+                .collect();
+            (!ids.is_empty()).then_some((*category, ids))
+        })
+        .collect();
+    let keymap_rows = KEYMAP
+        .into_iter()
+        .filter(|(action, shortcut)| {
+            format!("{action} {shortcut}")
+                .to_lowercase()
+                .contains(&query)
+        })
+        .collect();
+    SettingsSearchResults {
+        groups,
+        keymap_rows,
+    }
+}
+
+impl SettingsSearchResults {
+    /// Number of matching settings plus matching keymap rows.
+    pub fn count(&self) -> usize {
+        self.groups.iter().map(|(_, ids)| ids.len()).sum::<usize>() + self.keymap_rows.len()
+    }
+
+    /// Result count heading such as "1 result" or "3 results".
+    pub fn title(&self) -> String {
+        let count = self.count();
+        if count == 1 {
+            "1 result".to_owned()
+        } else {
+            format!("{count} results")
+        }
+    }
+
+    /// Categories with results, in catalog order, including Keymap.
+    pub fn visible_categories(&self) -> Vec<&'static str> {
+        SETTINGS_CATEGORIES
+            .iter()
+            .copied()
+            .filter(|category| {
+                self.groups.iter().any(|(group, _)| group == category)
+                    || (*category == "Keymap" && !self.keymap_rows.is_empty())
+            })
+            .collect()
+    }
+}
+
+/// Breadcrumb shown above search results.
+pub fn settings_search_breadcrumb(query: &str) -> String {
+    format!("Settings › Search results for “{}”", query.trim())
+}
+
+/// Message shown when a search matches nothing.
+pub fn settings_no_match_text(query: &str) -> String {
+    format!("Nothing matches “{}”. Try a shorter word.", query.trim())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -718,5 +818,95 @@ mod tests {
         assert!(SettingId::RefreshInterval.is_disabled(&off));
         assert!(!SettingId::Theme.is_disabled(&on));
         assert!(!SettingId::Theme.is_disabled(&off));
+    }
+
+    #[test]
+    fn search_refresh_finds_fleet_settings_and_keymap_row() {
+        let results = search_settings("refresh");
+        assert_eq!(
+            results.groups,
+            vec![(
+                "Fleet",
+                vec![
+                    SettingId::AutoRefresh,
+                    SettingId::RefreshInterval,
+                    SettingId::RefreshOnFocus
+                ]
+            )]
+        );
+        assert_eq!(results.keymap_rows, vec![("Refresh", "⌘R")]);
+        assert_eq!(results.count(), 4);
+        assert_eq!(results.title(), "4 results");
+        assert_eq!(results.visible_categories(), vec!["Fleet", "Keymap"]);
+    }
+
+    #[test]
+    fn search_is_case_insensitive_on_category() {
+        let results = search_settings("APPEARANCE");
+        assert_eq!(
+            results.groups,
+            vec![(
+                "Appearance",
+                vec![
+                    SettingId::Theme,
+                    SettingId::Density,
+                    SettingId::ShowSidebarOnLaunch,
+                    SettingId::OpenInspectorOnSelect,
+                    SettingId::ShowUpdatedTime
+                ]
+            )]
+        );
+        assert!(results.keymap_rows.is_empty());
+        assert_eq!(results.title(), "5 results");
+    }
+
+    #[test]
+    fn search_tag_matches_labels_and_descriptions_across_groups() {
+        let results = search_settings("tag");
+        assert_eq!(
+            results.groups,
+            vec![
+                ("Table", vec![SettingId::ShowUnnamedLabel]),
+                ("Search", vec![SettingId::MatchTags]),
+                ("Advanced", vec![SettingId::DemoMode]),
+            ]
+        );
+        assert!(results.keymap_rows.is_empty());
+        assert_eq!(results.count(), 3);
+    }
+
+    #[test]
+    fn search_shortcut_matches_keymap_only() {
+        let results = search_settings("⌘,");
+        assert!(results.groups.is_empty());
+        assert_eq!(results.keymap_rows, vec![("Settings", "⌘,")]);
+        assert_eq!(results.title(), "1 result");
+        assert_eq!(results.visible_categories(), vec!["Keymap"]);
+    }
+
+    #[test]
+    fn search_without_matches_or_blank_query_is_empty() {
+        let none = search_settings("zzz");
+        assert_eq!(none.count(), 0);
+        assert_eq!(none.title(), "0 results");
+        assert!(none.visible_categories().is_empty());
+
+        for blank in ["", "   "] {
+            let results = search_settings(blank);
+            assert!(results.groups.is_empty());
+            assert!(results.keymap_rows.is_empty());
+        }
+    }
+
+    #[test]
+    fn search_text_helpers_trim_query() {
+        assert_eq!(
+            settings_search_breadcrumb(" refresh "),
+            "Settings › Search results for “refresh”"
+        );
+        assert_eq!(
+            settings_no_match_text("zzz"),
+            "Nothing matches “zzz”. Try a shorter word."
+        );
     }
 }
