@@ -34,6 +34,7 @@ pub struct ContextBar {
     pub region_label: String,
     pub failed_regions: Vec<String>,
     pub last_success_text: String,
+    pub load_error_text: Option<String>,
 }
 
 impl EventEmitter<ContextBarEvent> for ContextBar {}
@@ -46,6 +47,7 @@ impl ContextBar {
             region_label: "All regions".to_string(),
             failed_regions: Vec::new(),
             last_success_text: String::new(),
+            load_error_text: None,
         }
     }
 }
@@ -110,6 +112,14 @@ impl Render for ContextBar {
         }
 
         let mut right = div().flex().items_center().gap(px(GAP));
+        if let Some(error_text) = &self.load_error_text {
+            right = right.child(
+                div()
+                    .debug_selector(|| "bar.load-error".into())
+                    .text_color(palette.err)
+                    .child(error_text.clone()),
+            );
+        }
         if rules.show_updated_time && !self.last_success_text.is_empty() {
             right = right.child(
                 div()

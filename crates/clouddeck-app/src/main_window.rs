@@ -7,8 +7,8 @@ use clouddeck_core::{
     ComputeServicePartialFailure, EC2Instance, EscapeAction, EscapeContext, OPEN_IN_CONSOLE_FLASH,
     ProfileInput, RegionScope, Settings, Theme, center_state, center_text, clock_text,
     console_url_for, copied_flash, escape_action, filter_command_query, known_tag_keys,
-    layout_rules, region_scope_label, settings_path, should_auto_refresh, should_refresh_on_focus,
-    stale_count, updated_text,
+    layout_rules, region_failure_reason, region_scope_label, settings_path, should_auto_refresh,
+    should_refresh_on_focus, stale_count, updated_text,
 };
 use gpui::{
     AnyElement, AnyView, App, Bounds, ClickEvent, ClipboardItem, Context, Div, Entity,
@@ -724,20 +724,28 @@ impl MainWindow {
             .iter()
             .map(|failure| failure.region.clone())
             .collect();
-        let last_success_text = updated_text(
-            self.fleet.read(cx).view_model.last_success(),
-            local_offset_minutes(),
-        );
+        let fleet = self.fleet.read(cx);
+        let last_success_text =
+            updated_text(fleet.view_model.last_success(), local_offset_minutes());
+        let load_error_text = match fleet.view_model.error() {
+            Some(error) if !fleet.view_model.instances().is_empty() => Some(format!(
+                "Refresh failed: {}",
+                region_failure_reason(error, fleet.retry_in_seconds)
+            )),
+            _ => None,
+        };
         self.context_bar.update(cx, |bar, cx| {
             if bar.region_label == region_label
                 && bar.failed_regions == failed_regions
                 && bar.last_success_text == last_success_text
+                && bar.load_error_text == load_error_text
             {
                 return;
             }
             bar.region_label = region_label;
             bar.failed_regions = failed_regions;
             bar.last_success_text = last_success_text;
+            bar.load_error_text = load_error_text;
             cx.notify();
         });
     }
@@ -1641,6 +1649,29 @@ mod tests {
             main.context_bar.read(cx).last_success_text.clone()
         });
         assert!(text.starts_with("Updated "), "got {text:?}");
+    }
+
+    #[gpui::test]
+    fn failed_refresh_keeps_rows_and_reports_the_error_in_the_status_bar(cx: &mut TestAppContext) {
+        let (fleet, main, cx) = rooted_main_window(cx, three_instances(), 1280.0, 760.0);
+        cx.run_until_parked();
+
+        fleet.update(cx, |fleet, cx| {
+            fleet
+                .view_model
+                .finish_load(Err(std::io::Error::other("Rate exceeded").into()));
+            cx.notify();
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            fleet.read_with(cx, |fleet, _| fleet.view_model.instances().len()),
+            3
+        );
+        let error_text = main.read_with(cx, |main, cx| {
+            main.context_bar.read(cx).load_error_text.clone()
+        });
+        assert_eq!(error_text.as_deref(), Some("Refresh failed: Throttled"));
     }
 
     #[gpui::test]

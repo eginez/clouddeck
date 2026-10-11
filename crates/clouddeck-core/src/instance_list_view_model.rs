@@ -269,11 +269,6 @@ impl InstanceListViewModel {
                 self.reconcile_selection_with_filtered_instances();
             }
             Err(error) => {
-                self.instances = vec![];
-                self.known_tag_keys = vec![];
-                self.partial_failures = vec![];
-                self.stale_regions = vec![];
-                self.selected_instance_id = None;
                 let cloud_deck_error = CloudDeckError::from_service_error(error.as_ref());
                 self.error_message = Some(cloud_deck_error.message_for("list instances"));
                 self.error = Some(cloud_deck_error);
@@ -390,18 +385,20 @@ mod tests {
         assert!(vm.instances().is_empty());
     }
 
-    #[tokio::test]
-    async fn load_failure_clears_instances_and_sets_error_message() {
-        let mut vm = view_model_for(TestScenarioKind::Failure);
+    #[test]
+    fn load_failure_keeps_last_good_instances_and_sets_error_message() {
+        let mut vm =
+            InstanceListViewModel::new(Box::new(crate::MockComputeService::new(vec![], None)));
+        vm.finish_load_at(loaded(vec![in_region("us-east-1", "a")], &[]), at(T1_SECS));
         vm.set_search_text("keep-me");
-        vm.set_selected_instance_id(Some("us-east-1:i-stale".into()));
+        vm.set_selected_instance_id(Some("us-east-1:a".into()));
 
-        vm.load_instances().await;
+        vm.begin_load();
+        vm.finish_load_at(Err(Box::new(StubError)), at(T1_SECS + 60));
 
         assert!(!vm.is_loading());
-        assert!(vm.instances().is_empty());
-        assert!(vm.partial_failures().is_empty());
-        assert!(vm.selected_instance_id().is_none());
+        assert_eq!(loaded_ids(&vm), vec!["a"]);
+        assert_eq!(vm.selected_instance_id(), Some("us-east-1:a"));
         let message = vm.error_message().expect("error message should be set");
         assert!(message.starts_with("Could not list instances:"));
         // Filter state itself is untouched by a failed load.
@@ -963,7 +960,7 @@ mod tests {
     }
 
     #[test]
-    fn failed_load_clears_rows_and_stale_regions_but_keeps_last_success() {
+    fn failed_load_keeps_rows_stale_regions_and_last_success() {
         let mut vm =
             InstanceListViewModel::new(Box::new(crate::MockComputeService::new(vec![], None)));
         vm.finish_load_at(
@@ -980,8 +977,8 @@ mod tests {
 
         vm.finish_load_at(Err(Box::new(StubError)), at(T2_SECS + 60));
 
-        assert!(vm.instances().is_empty());
-        assert!(vm.stale_regions().is_empty());
+        assert_eq!(loaded_ids(&vm), vec!["a", "b"]);
+        assert_eq!(vm.stale_regions(), ["eu-central-1".to_string()]);
         assert_eq!(vm.last_success(), Some(at(T2_SECS)));
     }
 
