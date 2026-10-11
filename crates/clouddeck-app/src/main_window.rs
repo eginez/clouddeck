@@ -85,6 +85,7 @@ pub struct MainWindow {
     focus_handle: FocusHandle,
     overlay_view: Option<AnyView>,
     overlay_subscription: Option<Subscription>,
+    region_scope_dirty: bool,
     /// Whether the window was narrow on the last render, to reset panes only when it crosses.
     last_narrow: Option<bool>,
     /// Elements drawn by the last render, so tests can see removals that `debug_bounds` keeps.
@@ -109,6 +110,7 @@ impl MainWindow {
     pub fn new(
         fleet: Entity<FleetState>,
         available_regions: Vec<String>,
+        scope: RegionScope,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -121,7 +123,12 @@ impl MainWindow {
         }
         let focus_handle = cx.focus_handle();
         focus_handle.focus(window);
-        let scope = RegionScope::all(&available_regions);
+        let viewport = window.viewport_size();
+        let rules = layout_rules(f32::from(viewport.width), f32::from(viewport.height));
+        fleet.update(cx, |fleet, _| {
+            fleet.sidebar_open &= rules.panes_open_by_default;
+            fleet.inspector_open &= rules.panes_open_by_default;
+        });
         let search = cx.new(|cx| SearchField::new(fleet.clone(), window, cx));
         let toolbar = cx.new(|cx| Toolbar::new(fleet.clone(), search.clone(), cx));
         let sidebar = cx.new(|cx| Sidebar::new(fleet.clone(), cx));
@@ -192,7 +199,8 @@ impl MainWindow {
             focus_handle,
             overlay_view: None,
             overlay_subscription: None,
-            last_narrow: None,
+            region_scope_dirty: false,
+            last_narrow: Some(rules.narrow),
             #[cfg(test)]
             rendered: RenderedPanes::default(),
             #[cfg(test)]
@@ -261,7 +269,7 @@ impl MainWindow {
                         RegionPickerEvent::Changed(regions) => {
                             this.scope =
                                 RegionScope::from_selected(regions, &this.available_regions);
-                            cx.emit(MainWindowEvent::RegionsChanged(regions.clone()));
+                            this.region_scope_dirty = true;
                             cx.notify();
                         }
                         RegionPickerEvent::Dismissed => this.close_overlay(window, cx),
@@ -329,11 +337,22 @@ impl MainWindow {
     }
 
     fn close_overlay(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.commit_region_scope(cx);
         self.overlay = None;
         self.overlay_view = None;
         self.overlay_subscription = None;
         self.focus_handle.focus(window);
         cx.notify();
+    }
+
+    /// Announces a region selection once the picker that made it is no longer open,
+    /// so the shell rebuilds the fleet without tearing down the picker mid-interaction.
+    fn commit_region_scope(&mut self, cx: &mut Context<Self>) {
+        if std::mem::take(&mut self.region_scope_dirty) {
+            cx.emit(MainWindowEvent::RegionsChanged(
+                self.scope.selected().to_vec(),
+            ));
+        }
     }
 
     fn open_row_menu(
@@ -946,7 +965,9 @@ mod tests {
             cx.open_window(window_options(bounds), move |window, cx| {
                 gpui_component::init(cx);
                 let main = cx.new(|cx| {
-                    MainWindow::new(fleet_for_window, vec!["us-east-1".to_string()], window, cx)
+                    let regions = vec!["us-east-1".to_string()];
+                    let scope = RegionScope::all(&regions);
+                    MainWindow::new(fleet_for_window, regions, scope, window, cx)
                 });
                 *slot_for_window.borrow_mut() = Some(main.clone());
                 cx.new(|cx| gpui_component::Root::new(main, window, cx))
@@ -1209,7 +1230,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn region_picker_change_emits_regions_changed(cx: &mut TestAppContext) {
+    fn region_picker_change_emits_regions_changed_once_dismissed(cx: &mut TestAppContext) {
         let (_fleet, main, cx) = rooted_main_window(cx, three_instances(), 1280.0, 760.0);
         let events: Rc<RefCell<Vec<MainWindowEvent>>> = Rc::new(RefCell::new(Vec::new()));
         let sink = events.clone();
@@ -1226,6 +1247,13 @@ mod tests {
         picker.update(cx, |_, cx| {
             cx.emit(RegionPickerEvent::Changed(vec!["us-east-1".to_string()]))
         });
+        cx.run_until_parked();
+        assert!(
+            events.borrow().is_empty(),
+            "the fleet should not reload while the picker is still open"
+        );
+
+        picker.update(cx, |_, cx| cx.emit(RegionPickerEvent::Dismissed));
         cx.run_until_parked();
 
         assert_eq!(

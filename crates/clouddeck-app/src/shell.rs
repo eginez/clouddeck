@@ -5,15 +5,19 @@ use crate::{
     theme::SurgicalTheme,
 };
 use clouddeck_core::{
-    AwsSdkComputeService, ComputeService, EC2Instance, EC2Scenario, FleetComputeService,
-    InstanceListViewModel, MockComputeService, ProfileInput, WorkspaceContext,
+    AwsSdkComputeService, ComputeService, EC2Instance, EC2Scenario, FLEET_REGIONS,
+    FleetComputeService, InstanceListViewModel, MockComputeService, ProfileInput, RegionScope,
+    UiState, WindowFrame, WorkspaceContext,
 };
 use gpui::{
-    Context, Entity, IntoElement, KeyBinding, ParentElement, Render, Styled, Window, actions, div,
-    prelude::*, px,
+    App, Context, Entity, IntoElement, KeyBinding, ParentElement, Render, Styled, Subscription,
+    Task, Window, actions, div, prelude::*, px,
 };
+use std::{path::PathBuf, time::Duration};
 
 actions!(clouddeck, [Refresh]);
+
+const UI_STATE_SAVE_DEBOUNCE: Duration = Duration::from_secs(1);
 
 pub fn app_key_bindings() -> [KeyBinding; 2] {
     [
@@ -31,6 +35,12 @@ pub struct AppShell {
     demo_scenario: DemoScenario,
     wizard: Option<Entity<crate::account_window::AccountWindowView>>,
     message: Option<String>,
+    ui_state_path: Option<PathBuf>,
+    ui_state_saved: UiState,
+    ui_window_frame: Option<WindowFrame>,
+    ui_save_task: Option<Task<()>>,
+    window_bounds: Subscription,
+    applied_scope: RegionScope,
     /// Test-only: an optional compute service injected into `apply_context`
     /// so that a test can deterministically hold a picker-driven context
     /// switch load open (via `GatedComputeService`) and observe the
@@ -118,6 +128,11 @@ impl AppShell {
         Self::build_with_scenario(window, true, DemoScenario::Large, cx)
     }
 
+    #[cfg(test)]
+    fn new_demo_partial(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        Self::build_with_scenario(window, true, DemoScenario::Partial, cx)
+    }
+
     fn profiles(
         demo: bool,
         demo_scenario: DemoScenario,
@@ -143,17 +158,70 @@ impl AppShell {
                 .map(|region| (*region).into())
                 .collect();
         }
+        let partial_regions: Vec<String> = if demo_scenario == DemoScenario::Partial {
+            FLEET_REGIONS
+                .iter()
+                .map(|region| (*region).into())
+                .collect()
+        } else {
+            Vec::new()
+        };
         let mut regions = vec!["fleet".to_string()];
         for region in scenario_for(demo_scenario)
             .profiles
             .into_iter()
             .flat_map(|profile| profile.regions.into_iter().map(|region| region.name))
+            .chain(partial_regions)
         {
             if !regions.iter().any(|known| known == &region) {
                 regions.push(region);
             }
         }
         regions
+    }
+
+    fn available_regions(demo: bool, demo_scenario: DemoScenario) -> Vec<String> {
+        Self::regions(demo, demo_scenario)
+            .into_iter()
+            .filter(|region| region != "fleet")
+            .collect()
+    }
+
+    fn fleet_regions(scope: &RegionScope, available: &[String]) -> Vec<String> {
+        if scope.is_all(available) {
+            return FLEET_REGIONS
+                .iter()
+                .map(|region| (*region).into())
+                .collect();
+        }
+        scope.selected().to_vec()
+    }
+
+    fn region_for_scope(scope: &RegionScope, available: &[String]) -> String {
+        match scope.selected() {
+            [only] if !scope.is_all(available) => only.clone(),
+            _ => "fleet".into(),
+        }
+    }
+
+    fn scope_for_region(region: &str, scope: RegionScope, available: &[String]) -> RegionScope {
+        if region != "fleet" {
+            return RegionScope::from_selected(&[region.to_string()], available);
+        }
+        if scope.selected().len() == 1 {
+            return RegionScope::all(available);
+        }
+        scope
+    }
+
+    fn window_frame(window: &Window) -> WindowFrame {
+        let bounds = window.bounds();
+        WindowFrame {
+            x: f32::from(bounds.origin.x),
+            y: f32::from(bounds.origin.y),
+            width: f32::from(bounds.size.width),
+            height: f32::from(bounds.size.height),
+        }
     }
 
     fn instances_for(data: &EC2Scenario, profile: &str, region: &str) -> Vec<EC2Instance> {
@@ -195,6 +263,7 @@ impl AppShell {
     fn demo_service(
         context: &WorkspaceContext,
         demo_scenario: DemoScenario,
+        fleet_regions: &[String],
     ) -> Box<dyn ComputeService + Send + Sync> {
         let data = scenario_for(demo_scenario);
         if demo_scenario == DemoScenario::Failure {
@@ -206,10 +275,7 @@ impl AppShell {
         if context.region == "fleet" && demo_scenario == DemoScenario::Partial {
             let profile = context.profile.clone();
             return Box::new(FleetComputeService::new(
-                clouddeck_core::FLEET_REGIONS
-                    .iter()
-                    .map(|region| (*region).into())
-                    .collect(),
+                fleet_regions.to_vec(),
                 move |region| {
                     if region == "us-east-1" {
                         Box::new(MockComputeService::new(
@@ -239,9 +305,10 @@ impl AppShell {
         context: &WorkspaceContext,
         demo: bool,
         demo_scenario: DemoScenario,
+        fleet_regions: &[String],
     ) -> Box<dyn ComputeService + Send + Sync> {
         if demo {
-            return Self::demo_service(context, demo_scenario);
+            return Self::demo_service(context, demo_scenario, fleet_regions);
         }
         if context.profile.is_empty() {
             return Box::new(MockComputeService::new(vec![], Some(std::io::Error::other("No AWS profile selected. Use “Connect to AWS” to sign in and choose a profile, or explore the demo without credentials.").into())));
@@ -249,10 +316,7 @@ impl AppShell {
         if context.region == "fleet" {
             let profile = context.profile.clone();
             Box::new(FleetComputeService::new(
-                clouddeck_core::FLEET_REGIONS
-                    .iter()
-                    .map(|r| (*r).into())
-                    .collect(),
+                fleet_regions.to_vec(),
                 move |region| Box::new(AwsSdkComputeService::new(profile.clone(), region)),
             ))
         } else {
@@ -269,6 +333,17 @@ impl AppShell {
         demo_scenario: DemoScenario,
         cx: &mut Context<Self>,
     ) -> Self {
+        let ui_state_path = (!demo).then(clouddeck_core::ui_state_path);
+        Self::build(window, demo, demo_scenario, ui_state_path, cx)
+    }
+
+    fn build(
+        window: &mut Window,
+        demo: bool,
+        demo_scenario: DemoScenario,
+        ui_state_path: Option<PathBuf>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let loaded = Self::profiles(demo, demo_scenario);
         let message = loaded
             .as_ref()
@@ -280,7 +355,12 @@ impl AppShell {
         } else {
             WorkspaceContext::load(&clouddeck_core::context_path())
         };
-        let context = saved
+        let ui_state = ui_state_path
+            .as_deref()
+            .map(UiState::load)
+            .unwrap_or_default();
+        let available = Self::available_regions(demo, demo_scenario);
+        let mut context = saved
             .filter(|s| profiles.iter().any(|p| p.name == s.profile))
             .unwrap_or_else(|| WorkspaceContext {
                 profile: profiles.first().map(|p| p.name.clone()).unwrap_or_default(),
@@ -293,8 +373,27 @@ impl AppShell {
                         .unwrap_or_else(|| "us-east-1".into())
                 },
             });
-        let view_model = InstanceListViewModel::new(Self::service(&context, demo, demo_scenario));
-        let fleet = cx.new(|_| FleetState::new(view_model, context.profile.clone(), demo));
+        let restored = RegionScope::from_selected(&ui_state.selected_regions, &available);
+        let scope = if restored.is_all(&available) {
+            Self::scope_for_region(&context.region, restored, &available)
+        } else {
+            context.region = Self::region_for_scope(&restored, &available);
+            restored
+        };
+        let fleet_regions = Self::fleet_regions(&scope, &available);
+        let view_model = InstanceListViewModel::new(Self::service(
+            &context,
+            demo,
+            demo_scenario,
+            &fleet_regions,
+        ));
+        let mut fleet_state = FleetState::new(view_model, context.profile.clone(), demo);
+        fleet_state.pinned_searches = ui_state.pinned_searches.clone();
+        fleet_state.recent_searches = ui_state.recent_searches.clone();
+        fleet_state.recent_instances = ui_state.recent_instances.clone();
+        fleet_state.sidebar_open = ui_state.sidebar_open;
+        fleet_state.inspector_open = ui_state.inspector_open;
+        let fleet = cx.new(|_| fleet_state);
         let profile_inputs: Vec<ProfileInput> = profiles
             .iter()
             .map(|p| ProfileInput {
@@ -303,14 +402,20 @@ impl AppShell {
                 region: p.region.clone(),
             })
             .collect();
+        let applied_scope = scope.clone();
         let main_window = Self::new_main_window(
             fleet.clone(),
             profile_inputs,
             demo,
             demo_scenario,
+            scope,
             window,
             cx,
         );
+        let window_bounds = cx.observe_window_bounds(window, |this: &mut Self, window, cx| {
+            this.ui_window_frame = Some(Self::window_frame(window));
+            this.schedule_ui_state_save(cx);
+        });
         fleet.update(cx, |fleet, cx| fleet.refresh(cx));
         let status_bar = cx.new(|_| CloudContextStatusBar {
             provider: if demo {
@@ -337,6 +442,7 @@ impl AppShell {
                 let demo = !this.demo;
                 let scenario = this.demo_scenario;
                 bar.update(cx, |bar, _| bar.demo_requested = false);
+                this.save_ui_state(cx);
                 *this = Self::build_with_scenario(window, demo, scenario, cx);
                 cx.notify();
                 return;
@@ -362,10 +468,61 @@ impl AppShell {
             demo,
             demo_scenario,
             message,
+            ui_state_saved: ui_state.clone(),
+            ui_window_frame: ui_state.window,
+            ui_state_path,
+            ui_save_task: None,
+            window_bounds,
+            applied_scope,
             wizard: None,
             #[cfg(test)]
             test_service_override: None,
         }
+    }
+
+    fn schedule_ui_state_save(&mut self, cx: &mut Context<Self>) {
+        if self.ui_state_path.is_none() {
+            return;
+        }
+        self.ui_save_task = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(UI_STATE_SAVE_DEBOUNCE).await;
+            let _ = this.update(cx, |this, cx| this.save_ui_state(cx));
+        }));
+    }
+
+    fn save_ui_state(&mut self, cx: &mut Context<Self>) {
+        let Some(path) = self.ui_state_path.clone() else {
+            return;
+        };
+        let state = self.ui_state_snapshot(cx);
+        if state == self.ui_state_saved {
+            return;
+        }
+        match state.save(&path) {
+            Ok(()) => self.ui_state_saved = state,
+            Err(error) => self.message = Some(format!("Could not save UI state: {error}")),
+        }
+    }
+
+    fn ui_state_snapshot(&self, cx: &App) -> UiState {
+        let fleet = self.fleet.read(cx);
+        let available = Self::available_regions(self.demo, self.demo_scenario);
+        UiState {
+            selected_regions: if self.applied_scope.is_all(&available) {
+                Vec::new()
+            } else {
+                self.applied_scope.selected().to_vec()
+            },
+            pinned_searches: fleet.pinned_searches.clone(),
+            recent_searches: fleet.recent_searches.clone(),
+            recent_instances: fleet.recent_instances.clone(),
+            sidebar_open: fleet.sidebar_open,
+            inspector_open: fleet.inspector_open,
+            sidebar_width: self.ui_state_saved.sidebar_width,
+            inspector_width: self.ui_state_saved.inspector_width,
+            window: self.ui_window_frame.clone(),
+        }
+        .normalized()
     }
 
     /// Test-only: install a compute service that will be used (instead of
@@ -386,14 +543,12 @@ impl AppShell {
         profiles: Vec<ProfileInput>,
         demo: bool,
         demo_scenario: DemoScenario,
+        scope: RegionScope,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<MainWindow> {
-        let regions: Vec<String> = Self::regions(demo, demo_scenario)
-            .into_iter()
-            .filter(|region| region != "fleet")
-            .collect();
-        let main_window = cx.new(|cx| MainWindow::new(fleet.clone(), regions, window, cx));
+        let regions = Self::available_regions(demo, demo_scenario);
+        let main_window = cx.new(|cx| MainWindow::new(fleet.clone(), regions, scope, window, cx));
         main_window.update(cx, |main_window, _| main_window.profiles = profiles);
         let weak = main_window.downgrade();
         cx.observe(&fleet, move |_, observed, cx| {
@@ -404,9 +559,14 @@ impl AppShell {
             });
         })
         .detach();
-        cx.subscribe(
+        cx.observe(&fleet, |this: &mut Self, _, cx| {
+            this.schedule_ui_state_save(cx)
+        })
+        .detach();
+        cx.subscribe_in(
             &main_window,
-            |this: &mut Self, _, event: &MainWindowEvent, cx| match event {
+            window,
+            |this: &mut Self, _, event: &MainWindowEvent, window, cx| match event {
                 MainWindowEvent::PickProfile(name) => {
                     let name = name.clone();
                     this.status_bar.update(cx, |bar, cx| {
@@ -419,10 +579,8 @@ impl AppShell {
                         [only] => only.clone(),
                         _ => "fleet".into(),
                     };
-                    this.status_bar.update(cx, |bar, cx| {
-                        bar.region = region;
-                        cx.notify();
-                    });
+                    let profile = this.status_bar.read(cx).profile.clone().unwrap_or_default();
+                    this.apply_context(WorkspaceContext { profile, region }, window, cx);
                 }
                 MainWindowEvent::ConnectToAws => this.open_setup(cx),
                 MainWindowEvent::Retry(_) => this.refresh(cx),
@@ -444,6 +602,14 @@ impl AppShell {
             bar.profile = (!self.context.profile.is_empty()).then(|| self.context.profile.clone());
             bar.region = self.context.region.clone();
         });
+        let (profiles, scope) = {
+            let main_window = self.main_window.read(cx);
+            (main_window.profiles.clone(), main_window.scope.clone())
+        };
+        let available = Self::available_regions(self.demo, self.demo_scenario);
+        let scope = Self::scope_for_region(&self.context.region, scope, &available);
+        let fleet_regions = Self::fleet_regions(&scope, &available);
+        self.applied_scope = scope.clone();
         #[cfg(test)]
         let service: Box<dyn ComputeService + Send + Sync> = self
             .test_service_override
@@ -456,31 +622,44 @@ impl AppShell {
                     std::sync::Arc::clone(s),
                 )) as _
             })
-            .unwrap_or_else(|| Self::service(&self.context, self.demo, self.demo_scenario));
+            .unwrap_or_else(|| {
+                Self::service(&self.context, self.demo, self.demo_scenario, &fleet_regions)
+            });
         #[cfg(not(test))]
         let service: Box<dyn ComputeService + Send + Sync> =
-            Self::service(&self.context, self.demo, self.demo_scenario);
+            Self::service(&self.context, self.demo, self.demo_scenario, &fleet_regions);
         let vm = InstanceListViewModel::new(service);
         let profile = self.context.profile.clone();
         let demo = self.demo;
+        let previous = self.fleet.read(cx);
+        let (pinned, recent_searches, recent_instances, sidebar_open, inspector_open) = (
+            previous.pinned_searches.clone(),
+            previous.recent_searches.clone(),
+            previous.recent_instances.clone(),
+            previous.sidebar_open,
+            previous.inspector_open,
+        );
         // A fresh fleet and window, not an in-place reset: the previous load
         // holds only a weak handle to the old fleet, so it cannot write into
         // the new context once that entity is dropped.
-        let (profiles, scope) = {
-            let main_window = self.main_window.read(cx);
-            (main_window.profiles.clone(), main_window.scope.clone())
-        };
-        let fleet = cx.new(|_| FleetState::new(vm, profile, demo));
+        let fleet = cx.new(|_| {
+            let mut fleet = FleetState::new(vm, profile, demo);
+            fleet.pinned_searches = pinned;
+            fleet.recent_searches = recent_searches;
+            fleet.recent_instances = recent_instances;
+            fleet.sidebar_open = sidebar_open;
+            fleet.inspector_open = inspector_open;
+            fleet
+        });
         self.main_window = Self::new_main_window(
             fleet.clone(),
             profiles,
             demo,
             self.demo_scenario,
+            scope,
             window,
             cx,
         );
-        self.main_window
-            .update(cx, |main_window, _| main_window.scope = scope);
         self.fleet = fleet;
         self.fleet.update(cx, |fleet, cx| fleet.refresh(cx));
         if !self.demo {
@@ -490,6 +669,7 @@ impl AppShell {
                 .err()
                 .map(|e| format!("Could not remember this context: {e}"));
         }
+        self.schedule_ui_state_save(cx);
         cx.notify();
     }
 
@@ -962,13 +1142,14 @@ mod tests {
             region: "fleet".into(),
         };
 
-        let failure = AppShell::demo_service(&context, DemoScenario::Failure);
+        let fleet_regions: Vec<String> = FLEET_REGIONS.iter().map(|r| (*r).into()).collect();
+        let failure = AppShell::demo_service(&context, DemoScenario::Failure, &fleet_regions);
         let failure = crate::runtime::runtime()
             .block_on(failure.list_instances(None))
             .expect_err("failure scenario should fail visibly");
         assert!(failure.to_string().contains("Simulated demo load failure"));
 
-        let partial = AppShell::demo_service(&context, DemoScenario::Partial);
+        let partial = AppShell::demo_service(&context, DemoScenario::Partial, &fleet_regions);
         let partial = crate::runtime::runtime()
             .block_on(partial.list_instances(None))
             .expect("partial scenario should retain successful regions");
@@ -982,7 +1163,7 @@ mod tests {
             profile: "scenario-default".into(),
             region: "us-east-1".into(),
         };
-        let service = AppShell::demo_service(&context, DemoScenario::Large);
+        let service = AppShell::demo_service(&context, DemoScenario::Large, &[]);
         let result = crate::runtime::runtime()
             .block_on(service.list_instances(None))
             .expect("large demo should load");
@@ -1047,9 +1228,11 @@ mod tests {
         // than a dead end. The load error renders as a centered state whose
         // action is that affordance.
         let real_mode = crate::shell::is_real_mode();
+        let ui_state_path = temp_ui_state_path("mount-real-mode");
+        let build_path = ui_state_path.clone();
         let (shell, cx) = add_rooted_shell(cx, move |window, cx| {
             if real_mode {
-                AppShell::build_with_scenario(window, false, DemoScenario::Happy, cx)
+                AppShell::build(window, false, DemoScenario::Happy, Some(build_path), cx)
             } else {
                 AppShell::build_with_scenario(window, true, DemoScenario::Empty, cx)
             }
@@ -1085,6 +1268,120 @@ mod tests {
                 "the demo empty scenario must not offer AWS onboarding"
             );
         }
+        if let Some(dir) = ui_state_path.parent() {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
+    fn temp_ui_state_path(name: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("clouddeck-shell-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir.join("ui-state.json")
+    }
+
+    #[gpui::test]
+    fn saved_ui_state_is_restored_on_startup(cx: &mut TestAppContext) {
+        let path = temp_ui_state_path("restore");
+        UiState {
+            selected_regions: vec!["us-east-1".into(), "eu-west-1".into()],
+            pinned_searches: vec!["state:stopped".into()],
+            recent_searches: vec!["owner:esteban".into()],
+            recent_instances: vec!["us-east-1:i-1".into()],
+            sidebar_open: false,
+            inspector_open: false,
+            ..UiState::default()
+        }
+        .save(&path)
+        .unwrap();
+
+        let build_path = path.clone();
+        let (shell, cx) = add_rooted_shell(cx, move |window, cx| {
+            AppShell::build(window, true, DemoScenario::Partial, Some(build_path), cx)
+        });
+
+        shell.read_with(cx, |shell, cx| {
+            let fleet = shell.fleet.read(cx);
+            assert_eq!(fleet.pinned_searches, vec!["state:stopped".to_string()]);
+            assert_eq!(fleet.recent_searches, vec!["owner:esteban".to_string()]);
+            assert_eq!(fleet.recent_instances, vec!["us-east-1:i-1".to_string()]);
+            assert!(!fleet.sidebar_open);
+            assert!(!fleet.inspector_open);
+            assert_eq!(
+                shell.main_window.read(cx).scope.selected(),
+                ["us-east-1".to_string(), "eu-west-1".to_string()]
+            );
+            assert_eq!(shell.context.region, "fleet");
+        });
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
+    #[gpui::test]
+    fn ui_state_saves_once_the_layout_settles(cx: &mut TestAppContext) {
+        let path = temp_ui_state_path("debounce");
+        let build_path = path.clone();
+        let (shell, cx) = add_rooted_shell(cx, move |window, cx| {
+            AppShell::build(window, true, DemoScenario::Happy, Some(build_path), cx)
+        });
+        wait_until(cx, "the startup load to settle", |cx| {
+            shell.read_with(cx, |shell, cx| {
+                !shell.fleet.read(cx).view_model.is_loading()
+            })
+        });
+
+        shell.update(cx, |shell, cx| {
+            shell.fleet.update(cx, |fleet, cx| {
+                fleet.pinned_searches.push("state:stopped".into());
+                cx.notify();
+            });
+        });
+        cx.executor().advance_clock(Duration::from_millis(900));
+        cx.run_until_parked();
+        let saved_early = UiState::load(&path);
+        assert!(
+            !saved_early
+                .pinned_searches
+                .contains(&"state:stopped".to_string()),
+            "the save should wait out the debounce"
+        );
+
+        cx.executor().advance_clock(Duration::from_millis(200));
+        cx.run_until_parked();
+        assert_eq!(
+            UiState::load(&path).pinned_searches,
+            vec!["state:stopped".to_string()]
+        );
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
+    #[gpui::test]
+    fn region_scope_limits_the_fleet_query(cx: &mut TestAppContext) {
+        let (shell, cx) = add_rooted_shell(cx, |window, cx| AppShell::new_demo_partial(window, cx));
+        wait_until_context_settled(cx, &shell);
+
+        let main_window = shell.read_with(cx, |shell, _| shell.main_window.clone());
+        let available = AppShell::available_regions(true, DemoScenario::Partial);
+        let selected = vec!["us-east-1".to_string(), "eu-west-1".to_string()];
+        main_window.update(cx, |main_window, _| {
+            main_window.scope = RegionScope::from_selected(&selected, &available);
+        });
+        emit_main_window_event(cx, &shell, MainWindowEvent::RegionsChanged(selected));
+        wait_until_context_settled(cx, &shell);
+
+        shell.read_with(cx, |shell, cx| {
+            let vm = &shell.fleet.read(cx).view_model;
+            assert_eq!(vm.partial_failures().len(), 1);
+            assert_eq!(vm.partial_failures()[0].region, "eu-west-1");
+            assert!(
+                vm.instances()
+                    .iter()
+                    .all(|instance| instance.region.as_deref() == Some("us-east-1"))
+            );
+        });
     }
 
     #[gpui::test]

@@ -2,7 +2,9 @@
 
 use std::time::Duration;
 
-use clouddeck_core::{Column, EC2Instance, SortState, sort_instances};
+use clouddeck_core::{
+    Column, EC2Instance, RECENT_INSTANCE_LIMIT, SortState, push_recent, sort_instances,
+};
 use gpui::Context;
 
 use crate::view_models::InstanceListViewModel;
@@ -79,8 +81,9 @@ impl FleetState {
     /// Selects the row with `key`, opening the inspector when a row is chosen.
     pub fn select(&mut self, key: Option<String>, cx: &mut Context<Self>) {
         self.tags_show_all = false;
-        if key.is_some() {
+        if let Some(key) = key.as_deref() {
             self.inspector_open = true;
+            push_recent(&mut self.recent_instances, key, RECENT_INSTANCE_LIMIT);
         }
         self.view_model.set_selected_instance_id(key.clone());
         self.selected = key;
