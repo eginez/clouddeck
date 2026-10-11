@@ -106,6 +106,12 @@ impl CommandId {
             | CommandId::OpenSettings => true,
         }
     }
+
+    /// Shortcut label for `platform`, or `None` when the command has no shortcut.
+    pub fn shortcut_for(self, platform: Platform) -> Option<String> {
+        self.shortcut()
+            .map(|shortcut| shortcut_label(shortcut, platform))
+    }
 }
 
 /// Selection and query state that decides which palette commands are enabled.
@@ -116,6 +122,54 @@ pub struct CommandContext {
     pub selection_has_public_ip: bool,
     pub query_is_empty: bool,
     pub has_failed_region: bool,
+}
+
+/// Commands whose title contains every whitespace-separated word of `query`, ignoring case.
+pub fn filter_commands(query: &str) -> Vec<CommandId> {
+    let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
+    CommandId::ALL
+        .into_iter()
+        .filter(|command| {
+            let title = command.title().to_lowercase();
+            words.iter().all(|word| title.contains(word.as_str()))
+        })
+        .collect()
+}
+
+/// Moves the palette highlight one row down or up, stopping at the first and last row.
+pub fn move_highlight(current: usize, len: usize, down: bool) -> usize {
+    if len == 0 {
+        return 0;
+    }
+    let last = len - 1;
+    if down {
+        current.saturating_add(1).min(last)
+    } else {
+        current.saturating_sub(1).min(last)
+    }
+}
+
+/// Operating system whose keyboard shortcut labels the palette shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Platform {
+    Mac,
+    Linux,
+}
+
+/// Shortcut text as shown on `platform`: macOS glyphs on Mac, spelled-out modifiers on Linux.
+pub fn shortcut_label(shortcut: &str, platform: Platform) -> String {
+    match platform {
+        Platform::Mac => shortcut.to_string(),
+        Platform::Linux => shortcut
+            .chars()
+            .map(|c| match c {
+                '⌘' => "Ctrl+".to_string(),
+                '⇧' => "Shift+".to_string(),
+                '⌥' => "Alt+".to_string(),
+                other => other.to_string(),
+            })
+            .collect(),
+    }
 }
 
 #[cfg(test)]
@@ -262,5 +316,60 @@ mod tests {
         };
         assert!(RetryFailedRegion.is_enabled(&ctx));
         assert!(!RetryFailedRegion.is_enabled(&IDLE));
+    }
+
+    #[test]
+    fn filter_keeps_commands_containing_every_word() {
+        assert_eq!(
+            filter_commands("copy"),
+            vec![CopyId, CopyPrivateIp, CopyPublicIp]
+        );
+        assert_eq!(filter_commands("filter run"), vec![FilterRunning]);
+        assert_eq!(
+            filter_commands("VIEW"),
+            vec![SwitchProfile, SwitchRegion, ToggleSidebar, ToggleInspector]
+        );
+        assert_eq!(
+            filter_commands("ip copy"),
+            vec![CopyPrivateIp, CopyPublicIp]
+        );
+        assert_eq!(
+            filter_commands("region"),
+            vec![SwitchRegion, RetryFailedRegion]
+        );
+        assert_eq!(filter_commands("zzz"), Vec::<CommandId>::new());
+    }
+
+    #[test]
+    fn blank_filter_lists_every_command() {
+        assert_eq!(filter_commands(""), CommandId::ALL.to_vec());
+        assert_eq!(filter_commands("   "), CommandId::ALL.to_vec());
+    }
+
+    #[test]
+    fn highlight_moves_one_row_and_clamps_at_both_ends() {
+        assert_eq!(move_highlight(0, 5, true), 1);
+        assert_eq!(move_highlight(4, 5, true), 4);
+        assert_eq!(move_highlight(0, 5, false), 0);
+        assert_eq!(move_highlight(3, 5, false), 2);
+        assert_eq!(move_highlight(0, 0, true), 0);
+        assert_eq!(move_highlight(9, 3, false), 2);
+    }
+
+    #[test]
+    fn linux_shortcut_labels_spell_out_modifiers() {
+        assert_eq!(shortcut_label("⌘⇧R", Platform::Linux), "Ctrl+Shift+R");
+        assert_eq!(shortcut_label("⌘⌥I", Platform::Linux), "Ctrl+Alt+I");
+        assert_eq!(shortcut_label("⌘,", Platform::Linux), "Ctrl+,");
+        assert_eq!(shortcut_label("⌘P", Platform::Mac), "⌘P");
+    }
+
+    #[test]
+    fn shortcut_for_maps_label_and_handles_missing_shortcut() {
+        assert_eq!(
+            SwitchRegion.shortcut_for(Platform::Linux),
+            Some("Ctrl+Shift+R".to_string())
+        );
+        assert_eq!(FilterRunning.shortcut_for(Platform::Linux), None);
     }
 }
