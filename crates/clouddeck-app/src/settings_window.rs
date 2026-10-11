@@ -157,7 +157,7 @@ fn minutes_label(minutes: u32) -> String {
     }
 }
 
-fn choices(id: SettingId) -> Vec<Choice> {
+fn choices(id: SettingId, settings: &Settings) -> Vec<Choice> {
     match id {
         SettingId::Theme => vec![
             choice("Follow system", Pick::Theme(Theme::FollowSystem)),
@@ -206,13 +206,19 @@ fn choices(id: SettingId) -> Vec<Choice> {
             .iter()
             .map(|&seconds| choice(format!("{seconds} seconds"), Pick::RequestTimeout(seconds)))
             .collect(),
-        SettingId::AwsCliPath => std::iter::once(choice("Auto-detect", Pick::AwsCliPath(None)))
-            .chain(
-                CLI_PATHS
-                    .iter()
-                    .map(|&path| choice(path, Pick::AwsCliPath(Some(path.to_owned())))),
-            )
-            .collect(),
+        SettingId::AwsCliPath => {
+            let custom = settings
+                .aws_cli_path
+                .as_deref()
+                .filter(|path| !CLI_PATHS.contains(path));
+            std::iter::once(choice("Auto-detect", Pick::AwsCliPath(None)))
+                .chain(
+                    CLI_PATHS.iter().copied().chain(custom).map(|path| {
+                        choice(path.to_owned(), Pick::AwsCliPath(Some(path.to_owned())))
+                    }),
+                )
+                .collect()
+        }
         _ => Vec::new(),
     }
 }
@@ -422,7 +428,7 @@ impl SettingsWindow {
             },
         ));
         for id in SettingId::ALL {
-            let items = choices(id);
+            let items = choices(id, &settings);
             if items.is_empty() {
                 continue;
             }
@@ -1645,6 +1651,27 @@ mod tests {
 
         assert!(!view.read_with(cx, |view, _| view.rendered_search));
         assert!(cx.debug_bounds("settings.item.Theme").is_some());
+    }
+
+    #[test]
+    fn custom_aws_cli_path_is_offered_and_selected() {
+        let mut settings = Settings::default();
+        settings.aws_cli_path = Some("/home/me/bin/aws".into());
+        let items = choices(SettingId::AwsCliPath, &settings);
+        let selected = current(SettingId::AwsCliPath, &settings);
+        assert!(
+            items
+                .iter()
+                .any(|choice| Some(&choice.pick) == selected.as_ref())
+        );
+        assert_eq!(items.len(), 4);
+    }
+
+    #[test]
+    fn preset_aws_cli_path_is_not_duplicated() {
+        let mut settings = Settings::default();
+        settings.aws_cli_path = Some("/usr/local/bin/aws".into());
+        assert_eq!(choices(SettingId::AwsCliPath, &settings).len(), 3);
     }
 
     #[test]
