@@ -122,12 +122,15 @@ impl CompiledQuery {
 
 const AGE_HELP: &str = "age needs > or <, a number and h, d or w. Example: age:>30d";
 
-/// Whether a field or tag term has no usable value, so it is ignored even when negated.
+/// Whether a term has nothing to search for, so it is ignored even when negated.
 fn is_blank(term: &Term) -> bool {
     match &term.kind {
         TermKind::Field { value, .. } | TermKind::TagShorthand { value, .. } => {
             field_values(value).is_empty()
         }
+        TermKind::Word { text } => text
+            .trim_matches(|c: char| c == ',' || c.is_whitespace())
+            .is_empty(),
         _ => false,
     }
 }
@@ -534,6 +537,20 @@ mod tests {
         assert_eq!(ids("-age:"), vec![1, 2, 3, 4, 5]);
         assert_eq!(ids("-has:"), vec![1, 2, 3, 4, 5]);
         assert_eq!(ids("-owner: web"), vec![1, 3]);
+    }
+
+    #[test]
+    fn negated_blank_words_are_ignored() {
+        assert_eq!(ids("-\"\""), vec![1, 2, 3, 4, 5]);
+        assert_eq!(ids("-,"), vec![1, 2, 3, 4, 5]);
+        assert_eq!(ids("-owner: ,"), vec![1, 2, 3, 4, 5]);
+        assert_eq!(ids("-\",\" web"), vec![1, 3]);
+    }
+
+    #[test]
+    fn blank_words_are_ignored_when_positive() {
+        assert_eq!(ids("\"\""), vec![1, 2, 3, 4, 5]);
+        assert_eq!(ids(","), vec![1, 2, 3, 4, 5]);
     }
 
     #[test]
