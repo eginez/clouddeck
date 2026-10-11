@@ -232,7 +232,6 @@ impl InstanceListViewModel {
         self.is_loading = true;
         self.error = None;
         self.error_message = None;
-        self.partial_failures = vec![];
 
         Some(self.service.clone())
     }
@@ -960,6 +959,7 @@ mod tests {
         );
 
         assert!(vm.stale_regions().is_empty());
+        assert!(vm.partial_failures().is_empty());
         assert_eq!(vm.region_loaded_at("eu-central-1"), Some(at(T2_SECS)));
     }
 
@@ -979,11 +979,14 @@ mod tests {
             at(T2_SECS),
         );
 
+        vm.begin_load();
         vm.finish_load_at(Err(Box::new(StubError)), at(T2_SECS + 60));
 
         assert_eq!(loaded_ids(&vm), vec!["a", "b"]);
         assert_eq!(vm.stale_regions(), ["eu-central-1".to_string()]);
         assert_eq!(vm.last_success(), Some(at(T2_SECS)));
+        assert_eq!(vm.partial_failures().len(), 1);
+        assert_eq!(vm.partial_failures()[0].region, "eu-central-1");
     }
 
     #[test]
