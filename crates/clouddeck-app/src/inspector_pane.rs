@@ -3,12 +3,14 @@
 use std::time::SystemTime;
 
 use clouddeck_core::{
-    EC2Instance, InspectorRow, InspectorSection, NO_TAGS_TEXT, inspector_sections,
-    inspector_summary, inspector_tags, inspector_title, security_group_rows, security_groups_title,
-    tags_title, tags_toggle_text, visible_tags,
+    EC2Instance, InspectorRow, InspectorSection, NO_TAGS_TEXT, OPEN_IN_CONSOLE_FLASH,
+    console_url_for, copied_flash, inspector_sections, inspector_summary, inspector_tags,
+    inspector_title, security_group_rows, security_groups_title, tags_title, tags_toggle_text,
+    visible_tags,
 };
 use gpui::{
-    Context, Entity, FontWeight, IntoElement, Render, Window, WindowAppearance, div, prelude::*, px,
+    ClickEvent, ClipboardItem, Context, Div, Entity, FontWeight, IntoElement, Render, SharedString,
+    Stateful, Window, WindowAppearance, div, prelude::*, px,
 };
 use gpui_component::Sizable;
 
@@ -36,6 +38,41 @@ impl InspectorPane {
             stale_note: None,
         }
     }
+
+    fn copy(&self, value: &str, cx: &mut Context<Self>) {
+        cx.write_to_clipboard(ClipboardItem::new_string(value.to_string()));
+        let flash = copied_flash(value);
+        self.state
+            .update(cx, |state, cx| state.set_flash(flash, cx));
+    }
+
+    fn open_console(&self, instance: &EC2Instance, cx: &mut Context<Self>) {
+        let flash = match console_url_for(instance) {
+            Ok(url) => {
+                cx.open_url(&url);
+                OPEN_IN_CONSOLE_FLASH.to_string()
+            }
+            Err(error) => error.to_string(),
+        };
+        self.state
+            .update(cx, |state, cx| state.set_flash(flash, cx));
+    }
+
+    fn close(&self, cx: &mut Context<Self>) {
+        self.state.update(cx, |state, cx| state.select(None, cx));
+    }
+
+    fn toggle_tags(&self, cx: &mut Context<Self>) {
+        self.state.update(cx, |state, cx| {
+            state.tags_show_all = !state.tags_show_all;
+            cx.notify();
+        });
+    }
+
+    fn search(&self, query: &str, cx: &mut Context<Self>) {
+        self.state
+            .update(cx, |state, cx| state.set_query(query, cx));
+    }
 }
 
 impl Render for InspectorPane {
@@ -60,7 +97,7 @@ impl Render for InspectorPane {
             .bg(palette.panel)
             .text_size(px(FONT_SIZE))
             .text_color(palette.text)
-            .child(header(&instance, &palette))
+            .child(header(&instance, &palette, cx))
             .child(
                 div()
                     .id("inspector-body")
@@ -78,17 +115,21 @@ impl Render for InspectorPane {
                         sections
                             .iter()
                             .enumerate()
-                            .map(|(index, section)| section_view(index, section, &palette)),
+                            .map(|(index, section)| section_view(index, section, &palette, cx)),
                     )
-                    .child(security_groups(&instance, &palette))
-                    .child(tags(&instance, tags_show_all, &palette))
-                    .child(actions(&palette)),
+                    .child(security_groups(&instance, &palette, cx))
+                    .child(tags(&instance, tags_show_all, &palette, cx))
+                    .child(actions(&instance, &palette, cx)),
             )
             .into_any_element()
     }
 }
 
-fn header(instance: &EC2Instance, palette: &Palette) -> impl IntoElement {
+fn header(
+    instance: &EC2Instance,
+    palette: &Palette,
+    cx: &Context<InspectorPane>,
+) -> impl IntoElement {
     let title = match inspector_title(instance) {
         Some(name) => div().child(name),
         None => div().italic().text_color(palette.faint).child("unnamed"),
@@ -122,7 +163,9 @@ fn header(instance: &EC2Instance, palette: &Palette) -> impl IntoElement {
                 )
                 .child(
                     div()
+                        .id("inspector.close")
                         .debug_selector(|| "inspector.close".into())
+                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.close(cx)))
                         .child(AppIcon::Close.icon().xsmall().text_color(palette.dim)),
                 ),
         )
@@ -138,9 +181,13 @@ fn header(instance: &EC2Instance, palette: &Palette) -> impl IntoElement {
                         .child(instance.instance_id.clone()),
                 )
                 .child(
-                    div()
-                        .debug_selector(|| "inspector.copy-id".into())
-                        .child(copy_icon(palette)),
+                    copy_button(
+                        "inspector.copy-id".into(),
+                        instance.instance_id.clone(),
+                        palette,
+                        cx,
+                    )
+                    .debug_selector(|| "inspector.copy-id".into()),
                 ),
         )
         .child(
@@ -170,7 +217,12 @@ fn stale_box(note: &str, palette: &Palette) -> impl IntoElement {
         .child(div().child(note.to_string()))
 }
 
-fn section_view(index: usize, section: &InspectorSection, palette: &Palette) -> impl IntoElement {
+fn section_view(
+    index: usize,
+    section: &InspectorSection,
+    palette: &Palette,
+    cx: &Context<InspectorPane>,
+) -> impl IntoElement {
     div()
         .debug_selector(move || format!("inspector.section.{index}"))
         .flex()
@@ -182,7 +234,7 @@ fn section_view(index: usize, section: &InspectorSection, palette: &Palette) -> 
                 .rows
                 .iter()
                 .enumerate()
-                .map(|(row_index, row)| row_view(index, row_index, row, palette)),
+                .map(|(row_index, row)| row_view(index, row_index, row, palette, cx)),
         )
 }
 
@@ -191,6 +243,7 @@ fn row_view(
     row_index: usize,
     row: &InspectorRow,
     palette: &Palette,
+    cx: &Context<InspectorPane>,
 ) -> impl IntoElement {
     let value = match row.value.as_deref() {
         Some(value) => div()
@@ -200,7 +253,14 @@ fn row_view(
             .min_w_0()
             .when(row.monospace, |value| value.font_family(MONO_FONT))
             .child(value.to_string())
-            .when(row.copyable, |value| value.child(copy_icon(palette)))
+            .when(row.copyable, |button| {
+                button.child(copy_button(
+                    format!("inspector.row.{section_index}.{row_index}.copy"),
+                    value.to_string(),
+                    palette,
+                    cx,
+                ))
+            })
             .into_any_element(),
         None => div()
             .italic()
@@ -224,7 +284,11 @@ fn row_view(
         .child(value)
 }
 
-fn security_groups(instance: &EC2Instance, palette: &Palette) -> impl IntoElement {
+fn security_groups(
+    instance: &EC2Instance,
+    palette: &Palette,
+    cx: &Context<InspectorPane>,
+) -> impl IntoElement {
     let groups =
         security_group_rows(instance)
             .into_iter()
@@ -240,9 +304,14 @@ fn security_groups(instance: &EC2Instance, palette: &Palette) -> impl IntoElemen
                         div()
                             .font_family(MONO_FONT)
                             .text_color(palette.faint)
-                            .child(id),
+                            .child(id.clone()),
                     )
-                    .child(copy_icon(palette))
+                    .child(copy_button(
+                        format!("inspector.sg.{index}.copy"),
+                        id,
+                        palette,
+                        cx,
+                    ))
             });
 
     div()
@@ -253,7 +322,12 @@ fn security_groups(instance: &EC2Instance, palette: &Palette) -> impl IntoElemen
         .children(groups)
 }
 
-fn tags(instance: &EC2Instance, show_all: bool, palette: &Palette) -> impl IntoElement {
+fn tags(
+    instance: &EC2Instance,
+    show_all: bool,
+    palette: &Palette,
+    cx: &Context<InspectorPane>,
+) -> impl IntoElement {
     let all = inspector_tags(instance);
     let shown = visible_tags(&all, show_all);
 
@@ -276,7 +350,7 @@ fn tags(instance: &EC2Instance, show_all: bool, palette: &Palette) -> impl IntoE
                 shown
                     .iter()
                     .enumerate()
-                    .map(|(index, (key, value))| tag_chip(index, key, value, palette)),
+                    .map(|(index, (key, value))| tag_chip(index, key, value, palette, cx)),
             ),
         );
     }
@@ -284,17 +358,28 @@ fn tags(instance: &EC2Instance, show_all: bool, palette: &Palette) -> impl IntoE
     if let Some(text) = tags_toggle_text(all.len(), show_all) {
         section = section.child(
             div()
+                .id("inspector.tags-toggle")
                 .debug_selector(|| "inspector.tags-toggle".into())
                 .text_color(palette.accent)
+                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.toggle_tags(cx)))
                 .child(text),
         );
     }
     section
 }
 
-fn tag_chip(index: usize, key: &str, value: &str, palette: &Palette) -> impl IntoElement {
+fn tag_chip(
+    index: usize,
+    key: &str,
+    value: &str,
+    palette: &Palette,
+    cx: &Context<InspectorPane>,
+) -> impl IntoElement {
+    let query = value.to_lowercase();
     div()
+        .id(SharedString::from(format!("inspector.tag.{index}")))
         .debug_selector(move || format!("inspector.tag.{index}"))
+        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.search(&query, cx)))
         .flex()
         .items_center()
         .gap(px(4.0))
@@ -308,7 +393,13 @@ fn tag_chip(index: usize, key: &str, value: &str, palette: &Palette) -> impl Int
         .child(div().child(value.to_string()))
 }
 
-fn actions(palette: &Palette) -> impl IntoElement {
+fn actions(
+    instance: &EC2Instance,
+    palette: &Palette,
+    cx: &Context<InspectorPane>,
+) -> impl IntoElement {
+    let instance_id = instance.instance_id.clone();
+    let console_instance = instance.clone();
     div()
         .flex()
         .flex_col()
@@ -319,18 +410,28 @@ fn actions(palette: &Palette) -> impl IntoElement {
                 .flex()
                 .flex_wrap()
                 .gap(px(GAP))
-                .child(action_button(
-                    "inspector.action.copy-id",
-                    AppIcon::Copy,
-                    "Copy ID",
-                    palette,
-                ))
-                .child(action_button(
-                    "inspector.action.console",
-                    AppIcon::ExternalLink,
-                    "Open in Console",
-                    palette,
-                )),
+                .child(
+                    action_button(
+                        "inspector.action.copy-id",
+                        AppIcon::Copy,
+                        "Copy ID",
+                        palette,
+                    )
+                    .on_click(
+                        cx.listener(move |this, _: &ClickEvent, _, cx| this.copy(&instance_id, cx)),
+                    ),
+                )
+                .child(
+                    action_button(
+                        "inspector.action.console",
+                        AppIcon::ExternalLink,
+                        "Open in Console",
+                        palette,
+                    )
+                    .on_click(cx.listener(
+                        move |this, _: &ClickEvent, _, cx| this.open_console(&console_instance, cx),
+                    )),
+                ),
         )
 }
 
@@ -339,8 +440,9 @@ fn action_button(
     icon: AppIcon,
     label: &'static str,
     palette: &Palette,
-) -> impl IntoElement {
+) -> Stateful<Div> {
     div()
+        .id(selector)
         .debug_selector(move || selector.into())
         .flex()
         .items_center()
@@ -363,8 +465,16 @@ fn section_title(title: &str, palette: &Palette) -> impl IntoElement {
         .child(title.to_uppercase())
 }
 
-fn copy_icon(palette: &Palette) -> impl IntoElement {
-    AppIcon::Copy.icon().xsmall().text_color(palette.faint)
+fn copy_button(
+    id: String,
+    value: String,
+    palette: &Palette,
+    cx: &Context<InspectorPane>,
+) -> Stateful<Div> {
+    div()
+        .id(SharedString::from(id))
+        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.copy(&value, cx)))
+        .child(AppIcon::Copy.icon().xsmall().text_color(palette.faint))
 }
 
 #[cfg(test)]
@@ -595,5 +705,78 @@ mod tests {
         let cx = open_pane(cx, state, Some(&note));
 
         assert_rendered(cx, &["inspector.stale"]);
+    }
+
+    fn click(cx: &mut VisualTestContext, selector: &'static str) {
+        let bounds = cx
+            .debug_bounds(selector)
+            .unwrap_or_else(|| panic!("{selector} should render"));
+        cx.simulate_click(bounds.center(), Default::default());
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    fn copy_id_writes_the_instance_id_to_the_clipboard(cx: &mut TestAppContext) {
+        let state = loaded_state(cx, fixture());
+        select(&state, RUNNING_KEY, cx);
+        let cx = open_pane(cx, state.clone(), None);
+
+        click(cx, "inspector.action.copy-id");
+
+        let copied = cx.read_from_clipboard().and_then(|item| item.text());
+        assert_eq!(copied.as_deref(), Some("i-0123456789abcdef0"));
+        state.read_with(cx, |state, _| {
+            assert_eq!(state.flash.as_deref(), Some("Copied i-0123456789abcdef0"));
+        });
+    }
+
+    #[gpui::test]
+    fn close_deselects_the_instance(cx: &mut TestAppContext) {
+        let state = loaded_state(cx, fixture());
+        select(&state, RUNNING_KEY, cx);
+        let cx = open_pane(cx, state.clone(), None);
+
+        click(cx, "inspector.close");
+
+        state.read_with(cx, |state, _| assert_eq!(state.selected, None));
+
+        let cx = open_pane(cx, state, None);
+        assert_absent(cx, &["inspector.title"]);
+    }
+
+    #[gpui::test]
+    fn tags_toggle_reveals_all_tags(cx: &mut TestAppContext) {
+        let state = loaded_state(cx, fixture());
+        select(&state, RUNNING_KEY, cx);
+        let cx = open_pane(cx, state.clone(), None);
+
+        click(cx, "inspector.tags-toggle");
+
+        state.read_with(cx, |state, _| assert!(state.tags_show_all));
+        assert_rendered(cx, &["inspector.tag.9"]);
+    }
+
+    #[gpui::test]
+    fn clicking_a_tag_searches_its_value(cx: &mut TestAppContext) {
+        let state = loaded_state(cx, fixture());
+        select(&state, RUNNING_KEY, cx);
+        let cx = open_pane(cx, state.clone(), None);
+
+        click(cx, "inspector.tag.0");
+
+        state.read_with(cx, |state, _| assert_eq!(state.query(), "api-gateway-01"));
+    }
+
+    #[gpui::test]
+    fn open_in_console_flashes_for_a_valid_region(cx: &mut TestAppContext) {
+        let state = loaded_state(cx, fixture());
+        select(&state, RUNNING_KEY, cx);
+        let cx = open_pane(cx, state.clone(), None);
+
+        click(cx, "inspector.action.console");
+
+        state.read_with(cx, |state, _| {
+            assert_eq!(state.flash.as_deref(), Some("Opening in AWS Console…"));
+        });
     }
 }
