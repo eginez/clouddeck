@@ -1,15 +1,15 @@
 //! Settings window (design/images/50-59).
 
 use std::ops::Range;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use clouddeck_core::{
     DefaultSort, Density, FLEET_REGIONS, KEYMAP, LaunchBehavior, LogLevel, Platform,
     RECENT_SEARCH_LIMITS, REFRESH_INTERVALS, REQUEST_TIMEOUTS, SETTINGS_CATEGORIES, SettingId,
     Settings, SettingsSearchResults, Theme, UiState, changed_categories, context_path,
-    search_settings, settings_no_match_text, settings_path, settings_search_breadcrumb,
-    shortcut_label, test_aws_cli, ui_state_path,
+    resolve_aws_cli_path, search_settings, settings_no_match_text, settings_path,
+    settings_search_breadcrumb, shortcut_label, test_aws_cli, ui_state_path,
 };
 use gpui::{
     AnyElement, App, Bounds, ClickEvent, Context, Div, Entity, EventEmitter, Global,
@@ -587,21 +587,14 @@ impl SettingsWindow {
     }
 
     fn run_cli_test(&mut self, cx: &mut Context<Self>) {
-        let Some(path) = self.settings.aws_cli_path.clone() else {
-            self.show_note(
-                "Pick a CLI path to test. Auto-detect is not checked yet.",
-                None,
-                cx,
-            );
-            return;
-        };
+        let path = resolve_aws_cli_path(self.settings.aws_cli_path.as_deref().map(Path::new));
         let timeout = Duration::from_secs(u64::from(self.settings.request_timeout_seconds));
         self.cli_test_generation += 1;
         let generation = self.cli_test_generation;
         self.show_note("Testing…", None, cx);
         cx.spawn(async move |this, cx| {
             let outcome = crate::runtime::runtime()
-                .spawn(async move { test_aws_cli(&PathBuf::from(path), timeout).await })
+                .spawn(async move { test_aws_cli(&path, timeout).await })
                 .await
                 .map_err(|error| error.to_string())
                 .and_then(|result| result.map_err(|error| error.to_string()));

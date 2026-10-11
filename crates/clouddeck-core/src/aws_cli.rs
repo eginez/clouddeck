@@ -5,7 +5,10 @@ use crate::{
     EC2InstanceTag, EC2SecurityGroup,
 };
 use serde::Deserialize;
-use std::{path::PathBuf, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -49,9 +52,9 @@ const AUTO_DETECT_LOCATIONS: [&str; 3] = [
 /// otherwise the first auto-detected location, otherwise bare `aws` on PATH.
 /// The returned path is always executed as argv[0] via `Command::new`; it is
 /// never interpolated into a shell string.
-fn aws_executable(cli_path: &Option<PathBuf>) -> PathBuf {
+pub fn resolve_aws_cli_path(cli_path: Option<&Path>) -> PathBuf {
     if let Some(path) = cli_path {
-        return path.clone();
+        return path.to_path_buf();
     }
     // Finder-launched apps do not inherit a shell's Homebrew PATH.
     for path in AUTO_DETECT_LOCATIONS {
@@ -119,12 +122,16 @@ fn extract_version(output: &str) -> Option<String> {
 /// version string (e.g. `2.27.36`). Never invokes a shell.
 ///
 /// Errors: `CliVersionError` (actionable, names the path), or an `io::Error`
-/// if the file does not exist (surfaced as "not found").
+/// if a path with a directory part does not exist (surfaced as "not found").
+/// A bare name such as `aws` is left to PATH lookup when it is spawned.
 pub async fn test_aws_cli(
     path: &PathBuf,
     timeout: Duration,
 ) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-    if !path.is_file() {
+    let has_directory = path
+        .parent()
+        .is_some_and(|parent| !parent.as_os_str().is_empty());
+    if has_directory && !path.is_file() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::NotFound,
             format!("AWS CLI not found at {path:?}. Set the path in Settings > AWS & Privacy or install AWS CLI v2."),
@@ -292,7 +299,7 @@ impl ComputeService for AwsCliComputeService {
         run_describe_instances(
             &self.profile,
             &self.region,
-            aws_executable(&self.cli_path),
+            resolve_aws_cli_path(self.cli_path.as_deref()),
             self.request_timeout,
             filters,
         )
@@ -712,6 +719,12 @@ mod tests {
         );
         let _ = std::fs::remove_file(good);
         let _ = std::fs::remove_file(hanging);
+    }
+
+    #[test]
+    fn resolve_returns_configured_path_without_probing_locations() {
+        let configured = PathBuf::from("/custom/bin/aws");
+        assert_eq!(resolve_aws_cli_path(Some(&configured)), configured);
     }
 
     #[test]
