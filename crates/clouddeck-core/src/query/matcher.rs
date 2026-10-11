@@ -254,13 +254,19 @@ fn field_matches(field: QueryField, instance: &EC2Instance, value: &str) -> bool
 /// Whether some tag matches `key` (as in `tag:Team`) or `key=value` (value is a substring test).
 fn tag_field_matches(instance: &EC2Instance, spec: &str) -> bool {
     let (key, wanted) = match spec.split_once('=') {
-        Some((key, wanted)) => (key, Some(wanted)),
-        None => (spec, None),
+        Some((key, wanted)) => (unquote(key), Some(unquote(wanted))),
+        None => (unquote(spec), None),
     };
     instance.tags.iter().any(|tag| {
         tag.key.to_lowercase() == key
             && wanted.is_none_or(|wanted| tag.value.to_lowercase().contains(wanted))
     })
+}
+
+/// Drops one leading and one trailing quote left over from the tag spec.
+fn unquote(text: &str) -> &str {
+    let text = text.strip_prefix('"').unwrap_or(text);
+    text.strip_suffix('"').unwrap_or(text)
 }
 
 /// Whether a tag named `key` (ignoring case) has a value containing `value`.
@@ -338,6 +344,7 @@ pub(crate) fn glob(text: &str, pattern: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::EC2InstanceTag;
     use crate::query::fixtures::{fleet, now};
     use crate::query::known_tag_keys;
 
@@ -636,5 +643,60 @@ mod tests {
         assert_eq!(query.recognised_field_count(), 3);
         let indexes: Vec<usize> = query.errors().iter().map(|e| e.term_index).collect();
         assert_eq!(indexes, vec![3, 4]);
+    }
+
+    fn team_fleet() -> Vec<EC2Instance> {
+        [
+            ("i-0000000000000011", "Data Platform"),
+            ("i-0000000000000012", "platform"),
+        ]
+        .into_iter()
+        .map(|(id, team)| EC2Instance {
+            instance_id: id.to_string(),
+            region: None,
+            instance_type: None,
+            state: None,
+            launch_time: None,
+            public_ip_address: None,
+            private_ip_address: None,
+            vpc_id: None,
+            subnet_id: None,
+            security_groups: Vec::new(),
+            tags: vec![EC2InstanceTag {
+                key: "Team".to_string(),
+                value: team.to_string(),
+            }],
+            availability_zone: None,
+            image_id: None,
+            key_name: None,
+            architecture: None,
+            state_transition_reason: None,
+            iam_instance_profile_arn: None,
+            private_dns_name: None,
+            public_dns_name: None,
+        })
+        .collect()
+    }
+
+    fn team_hits(query: &str) -> Vec<String> {
+        let fleet = team_fleet();
+        compile(query, &known_tag_keys(&fleet), now())
+            .filter_instances(&fleet)
+            .into_iter()
+            .map(|instance| instance.instance_id)
+            .collect()
+    }
+
+    #[test]
+    fn tag_value_may_be_quoted_with_spaces() {
+        let data = vec!["i-0000000000000011".to_string()];
+        let both = vec![
+            "i-0000000000000011".to_string(),
+            "i-0000000000000012".to_string(),
+        ];
+        assert_eq!(team_hits("tag:team=\"Data Platform\""), data);
+        assert_eq!(team_hits("tag:team=\"data plat\""), data);
+        assert_eq!(team_hits("tag:\"Team\"=platform"), both);
+        assert_eq!(team_hits("tag:team=platform"), both);
     }
 }
