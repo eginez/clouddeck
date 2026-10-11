@@ -1,5 +1,8 @@
 //! Pure column and cell text rules for the instance table.
 
+use std::cmp::Ordering;
+use std::net::Ipv4Addr;
+
 use chrono::{DateTime, Utc};
 
 use crate::models::EC2Instance;
@@ -115,6 +118,110 @@ pub fn visible_columns(window_width: f32) -> Vec<Column> {
             _ => true,
         })
         .collect()
+}
+
+/// Column the table is sorted by, and whether the order is ascending.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SortState {
+    /// Column the table is sorted by.
+    pub column: Column,
+    /// Whether smaller keys come first.
+    pub ascending: bool,
+}
+
+impl Default for SortState {
+    /// Name, ascending.
+    fn default() -> Self {
+        SortState {
+            column: Column::Name,
+            ascending: true,
+        }
+    }
+}
+
+impl SortState {
+    /// Header click: flips direction on the same column, otherwise sorts ascending by the new column.
+    pub fn toggled(self, column: Column) -> SortState {
+        if self.column == column {
+            SortState {
+                column,
+                ascending: !self.ascending,
+            }
+        } else {
+            SortState {
+                column,
+                ascending: true,
+            }
+        }
+    }
+}
+
+/// Sorts instances by the sort column; instances missing that value always go last.
+pub fn sort_instances(instances: &mut [EC2Instance], sort: SortState) {
+    instances.sort_by(|left, right| {
+        match (
+            has_sort_key(left, sort.column),
+            has_sort_key(right, sort.column),
+        ) {
+            (true, true) => {
+                let ordering = compare_present(left, right, sort.column);
+                let ordering = if sort.ascending {
+                    ordering
+                } else {
+                    ordering.reverse()
+                };
+                ordering.then_with(|| left.instance_id.cmp(&right.instance_id))
+            }
+            (true, false) => Ordering::Less,
+            (false, true) => Ordering::Greater,
+            (false, false) => left.instance_id.cmp(&right.instance_id),
+        }
+    });
+}
+
+fn has_sort_key(instance: &EC2Instance, column: Column) -> bool {
+    match column {
+        Column::Launched => instance.launch_time.is_some(),
+        _ => !sort_text(instance, column).is_empty(),
+    }
+}
+
+fn sort_text(instance: &EC2Instance, column: Column) -> &str {
+    let value = match column {
+        Column::Name => instance.name(),
+        Column::InstanceId => Some(instance.instance_id.as_str()),
+        Column::State => instance.state.as_deref(),
+        Column::Type => instance.instance_type.as_deref(),
+        Column::Az => instance.availability_zone.as_deref(),
+        Column::PrivateIp => instance.private_ip_address.as_deref(),
+        Column::PublicIp => instance.public_ip_address.as_deref(),
+        Column::Launched => None,
+    };
+    value.unwrap_or_default()
+}
+
+/// Compares two instances that both have a sort key for the column.
+fn compare_present(left: &EC2Instance, right: &EC2Instance, column: Column) -> Ordering {
+    match column {
+        Column::Launched => left.launch_time.cmp(&right.launch_time),
+        Column::PrivateIp | Column::PublicIp => {
+            compare_addresses(sort_text(left, column), sort_text(right, column))
+        }
+        _ => compare_text(sort_text(left, column), sort_text(right, column)),
+    }
+}
+
+fn compare_text(left: &str, right: &str) -> Ordering {
+    left.chars()
+        .map(|c| c.to_ascii_lowercase())
+        .cmp(right.chars().map(|c| c.to_ascii_lowercase()))
+}
+
+fn compare_addresses(left: &str, right: &str) -> Ordering {
+    match (left.parse::<Ipv4Addr>(), right.parse::<Ipv4Addr>()) {
+        (Ok(left), Ok(right)) => left.cmp(&right),
+        _ => compare_text(left, right),
+    }
 }
 
 fn plain_or_dash(value: Option<String>) -> CellText {
@@ -254,5 +361,127 @@ mod tests {
                 Column::Type
             ]
         );
+    }
+
+    fn sorted_ids(column: Column, ascending: bool) -> Vec<u32> {
+        let mut fleet = fixtures::fleet();
+        sort_instances(&mut fleet, SortState { column, ascending });
+        fleet
+            .iter()
+            .map(|instance| {
+                instance
+                    .instance_id
+                    .chars()
+                    .last()
+                    .unwrap()
+                    .to_digit(10)
+                    .unwrap()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn default_sort_is_name_ascending() {
+        assert_eq!(
+            SortState::default(),
+            SortState {
+                column: Column::Name,
+                ascending: true
+            }
+        );
+    }
+
+    #[test]
+    fn toggling_same_column_flips_direction() {
+        assert_eq!(
+            SortState::default().toggled(Column::Name),
+            SortState {
+                column: Column::Name,
+                ascending: false
+            }
+        );
+        let state = SortState {
+            column: Column::State,
+            ascending: false,
+        };
+        assert_eq!(
+            state.toggled(Column::State),
+            SortState {
+                column: Column::State,
+                ascending: true
+            }
+        );
+    }
+
+    #[test]
+    fn toggling_other_column_sorts_it_ascending() {
+        let state = SortState {
+            column: Column::Name,
+            ascending: false,
+        };
+        assert_eq!(
+            state.toggled(Column::State),
+            SortState {
+                column: Column::State,
+                ascending: true
+            }
+        );
+        let state = SortState {
+            column: Column::State,
+            ascending: true,
+        };
+        assert_eq!(
+            state.toggled(Column::State).toggled(Column::State),
+            SortState {
+                column: Column::State,
+                ascending: true
+            }
+        );
+    }
+
+    #[test]
+    fn sorts_by_name() {
+        assert_eq!(sorted_ids(Column::Name, true), [1, 2, 5, 3, 4]);
+        assert_eq!(sorted_ids(Column::Name, false), [3, 5, 2, 1, 4]);
+    }
+
+    #[test]
+    fn sorts_by_instance_id() {
+        assert_eq!(sorted_ids(Column::InstanceId, true), [1, 2, 3, 4, 5]);
+        assert_eq!(sorted_ids(Column::InstanceId, false), [5, 4, 3, 2, 1]);
+    }
+
+    #[test]
+    fn sorts_by_state_with_id_tiebreak() {
+        assert_eq!(sorted_ids(Column::State, true), [3, 1, 4, 2, 5]);
+        assert_eq!(sorted_ids(Column::State, false), [2, 5, 1, 4, 3]);
+    }
+
+    #[test]
+    fn sorts_by_type() {
+        assert_eq!(sorted_ids(Column::Type, true), [5, 2, 1, 4, 3]);
+        assert_eq!(sorted_ids(Column::Type, false), [3, 4, 1, 2, 5]);
+    }
+
+    #[test]
+    fn sorts_by_az() {
+        assert_eq!(sorted_ids(Column::Az, true), [5, 1, 2, 4, 3]);
+    }
+
+    #[test]
+    fn sorts_private_ip_numerically() {
+        assert_eq!(sorted_ids(Column::PrivateIp, true), [1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn sorts_public_ip_with_missing_last_in_both_directions() {
+        assert_eq!(sorted_ids(Column::PublicIp, true), [1, 3, 2, 4, 5]);
+        assert_eq!(sorted_ids(Column::PublicIp, false), [3, 1, 2, 4, 5]);
+    }
+
+    #[test]
+    fn sorts_by_launch_time() {
+        assert_eq!(sorted_ids(Column::Launched, true), [2, 4, 1, 3, 5]);
+        assert_eq!(sorted_ids(Column::Launched, false), [3, 1, 4, 2, 5]);
     }
 }
