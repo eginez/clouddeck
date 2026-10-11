@@ -4,7 +4,8 @@ use std::ops::Range;
 use std::time::SystemTime;
 
 use clouddeck_core::{
-    EscapeAction, EscapeContext, TermKind, compile, escape_action, known_tag_keys,
+    EscapeAction, EscapeContext, Suggestion, SuggestionKind, Suggestions, TermKind,
+    apply_suggestion, compile, escape_action, known_tag_keys, suggest,
 };
 use gpui::{
     App, Context, Entity, Focusable, Font, Hsla, IntoElement, KeyBinding, Render, StyledText,
@@ -28,9 +29,20 @@ const ERROR_OFFSET: f32 = 4.0;
 const CARET_HEIGHT: f32 = 14.0;
 // Mirrors gpui-component's Input, which keeps the caret this far inside the text box.
 const RIGHT_MARGIN: f32 = 10.0;
+const SUGGESTIONS_WIDTH: f32 = 280.0;
+const ERROR_ROW_HEIGHT: f32 = 26.0;
 const PLACEHOLDER: &str = "Search or filter";
 
-actions!(search_field, [FocusSearch, ClearSearch]);
+actions!(
+    search_field,
+    [
+        FocusSearch,
+        ClearSearch,
+        PreviousSuggestion,
+        NextSuggestion,
+        AcceptSuggestion
+    ]
+);
 
 /// Colour role of a span of the query text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -152,18 +164,118 @@ fn error_row(message: &str, palette: &Palette) -> impl IntoElement {
         .child(message.to_string())
 }
 
+fn suggestion_row(
+    index: usize,
+    item: &Suggestion,
+    highlighted: bool,
+    palette: &Palette,
+) -> impl IntoElement {
+    let label_colour = match item.kind {
+        SuggestionKind::Field => palette.accent,
+        SuggestionKind::Value => palette.text,
+    };
+    div()
+        .debug_selector(move || format!("search.suggestion.{index}"))
+        .flex()
+        .items_center()
+        .gap(px(GAP))
+        .px(px(SIDE_PADDING))
+        .py(px(3.0))
+        .when(highlighted, |row| row.bg(palette.sel))
+        .child(div().text_color(label_colour).child(item.label.clone()))
+        .when_some(item.hint.clone(), |row, hint| {
+            row.child(div().flex_1().text_color(palette.dim).child(hint))
+        })
+        .when_some(item.count, |row, count| {
+            row.child(
+                div()
+                    .ml_auto()
+                    .text_color(palette.faint)
+                    .child(count.to_string()),
+            )
+        })
+}
+
+fn unknown_field_row(name: &str, palette: &Palette) -> impl IntoElement {
+    div()
+        .debug_selector(|| "search.unknown".into())
+        .flex()
+        .items_center()
+        .gap(px(GAP))
+        .px(px(SIDE_PADDING))
+        .py(px(4.0))
+        .text_color(palette.warntext)
+        .child(
+            AppIcon::TriangleAlert
+                .icon()
+                .xsmall()
+                .text_color(palette.warntext),
+        )
+        .child(format!(
+            "No field named “{name}”. It will be searched as text."
+        ))
+}
+
+fn suggestion_panel(
+    suggestions: &Suggestions,
+    highlight: usize,
+    top: f32,
+    palette: &Palette,
+) -> impl IntoElement {
+    let mut panel = div()
+        .debug_selector(|| "search.suggestions".into())
+        .absolute()
+        .top(px(top))
+        .left_0()
+        .w(px(SUGGESTIONS_WIDTH))
+        .flex()
+        .flex_col()
+        .py(px(4.0))
+        .rounded(px(SEARCH_RADIUS))
+        .bg(palette.panel)
+        .border_1()
+        .border_color(palette.line)
+        .text_size(px(STATUS_FONT_SIZE));
+    if let Some(name) = &suggestions.unknown_field {
+        panel = panel.child(unknown_field_row(name, palette));
+    }
+    for (index, item) in suggestions.items.iter().enumerate() {
+        panel = panel.child(suggestion_row(index, item, index == highlight, palette));
+    }
+    if !suggestions.items.is_empty() {
+        panel = panel.child(
+            div()
+                .px(px(SIDE_PADDING))
+                .py(px(4.0))
+                .text_color(palette.faint)
+                .child("↑↓ choose · Tab or ↵ accept · esc clear"),
+        );
+    }
+    panel
+}
+
 pub fn search_key_bindings() -> Vec<KeyBinding> {
     vec![
         KeyBinding::new("cmd-f", FocusSearch, None),
         KeyBinding::new("/", FocusSearch, Some("InstanceTable")),
         KeyBinding::new("escape", ClearSearch, Some("SearchField")),
+        KeyBinding::new("up", PreviousSuggestion, Some("SearchField")),
+        KeyBinding::new("down", NextSuggestion, Some("SearchField")),
+        KeyBinding::new("tab", AcceptSuggestion, Some("SearchField")),
+        KeyBinding::new("enter", AcceptSuggestion, Some("SearchField")),
     ]
+}
+
+fn suggestions_for(state: &FleetState) -> Suggestions {
+    let instances = state.view_model.instances();
+    suggest(state.query(), instances, &known_tag_keys(instances))
 }
 
 pub struct SearchField {
     state: Entity<FleetState>,
     pub input: Entity<InputState>,
     scroll_x: f32,
+    highlight: usize,
 }
 
 impl SearchField {
@@ -173,6 +285,7 @@ impl SearchField {
         cx.subscribe(&input, |this, input, event: &InputEvent, cx| match event {
             InputEvent::Change => {
                 let text = input.read(cx).value().to_string();
+                this.highlight = 0;
                 this.state
                     .update(cx, |state, cx| state.set_query(&text, cx));
                 cx.notify();
@@ -185,6 +298,7 @@ impl SearchField {
         cx.observe_in(&state, window, |this, state, window, cx| {
             let query = state.read(cx).query().to_string();
             if this.input.read(cx).value().as_ref() != query.as_str() {
+                this.highlight = 0;
                 this.input
                     .update(cx, |input, cx| input.set_value(query, window, cx));
             }
@@ -207,6 +321,7 @@ impl SearchField {
             state,
             input,
             scroll_x: 0.0,
+            highlight: 0,
         }
     }
 
@@ -229,6 +344,58 @@ impl SearchField {
             .update(cx, |input, cx| input.set_value("", window, cx));
         self.state.update(cx, |state, cx| state.set_query("", cx));
     }
+
+    fn step_highlight(&mut self, forward: bool, cx: &mut Context<Self>) {
+        let len = suggestions_for(self.state.read(cx)).items.len();
+        if len == 0 {
+            cx.propagate();
+            return;
+        }
+        let current = self.highlight.min(len - 1);
+        self.highlight = if forward {
+            (current + 1) % len
+        } else {
+            (current + len - 1) % len
+        };
+        cx.notify();
+    }
+
+    fn previous_suggestion(
+        &mut self,
+        _: &PreviousSuggestion,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.step_highlight(false, cx);
+    }
+
+    fn next_suggestion(&mut self, _: &NextSuggestion, _: &mut Window, cx: &mut Context<Self>) {
+        self.step_highlight(true, cx);
+    }
+
+    fn accept_suggestion(
+        &mut self,
+        _: &AcceptSuggestion,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let state = self.state.read(cx);
+        let suggestions = suggestions_for(state);
+        let index = self
+            .highlight
+            .min(suggestions.items.len().saturating_sub(1));
+        let accepted = apply_suggestion(state.query(), &suggestions, index);
+        let Some(query) = accepted else {
+            cx.propagate();
+            return;
+        };
+        self.highlight = 0;
+        self.input
+            .update(cx, |input, cx| input.set_value(query.clone(), window, cx));
+        self.state
+            .update(cx, |state, cx| state.set_query(&query, cx));
+        cx.notify();
+    }
 }
 
 impl Render for SearchField {
@@ -249,6 +416,12 @@ impl Render for SearchField {
             .query_errors()
             .first()
             .map(|e| e.message.clone());
+        let suggestions = suggestions_for(state);
+        let highlight = self
+            .highlight
+            .min(suggestions.items.len().saturating_sub(1));
+        let dropdown_open =
+            focused && (!suggestions.items.is_empty() || suggestions.unknown_field.is_some());
 
         let inset = f32::from(Size::Medium.input_px());
         let viewport =
@@ -319,6 +492,9 @@ impl Render for SearchField {
             .debug_selector(|| "search.field".into())
             .key_context("SearchField")
             .on_action(cx.listener(Self::clear))
+            .on_action(cx.listener(Self::previous_suggestion))
+            .on_action(cx.listener(Self::next_suggestion))
+            .on_action(cx.listener(Self::accept_suggestion))
             .flex()
             .items_center()
             .gap(px(GAP))
@@ -342,6 +518,20 @@ impl Render for SearchField {
                 )
             });
 
+        let error_offset = if error.is_some() {
+            ERROR_ROW_HEIGHT + ERROR_OFFSET
+        } else {
+            0.0
+        };
+        let panel = dropdown_open.then(|| {
+            suggestion_panel(
+                &suggestions,
+                highlight,
+                SEARCH_HEIGHT + ERROR_OFFSET + error_offset,
+                &palette,
+            )
+        });
+
         div()
             .relative()
             .w(px(SEARCH_WIDTH))
@@ -349,6 +539,7 @@ impl Render for SearchField {
             .when_some(error, |outer, message| {
                 outer.child(error_row(&message, &palette))
             })
+            .when_some(panel, |outer, panel| outer.child(panel))
     }
 }
 
@@ -404,6 +595,20 @@ mod tests {
         vm
     }
 
+    fn three_state_view_model() -> InstanceListViewModel {
+        let instances = vec![
+            instance("i-1", "api-server", "running"),
+            instance("i-2", "bastion", "stopped"),
+            instance("i-3", "batcher", "pending"),
+        ];
+        let mut vm = InstanceListViewModel::new(Box::new(MockComputeService::new(instances, None)));
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        rt.block_on(vm.load_instances());
+        vm
+    }
+
     fn rooted_search(
         cx: &mut TestAppContext,
         focus_on_open: bool,
@@ -412,7 +617,19 @@ mod tests {
         Entity<SearchField>,
         &mut VisualTestContext,
     ) {
-        let state = cx.new(|_| FleetState::new(loaded_view_model(), "default".to_string(), true));
+        rooted_search_with(cx, focus_on_open, loaded_view_model())
+    }
+
+    fn rooted_search_with(
+        cx: &mut TestAppContext,
+        focus_on_open: bool,
+        view_model: InstanceListViewModel,
+    ) -> (
+        Entity<FleetState>,
+        Entity<SearchField>,
+        &mut VisualTestContext,
+    ) {
+        let state = cx.new(|_| FleetState::new(view_model, "default".to_string(), true));
         let slot = Rc::new(RefCell::new(None));
         let slot_for_window = slot.clone();
         let state_for_window = state.clone();
@@ -573,5 +790,90 @@ mod tests {
         cx.run_until_parked();
 
         assert!(cx.debug_bounds("search.error").is_none());
+    }
+
+    #[gpui::test]
+    fn typing_a_field_prefix_opens_the_suggestions(cx: &mut TestAppContext) {
+        let (_state, _search, cx) = rooted_search_with(cx, true, three_state_view_model());
+
+        cx.simulate_input("st");
+        cx.run_until_parked();
+
+        assert!(cx.debug_bounds("search.suggestions").is_some());
+        assert!(cx.debug_bounds("search.suggestion.0").is_some());
+    }
+
+    #[gpui::test]
+    fn enter_accepts_the_highlighted_field(cx: &mut TestAppContext) {
+        let (state, _search, cx) = rooted_search_with(cx, true, three_state_view_model());
+
+        cx.simulate_input("st");
+        cx.run_until_parked();
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+
+        assert_eq!(
+            state.read_with(cx, |state, _| state.query().to_string()),
+            "state:"
+        );
+    }
+
+    #[gpui::test]
+    fn down_and_tab_accept_the_second_state_value(cx: &mut TestAppContext) {
+        let (state, _search, cx) = rooted_search_with(cx, true, three_state_view_model());
+
+        cx.simulate_input("state:");
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("search.suggestion.2").is_some());
+
+        cx.simulate_keystrokes("down");
+        cx.simulate_keystrokes("tab");
+        cx.run_until_parked();
+
+        assert_eq!(
+            state.read_with(cx, |state, _| state.query().to_string()),
+            "state:stopped "
+        );
+    }
+
+    #[gpui::test]
+    fn down_wraps_around_to_the_first_suggestion(cx: &mut TestAppContext) {
+        let (state, _search, cx) = rooted_search_with(cx, true, three_state_view_model());
+
+        cx.simulate_input("state:");
+        cx.run_until_parked();
+        cx.simulate_keystrokes("down");
+        cx.simulate_keystrokes("down");
+        cx.simulate_keystrokes("down");
+        cx.simulate_keystrokes("tab");
+        cx.run_until_parked();
+
+        assert_eq!(
+            state.read_with(cx, |state, _| state.query().to_string()),
+            "state:running "
+        );
+    }
+
+    #[gpui::test]
+    fn unknown_field_shows_the_warning_row(cx: &mut TestAppContext) {
+        let (_state, _search, cx) = rooted_search_with(cx, true, three_state_view_model());
+
+        cx.simulate_input("colour:r");
+        cx.run_until_parked();
+
+        assert!(cx.debug_bounds("search.unknown").is_some());
+    }
+
+    #[gpui::test]
+    fn empty_query_shows_no_suggestions(cx: &mut TestAppContext) {
+        // gpui 0.2.2 keeps debug_bounds across frames; this window never showed the list.
+        let (state, _search, cx) = rooted_search_with(cx, true, three_state_view_model());
+        cx.run_until_parked();
+
+        assert_eq!(
+            state.read_with(cx, |state, _| state.query().to_string()),
+            ""
+        );
+        assert!(cx.debug_bounds("search.suggestions").is_none());
     }
 }
