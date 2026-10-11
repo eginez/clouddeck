@@ -40,7 +40,8 @@ actions!(main_window, [EscapePressed]);
 
 const OVERLAY_MAX_FRACTION: f32 = 0.92;
 const SCRIM_ALPHA: f32 = 0.2;
-const MIN_WINDOW_WIDTH: f32 = 520.0;
+// Name, Instance ID, State and Type are always shown and sum to 527pt.
+const MIN_WINDOW_WIDTH: f32 = 528.0;
 const MIN_WINDOW_HEIGHT: f32 = 400.0;
 const OVERLAY_ABOVE_STATUS_BAR: f32 = STATUS_BAR_HEIGHT + 4.0;
 const REGION_OVERLAY_LEFT: f32 = 150.0;
@@ -1169,6 +1170,15 @@ mod tests {
 
     fn rendered(main: &Entity<MainWindow>, cx: &mut VisualTestContext) -> RenderedPanes {
         main.read_with(cx, |main, _| main.rendered)
+    }
+
+    #[test]
+    fn minimum_window_width_fits_the_columns_that_are_never_dropped() {
+        let fixed: f32 = clouddeck_core::visible_columns(0.0)
+            .iter()
+            .map(|column| column.default_width())
+            .sum();
+        assert!(MIN_WINDOW_WIDTH >= fixed, "{MIN_WINDOW_WIDTH} < {fixed}");
     }
 
     #[gpui::test]
