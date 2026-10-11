@@ -72,6 +72,62 @@ impl RegionScope {
     }
 }
 
+/// One row of the region picker; a `region` of None is the All regions row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RegionPickerRow {
+    pub label: String,
+    pub region: Option<String>,
+    pub checked: bool,
+    pub count: usize,
+}
+
+/// Picker rows: the All regions row, then one row per available region, filtered by label.
+pub fn region_picker_rows(
+    scope: &RegionScope,
+    available: &[String],
+    counts: &[(String, usize)],
+    filter: &str,
+) -> Vec<RegionPickerRow> {
+    let filter = filter.trim().to_lowercase();
+    let mut rows = vec![RegionPickerRow {
+        label: "All regions".to_string(),
+        region: None,
+        checked: scope.is_all(available),
+        count: available
+            .iter()
+            .map(|region| region_count(region, counts))
+            .sum(),
+    }];
+    rows.extend(available.iter().map(|region| RegionPickerRow {
+        label: region.clone(),
+        region: Some(region.clone()),
+        checked: scope.is_selected(region),
+        count: region_count(region, counts),
+    }));
+    rows.retain(|row| filter.is_empty() || row.label.to_lowercase().contains(&filter));
+    rows
+}
+
+/// Empty-state text for a picker filter that matches no rows.
+pub fn region_picker_empty_text(filter: &str) -> String {
+    format!("No regions match “{}”.", filter.trim())
+}
+
+/// Applies a picker row activation: All regions selects everything, a region toggles.
+pub fn activate_region_row(scope: &mut RegionScope, row: &RegionPickerRow, available: &[String]) {
+    match &row.region {
+        None => scope.select_all(available),
+        Some(region) => scope.toggle(region, available),
+    }
+}
+
+fn region_count(region: &str, counts: &[(String, usize)]) -> usize {
+    counts
+        .iter()
+        .find(|(name, _)| name == region)
+        .map_or(0, |(_, count)| *count)
+}
+
 fn is_available(region: &str, available: &[String]) -> bool {
     available.iter().any(|candidate| candidate == region)
 }
@@ -183,5 +239,116 @@ mod tests {
 
         scope.select_only("bogus", &available);
         assert_eq!(scope, before);
+    }
+
+    fn counts() -> Vec<(String, usize)> {
+        [
+            ("us-east-1", 7),
+            ("us-west-2", 5),
+            ("eu-west-1", 4),
+            ("eu-central-1", 4),
+        ]
+        .iter()
+        .map(|(region, count)| (region.to_string(), *count))
+        .collect()
+    }
+
+    fn labels(rows: &[RegionPickerRow]) -> Vec<String> {
+        rows.iter().map(|row| row.label.clone()).collect()
+    }
+
+    #[test]
+    fn picker_rows_for_all_scope_show_counts() {
+        let available = available();
+        let scope = RegionScope::all(&available);
+
+        let rows = region_picker_rows(&scope, &available, &counts(), "");
+
+        assert_eq!(
+            labels(&rows),
+            strings(&[
+                "All regions",
+                "us-east-1",
+                "us-west-2",
+                "eu-west-1",
+                "eu-central-1"
+            ])
+        );
+        assert!(rows.iter().all(|row| row.checked));
+        assert_eq!(
+            rows.iter().map(|row| row.count).collect::<Vec<_>>(),
+            vec![20, 7, 5, 4, 4]
+        );
+        assert_eq!(rows[0].region, None);
+    }
+
+    #[test]
+    fn picker_rows_reflect_only_selection() {
+        let available = available();
+        let mut scope = RegionScope::all(&available);
+        scope.select_only("us-west-2", &available);
+
+        let rows = region_picker_rows(&scope, &available, &counts(), "");
+
+        assert!(!rows[0].checked);
+        let checked: Vec<&str> = rows
+            .iter()
+            .filter(|row| row.checked)
+            .map(|row| row.label.as_str())
+            .collect();
+        assert_eq!(checked, vec!["us-west-2"]);
+    }
+
+    #[test]
+    fn picker_filter_is_trimmed_and_case_insensitive() {
+        let available = available();
+        let scope = RegionScope::all(&available);
+        let counts = counts();
+        let rows_for =
+            |filter: &str| labels(&region_picker_rows(&scope, &available, &counts, filter));
+
+        assert_eq!(rows_for("eu"), strings(&["eu-west-1", "eu-central-1"]));
+        assert_eq!(rows_for("US-"), strings(&["us-east-1", "us-west-2"]));
+        assert_eq!(rows_for("all"), strings(&["All regions"]));
+        assert!(rows_for("zz").is_empty());
+        assert_eq!(rows_for("  eu-w "), strings(&["eu-west-1"]));
+    }
+
+    #[test]
+    fn picker_count_is_zero_when_missing() {
+        let available = available();
+        let scope = RegionScope::all(&available);
+        let counts: Vec<(String, usize)> = counts()
+            .into_iter()
+            .filter(|(region, _)| region.as_str() != "eu-west-1")
+            .collect();
+
+        let rows = region_picker_rows(&scope, &available, &counts, "");
+
+        assert_eq!(rows[0].count, 16);
+        assert_eq!(rows[3].count, 0);
+    }
+
+    #[test]
+    fn picker_empty_text_quotes_trimmed_filter() {
+        assert_eq!(region_picker_empty_text(" zz "), "No regions match “zz”.");
+    }
+
+    #[test]
+    fn activating_rows_selects_all_or_toggles_region() {
+        let available = available();
+        let mut scope = RegionScope::from_selected(&strings(&["us-west-2"]), &available);
+        let rows = region_picker_rows(&scope, &available, &counts(), "");
+
+        activate_region_row(&mut scope, &rows[0], &available);
+        assert_eq!(scope.selected(), available.as_slice());
+
+        let mut scope = RegionScope::all(&available);
+        let rows = region_picker_rows(&scope, &available, &counts(), "");
+        activate_region_row(&mut scope, &rows[1], &available);
+        assert_eq!(
+            scope.selected(),
+            strings(&["us-west-2", "eu-west-1", "eu-central-1"]).as_slice()
+        );
     }
 }
