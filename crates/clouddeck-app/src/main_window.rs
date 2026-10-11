@@ -1418,6 +1418,60 @@ mod tests {
     }
 
     #[gpui::test]
+    fn escape_in_focused_search_clears_the_query(cx: &mut TestAppContext) {
+        let (fleet, main, cx) = rooted_main_window(cx, three_instances(), 1280.0, 760.0);
+
+        cx.simulate_keystrokes("cmd-f");
+        cx.run_until_parked();
+        cx.simulate_input("state:stopped");
+        cx.run_until_parked();
+        assert_eq!(query(&fleet, cx), "state:stopped");
+
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+
+        assert_eq!(query(&fleet, cx), "");
+        assert_eq!(search_input_text(&main, cx), "");
+    }
+
+    #[gpui::test]
+    fn escape_with_overlay_open_and_search_focused_closes_overlay_and_keeps_query(
+        cx: &mut TestAppContext,
+    ) {
+        let (fleet, main, cx) = rooted_main_window(cx, three_instances(), 1280.0, 760.0);
+        fleet.update(cx, |fleet, cx| fleet.set_query("state:stopped", cx));
+        cx.run_until_parked();
+
+        cx.dispatch_action(app_menus::OpenCommandPalette);
+        cx.run_until_parked();
+        assert_eq!(rendered_overlay(&main, cx), Some("main.overlay.palette"));
+
+        cx.simulate_keystrokes("cmd-f");
+        cx.run_until_parked();
+        let input = main.read_with(cx, |main, cx| main.search.read(cx).input.clone());
+        let focused = cx.update(|window, cx| input.read(cx).focus_handle(cx).is_focused(window));
+        assert!(
+            focused,
+            "cmd-f should focus the search input over an open overlay"
+        );
+
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+
+        assert_eq!(rendered_overlay(&main, cx), None);
+        assert_eq!(query(&fleet, cx), "state:stopped");
+    }
+
+    fn query(fleet: &Entity<FleetState>, cx: &mut VisualTestContext) -> String {
+        fleet.read_with(cx, |fleet, _| fleet.query().to_string())
+    }
+
+    fn search_input_text(main: &Entity<MainWindow>, cx: &mut VisualTestContext) -> String {
+        let input = main.read_with(cx, |main, cx| main.search.read(cx).input.clone());
+        input.read_with(cx, |input, _| input.value().to_string())
+    }
+
+    #[gpui::test]
     fn region_picker_change_emits_regions_changed_once_dismissed(cx: &mut TestAppContext) {
         let (_fleet, main, cx) = rooted_main_window(cx, three_instances(), 1280.0, 760.0);
         let events: Rc<RefCell<Vec<MainWindowEvent>>> = Rc::new(RefCell::new(Vec::new()));
