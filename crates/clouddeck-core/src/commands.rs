@@ -1,5 +1,10 @@
 //! Command palette: every app action, its title, macOS shortcut and enabled rule.
 
+use crate::query::{QueryField, set_field_value};
+
+/// Status bar text shown after Open in Console runs.
+pub const OPEN_IN_CONSOLE_FLASH: &str = "Opening in AWS Console…";
+
 /// An app action listed in the command palette.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CommandId {
@@ -170,6 +175,32 @@ pub fn shortcut_label(shortcut: &str, platform: Platform) -> String {
             })
             .collect(),
     }
+}
+
+/// The query that results from running a filter command, or `None` for other commands.
+pub fn filter_command_query(
+    id: CommandId,
+    query: &str,
+    known_tag_keys: &[String],
+) -> Option<String> {
+    let state = match id {
+        CommandId::FilterRunning => "running",
+        CommandId::FilterStopped => "stopped",
+        CommandId::FilterPending => "pending",
+        CommandId::ClearFilters => return Some(String::new()),
+        _ => return None,
+    };
+    Some(set_field_value(
+        query,
+        QueryField::State,
+        state,
+        known_tag_keys,
+    ))
+}
+
+/// Status bar text shown after copying `value`.
+pub fn copied_flash(value: &str) -> String {
+    format!("Copied {value}")
 }
 
 #[cfg(test)]
@@ -371,5 +402,47 @@ mod tests {
             Some("Ctrl+Shift+R".to_string())
         );
         assert_eq!(FilterRunning.shortcut_for(Platform::Linux), None);
+    }
+
+    #[test]
+    fn filter_commands_rewrite_the_state_term() {
+        let known: Vec<String> = Vec::new();
+        assert_eq!(
+            filter_command_query(FilterRunning, "web state:stopped", &known),
+            Some("web state:running".to_string())
+        );
+        assert_eq!(
+            filter_command_query(FilterPending, "", &known),
+            Some("state:pending".to_string())
+        );
+        let owner_known = vec!["Owner".to_string()];
+        assert_eq!(
+            filter_command_query(FilterStopped, "-state:running owner:esteban", &owner_known),
+            Some("-state:running owner:esteban state:stopped".to_string())
+        );
+    }
+
+    #[test]
+    fn clear_filters_empties_the_query() {
+        assert_eq!(
+            filter_command_query(ClearFilters, "web state:stopped", &[]),
+            Some(String::new())
+        );
+    }
+
+    #[test]
+    fn other_commands_do_not_touch_the_query() {
+        assert_eq!(filter_command_query(CopyId, "web", &[]), None);
+        assert_eq!(filter_command_query(Refresh, "", &[]), None);
+    }
+
+    #[test]
+    fn copied_flash_names_the_copied_value() {
+        assert_eq!(copied_flash("i-0123"), "Copied i-0123");
+    }
+
+    #[test]
+    fn open_in_console_flash_text_is_exact() {
+        assert_eq!(OPEN_IN_CONSOLE_FLASH, "Opening in AWS Console…");
     }
 }
