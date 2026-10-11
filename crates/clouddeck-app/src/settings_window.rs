@@ -1,19 +1,21 @@
 //! Settings window (design/images/50-59).
 
+use std::path::PathBuf;
 use std::time::Duration;
 
 use clouddeck_core::{
-    DefaultSort, Density, FLEET_REGIONS, LaunchBehavior, LogLevel, RECENT_SEARCH_LIMITS,
-    REFRESH_INTERVALS, REQUEST_TIMEOUTS, SETTINGS_CATEGORIES, SettingId, Settings, Theme,
-    settings_path,
+    DefaultSort, Density, FLEET_REGIONS, KEYMAP, LaunchBehavior, LogLevel, Platform,
+    RECENT_SEARCH_LIMITS, REFRESH_INTERVALS, REQUEST_TIMEOUTS, SETTINGS_CATEGORIES, SettingId,
+    Settings, Theme, UiState, changed_categories, context_path, settings_path, shortcut_label,
+    test_aws_cli, ui_state_path,
 };
 use gpui::{
-    AnyElement, App, Bounds, ClickEvent, Context, Entity, EventEmitter, Global, IntoElement,
-    ParentElement, Render, SharedString, Styled, Subscription, TitlebarOptions, Window,
+    AnyElement, App, Bounds, ClickEvent, Context, Div, Entity, EventEmitter, Global, IntoElement,
+    ParentElement, Render, SharedString, Stateful, Styled, Subscription, TitlebarOptions, Window,
     WindowBounds, WindowHandle, WindowOptions, div, point, prelude::*, px, size, white,
 };
 use gpui_component::checkbox::Checkbox;
-use gpui_component::input::{Input, InputState};
+use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::select::{Select, SelectEvent, SelectItem, SelectState};
 use gpui_component::{IndexPath, Root, Sizable};
 
@@ -21,6 +23,8 @@ use crate::icons::AppIcon;
 use crate::tokens::{Palette, palette};
 
 const SAVE_DEBOUNCE: Duration = Duration::from_millis(300);
+const NOTE_DURATION: Duration = Duration::from_secs(2);
+const CLI_PATHS: [&str; 2] = ["/opt/homebrew/bin/aws", "/usr/local/bin/aws"];
 const CATEGORY_ICONS: [AppIcon; 8] = [
     AppIcon::PanelLeft,
     AppIcon::Server,
@@ -41,17 +45,26 @@ pub struct SettingsWindow {
     pub settings: Settings,
     pub category: &'static str,
     search: Entity<InputState>,
+    config_input: Entity<InputState>,
     selects: Vec<(SettingId, Entity<SelectState<Vec<Choice>>>)>,
     _subscriptions: Vec<Subscription>,
     save_generation: u64,
+    note: Option<Note>,
+    note_generation: u64,
+    cli_version: Option<String>,
+    cli_test_generation: u64,
     /// Settings drawn by the last render, since `debug_bounds` keeps removed elements.
     #[cfg(test)]
     rendered: Vec<SettingId>,
+    #[cfg(test)]
+    rendered_changes: Vec<SettingId>,
+    #[cfg(test)]
+    rendered_dots: Vec<usize>,
 }
 
 impl EventEmitter<SettingsEvent> for SettingsWindow {}
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 enum Pick {
     Theme(Theme),
     Density(Density),
@@ -61,6 +74,7 @@ enum Pick {
     RefreshInterval(u32),
     RecentSearchLimit(u32),
     RequestTimeout(u32),
+    AwsCliPath(Option<String>),
 }
 
 impl Pick {
@@ -74,8 +88,15 @@ impl Pick {
             Pick::RefreshInterval(value) => settings.refresh_interval_minutes = value,
             Pick::RecentSearchLimit(value) => settings.recent_search_limit = value,
             Pick::RequestTimeout(value) => settings.request_timeout_seconds = value,
+            Pick::AwsCliPath(value) => settings.aws_cli_path = value,
         }
     }
+}
+
+#[derive(Debug, Clone)]
+struct Note {
+    text: SharedString,
+    icon: Option<AppIcon>,
 }
 
 #[derive(Clone)]
@@ -101,6 +122,20 @@ fn choice(title: impl Into<SharedString>, pick: Pick) -> Choice {
         title: title.into(),
         pick,
     }
+}
+
+fn button(id: &'static str, label: &'static str, palette: &Palette) -> Stateful<Div> {
+    div()
+        .id(id)
+        .px(px(12.))
+        .py(px(4.))
+        .rounded(px(6.))
+        .border_1()
+        .border_color(palette.line)
+        .bg(palette.surf)
+        .text_size(px(12.))
+        .text_color(palette.text)
+        .child(label)
 }
 
 fn minutes_label(minutes: u32) -> String {
@@ -160,6 +195,13 @@ fn choices(id: SettingId) -> Vec<Choice> {
             .iter()
             .map(|&seconds| choice(format!("{seconds} seconds"), Pick::RequestTimeout(seconds)))
             .collect(),
+        SettingId::AwsCliPath => std::iter::once(choice("Auto-detect", Pick::AwsCliPath(None)))
+            .chain(
+                CLI_PATHS
+                    .iter()
+                    .map(|&path| choice(path, Pick::AwsCliPath(Some(path.to_owned())))),
+            )
+            .collect(),
         _ => Vec::new(),
     }
 }
@@ -174,6 +216,7 @@ fn current(id: SettingId, settings: &Settings) -> Option<Pick> {
         SettingId::RefreshInterval => Pick::RefreshInterval(settings.refresh_interval_minutes),
         SettingId::RecentSearchLimit => Pick::RecentSearchLimit(settings.recent_search_limit),
         SettingId::RequestTimeout => Pick::RequestTimeout(settings.request_timeout_seconds),
+        SettingId::AwsCliPath => Pick::AwsCliPath(settings.aws_cli_path.clone()),
         _ => return None,
     })
 }
@@ -223,8 +266,19 @@ fn groups_for(category: &str) -> Vec<(&'static str, Vec<SettingId>)> {
 impl SettingsWindow {
     pub fn new(settings: Settings, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search settings"));
+        let config_input = cx
+            .new(|cx| InputState::new(window, cx).default_value(settings.aws_config_file.clone()));
         let mut selects = Vec::new();
-        let mut subscriptions = Vec::new();
+        let mut subscriptions = vec![cx.subscribe_in(
+            &config_input,
+            window,
+            |this: &mut Self, state, event: &InputEvent, _, cx| {
+                if matches!(event, InputEvent::Change) {
+                    let value = state.read(cx).value().to_string();
+                    this.change(cx, |settings| settings.aws_config_file = value);
+                }
+            },
+        )];
         for id in SettingId::ALL {
             let items = choices(id);
             if items.is_empty() {
@@ -239,7 +293,7 @@ impl SettingsWindow {
                 window,
                 move |this: &mut Self, _, event: &SelectEvent<Vec<Choice>>, _, cx| {
                     if let SelectEvent::Confirm(Some(pick)) = event {
-                        this.choose(id, *pick, cx);
+                        this.choose(id, pick.clone(), cx);
                     }
                 },
             ));
@@ -249,11 +303,20 @@ impl SettingsWindow {
             settings,
             category: SETTINGS_CATEGORIES[0],
             search,
+            config_input,
             selects,
             _subscriptions: subscriptions,
             save_generation: 0,
+            note: None,
+            note_generation: 0,
+            cli_version: None,
+            cli_test_generation: 0,
             #[cfg(test)]
             rendered: Vec::new(),
+            #[cfg(test)]
+            rendered_changes: Vec::new(),
+            #[cfg(test)]
+            rendered_dots: Vec::new(),
         }
     }
 
@@ -302,6 +365,123 @@ impl SettingsWindow {
         });
     }
 
+    fn reset(&mut self, id: SettingId, window: &mut Window, cx: &mut Context<Self>) {
+        if id.is_disabled(&self.settings) {
+            return;
+        }
+        self.change(cx, |settings| id.reset(settings));
+        self.sync_controls(window, cx);
+    }
+
+    fn restore_defaults(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.change(cx, |settings| *settings = Settings::default());
+        self.sync_controls(window, cx);
+        self.show_note_for("Defaults restored", Some(AppIcon::Check), cx);
+    }
+
+    fn sync_controls(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        for (id, state) in &self.selects {
+            if let Some(pick) = current(*id, &self.settings) {
+                state.update(cx, |state, cx| state.set_selected_value(&pick, window, cx));
+            }
+        }
+        let value = self.settings.aws_config_file.clone();
+        self.config_input.update(cx, |input, cx| {
+            if input.value().to_string() != value {
+                input.set_value(value, window, cx);
+            }
+        });
+    }
+
+    fn show_note(
+        &mut self,
+        text: impl Into<SharedString>,
+        icon: Option<AppIcon>,
+        cx: &mut Context<Self>,
+    ) {
+        self.note_generation += 1;
+        self.note = Some(Note {
+            text: text.into(),
+            icon,
+        });
+        cx.notify();
+    }
+
+    fn show_note_for(
+        &mut self,
+        text: impl Into<SharedString>,
+        icon: Option<AppIcon>,
+        cx: &mut Context<Self>,
+    ) {
+        self.show_note(text, icon, cx);
+        let generation = self.note_generation;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(NOTE_DURATION).await;
+            this.update(cx, |this, cx| {
+                if this.note_generation == generation {
+                    this.note = None;
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn run_cli_test(&mut self, cx: &mut Context<Self>) {
+        let Some(path) = self.settings.aws_cli_path.clone() else {
+            self.show_note(
+                "Pick a CLI path to test. Auto-detect is not checked yet.",
+                None,
+                cx,
+            );
+            return;
+        };
+        let timeout = Duration::from_secs(u64::from(self.settings.request_timeout_seconds));
+        self.cli_test_generation += 1;
+        let generation = self.cli_test_generation;
+        self.show_note("Testing…", None, cx);
+        cx.spawn(async move |this, cx| {
+            let outcome = crate::runtime::runtime()
+                .spawn(async move { test_aws_cli(&PathBuf::from(path), timeout).await })
+                .await
+                .map_err(|error| error.to_string())
+                .and_then(|result| result.map_err(|error| error.to_string()));
+            this.update(cx, |this, cx| this.finish_cli_test(generation, outcome, cx))
+                .ok();
+        })
+        .detach();
+    }
+
+    fn finish_cli_test(
+        &mut self,
+        generation: u64,
+        outcome: Result<String, String>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.cli_test_generation != generation {
+            return;
+        }
+        self.cli_version = outcome.clone().ok();
+        let text = outcome.unwrap_or_else(|error| error);
+        self.show_note(text, None, cx);
+    }
+
+    fn edit_ui_state(
+        &mut self,
+        note: &'static str,
+        edit: impl FnOnce(&mut UiState),
+        cx: &mut Context<Self>,
+    ) {
+        let path = ui_state_path();
+        let mut state = UiState::load(&path);
+        edit(&mut state);
+        match state.save(&path) {
+            Ok(()) => self.show_note(note, None, cx),
+            Err(error) => self.show_note(format!("Could not save: {error}"), None, cx),
+        }
+    }
+
     fn schedule_save(&mut self, cx: &mut Context<Self>) {
         if cfg!(test) {
             return;
@@ -331,6 +511,7 @@ impl SettingsWindow {
         &self,
         index: usize,
         name: &'static str,
+        changed: bool,
         palette: &Palette,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -353,6 +534,16 @@ impl SettingsWindow {
             .when(!selected, |row| row.text_color(palette.dim))
             .child(CATEGORY_ICONS[index].icon().xsmall())
             .child(name)
+            .when(changed, |row| {
+                row.child(
+                    div()
+                        .ml_auto()
+                        .size(px(6.))
+                        .rounded(px(3.))
+                        .bg(palette.accent)
+                        .debug_selector(move || format!("settings.cat-dot.{index}")),
+                )
+            })
             .into_any_element()
     }
 
@@ -424,11 +615,21 @@ impl SettingsWindow {
     fn control(&self, id: SettingId, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
         match id {
             SettingId::Regions => self.regions_control(palette, cx),
-            SettingId::AwsCliPath | SettingId::AwsConfigFile => div()
+            SettingId::AwsCliPath => div()
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .child(self.select_control(id, palette))
+                .child(
+                    button("settings-cli-test", "Test", palette)
+                        .debug_selector(|| "settings.cli-test".into())
+                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.run_cli_test(cx))),
+                )
+                .into_any_element(),
+            SettingId::AwsConfigFile => div()
                 .debug_selector(move || format!("settings.control.{id:?}"))
-                .text_size(px(11.))
-                .text_color(palette.faint)
-                .child("Set in a later update")
+                .w(px(260.))
+                .child(Input::new(&self.config_input).small())
                 .into_any_element(),
             _ => match flag(&self.settings, id) {
                 Some(on) => self.switch(id, on, palette, cx),
@@ -462,14 +663,33 @@ impl SettingsWindow {
                             .flex()
                             .items_center()
                             .gap(px(6.))
-                            .child(
-                                div()
-                                    .w(px(3.))
-                                    .h(px(14.))
-                                    .rounded(px(2.))
-                                    .when(changed, |bar| bar.bg(palette.accent)),
-                            )
-                            .child(div().text_size(px(13.)).child(id.label())),
+                            .child(div().w(px(2.)).h(px(14.)).rounded(px(1.)).when(
+                                changed,
+                                |bar| {
+                                    bar.bg(palette.accent)
+                                        .debug_selector(move || format!("settings.changed.{id:?}"))
+                                },
+                            ))
+                            .child(div().text_size(px(13.)).child(id.label()))
+                            .when(changed, |label| {
+                                label.child(
+                                    div()
+                                        .id(SharedString::from(format!(
+                                            "settings-reset-{}",
+                                            id.label()
+                                        )))
+                                        .debug_selector(move || format!("settings.reset.{id:?}"))
+                                        .cursor_pointer()
+                                        .text_size(px(11.))
+                                        .text_color(palette.accent)
+                                        .on_click(cx.listener(
+                                            move |this, _: &ClickEvent, window, cx| {
+                                                this.reset(id, window, cx)
+                                            },
+                                        ))
+                                        .child("Reset"),
+                                )
+                            }),
                     )
                     .child(
                         div()
@@ -503,11 +723,150 @@ impl SettingsWindow {
             .children(ids.iter().map(|id| self.setting_row(*id, palette, cx)))
             .into_any_element()
     }
+
+    fn stored_data_section(&self, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(8.))
+            .mt(px(6.))
+            .child(
+                div()
+                    .text_size(px(11.))
+                    .text_color(palette.faint)
+                    .child("STORED DATA"),
+            )
+            .child(
+                div()
+                    .text_size(px(11.))
+                    .text_color(palette.dim)
+                    .child("CloudDeck never stores credentials. It keeps profile and region names, pinned and recent searches, and window layout in ~/.config/clouddeck. Instance data is never written to disk."),
+            )
+            .child(
+                div()
+                    .flex()
+                    .gap(px(8.))
+                    .child(
+                        button("settings-reveal-data", "Reveal data folder", palette).on_click(
+                            cx.listener(|_, _: &ClickEvent, _, cx| {
+                                let folder = context_path();
+                                if let Some(dir) = folder.parent() {
+                                    cx.reveal_path(dir);
+                                }
+                            }),
+                        ),
+                    )
+                    .child(
+                        button("settings-clear-searches", "Clear recent searches", palette)
+                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                this.edit_ui_state(
+                                    "Recent searches cleared",
+                                    |state| state.recent_searches.clear(),
+                                    cx,
+                                );
+                            })),
+                    )
+                    .child(
+                        button("settings-forget-scope", "Forget remembered scope", palette)
+                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                this.edit_ui_state(
+                                    "Remembered scope forgotten",
+                                    |state| state.selected_regions.clear(),
+                                    cx,
+                                );
+                            })),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    fn keymap_section(&self, palette: &Palette) -> Vec<AnyElement> {
+        let platform = if cfg!(target_os = "macos") {
+            Platform::Mac
+        } else {
+            Platform::Linux
+        };
+        let info = div()
+            .text_size(px(11.))
+            .text_color(palette.dim)
+            .mb(px(10.))
+            .child("Shortcuts shown here match the tooltips and the command palette.")
+            .into_any_element();
+        let rows = KEYMAP
+            .iter()
+            .enumerate()
+            .map(|(index, (action, shortcut))| {
+                div()
+                    .debug_selector(move || format!("settings.keymap.{index}"))
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .py(px(8.))
+                    .border_b_1()
+                    .border_color(palette.line)
+                    .child(div().text_size(px(13.)).child(*action))
+                    .child(
+                        div()
+                            .px(px(6.))
+                            .py(px(2.))
+                            .rounded(px(4.))
+                            .border_1()
+                            .border_color(palette.line)
+                            .bg(palette.surf)
+                            .text_size(px(11.))
+                            .text_color(palette.dim)
+                            .child(shortcut_label(shortcut, platform)),
+                    )
+                    .into_any_element()
+            });
+        std::iter::once(info).chain(rows).collect()
+    }
+
+    fn about_section(&self, palette: &Palette) -> Vec<AnyElement> {
+        let platform = if cfg!(target_os = "macos") {
+            "macOS · gpui"
+        } else {
+            "Linux · gpui"
+        };
+        [
+            ("Version", env!("CARGO_PKG_VERSION").to_owned()),
+            (
+                "AWS CLI",
+                self.cli_version
+                    .clone()
+                    .unwrap_or_else(|| "unknown".to_owned()),
+            ),
+            ("Config file", self.settings.aws_config_file.clone()),
+            ("Data folder", "~/.config/clouddeck".to_owned()),
+            ("Platform", platform.to_owned()),
+        ]
+        .into_iter()
+        .map(|(label, value)| {
+            div()
+                .flex()
+                .items_center()
+                .gap(px(16.))
+                .py(px(9.))
+                .border_b_1()
+                .border_color(palette.line)
+                .child(
+                    div()
+                        .w(px(140.))
+                        .text_size(px(12.))
+                        .text_color(palette.dim)
+                        .child(label),
+                )
+                .child(div().flex_1().min_w(px(0.)).text_size(px(13.)).child(value))
+                .into_any_element()
+        })
+        .collect()
+    }
 }
 
 impl Render for SettingsWindow {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = palette(cx);
+        let changed_dots = changed_categories(&self.settings);
         let tree = div()
             .debug_selector(|| "settings.tree".into())
             .w(px(200.))
@@ -544,12 +903,9 @@ impl Render for SettingsWindow {
                         ),
                     ),
             )
-            .children(
-                SETTINGS_CATEGORIES
-                    .iter()
-                    .enumerate()
-                    .map(|(index, name)| self.category_button(index, name, &palette, cx)),
-            );
+            .children(SETTINGS_CATEGORIES.iter().enumerate().map(|(index, name)| {
+                self.category_button(index, name, changed_dots.contains(name), &palette, cx)
+            }));
 
         let groups = groups_for(self.category);
         #[cfg(test)]
@@ -558,7 +914,30 @@ impl Render for SettingsWindow {
                 .iter()
                 .flat_map(|(_, ids)| ids.iter().copied())
                 .collect();
+            self.rendered_changes = self
+                .rendered
+                .iter()
+                .copied()
+                .filter(|id| id.is_changed(&self.settings))
+                .collect();
+            self.rendered_dots = (0..SETTINGS_CATEGORIES.len())
+                .filter(|&index| changed_dots.contains(&SETTINGS_CATEGORIES[index]))
+                .collect();
         }
+        let body = match self.category {
+            "Keymap" => self.keymap_section(&palette),
+            "About" => self.about_section(&palette),
+            _ => {
+                let mut sections: Vec<AnyElement> = groups
+                    .into_iter()
+                    .map(|(group, ids)| self.group_section(group, &ids, &palette, cx))
+                    .collect();
+                if self.category == "AWS & Privacy" {
+                    sections.push(self.stored_data_section(&palette, cx));
+                }
+                sections
+            }
+        };
         let pane = div()
             .debug_selector(|| "settings.pane".into())
             .id("settings-pane")
@@ -579,11 +958,7 @@ impl Render for SettingsWindow {
                     .mb(px(14.))
                     .child(self.category),
             )
-            .children(
-                groups
-                    .into_iter()
-                    .map(|(group, ids)| self.group_section(group, &ids, &palette, cx)),
-            );
+            .children(body);
 
         let footer = div()
             .flex()
@@ -598,18 +973,37 @@ impl Render for SettingsWindow {
             ))
             .child(
                 div()
-                    .id("settings-done")
-                    .debug_selector(|| "settings.done".into())
-                    .px(px(12.))
-                    .py(px(4.))
-                    .rounded(px(6.))
-                    .border_1()
-                    .border_color(palette.line)
-                    .bg(palette.surf)
-                    .text_size(px(12.))
-                    .text_color(palette.text)
-                    .on_click(cx.listener(|_, _: &ClickEvent, window, _| window.remove_window()))
-                    .child("Done"),
+                    .flex()
+                    .items_center()
+                    .gap(px(10.))
+                    .when_some(self.note.as_ref(), |row, note| {
+                        row.child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(px(4.))
+                                .text_size(px(11.))
+                                .text_color(palette.dim)
+                                .when_some(note.icon, |note_row, icon| {
+                                    note_row.child(icon.icon().xsmall().text_color(palette.accent))
+                                })
+                                .child(note.text.clone()),
+                        )
+                    })
+                    .child(
+                        button("settings-restore", "Restore Defaults", &palette)
+                            .debug_selector(|| "settings.restore".into())
+                            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                                this.restore_defaults(window, cx)
+                            })),
+                    )
+                    .child(
+                        button("settings-done", "Done", &palette)
+                            .debug_selector(|| "settings.done".into())
+                            .on_click(
+                                cx.listener(|_, _: &ClickEvent, window, _| window.remove_window()),
+                            ),
+                    ),
             );
 
         let content = div()
@@ -858,5 +1252,66 @@ mod tests {
         );
 
         assert_eq!(cx.update(|cx| cx.windows().len()), 1);
+    }
+
+    #[gpui::test]
+    fn changed_value_shows_markers_until_reset(cx: &mut TestAppContext) {
+        let (view, cx) = rooted(cx, Settings::default());
+
+        view.update(cx, |view, cx| {
+            view.choose(SettingId::Theme, Pick::Theme(Theme::Dark), cx)
+        });
+
+        assert!(cx.debug_bounds("settings.changed.Theme").is_some());
+        assert!(cx.debug_bounds("settings.reset.Theme").is_some());
+        assert!(cx.debug_bounds("settings.cat-dot.0").is_some());
+
+        click(cx, "settings.reset.Theme");
+
+        assert_eq!(
+            view.read_with(cx, |view, _| view.settings.theme),
+            Theme::FollowSystem
+        );
+        assert!(!view.read_with(cx, |view, _| {
+            view.rendered_changes.contains(&SettingId::Theme)
+        }));
+        assert!(!view.read_with(cx, |view, _| view.rendered_dots.contains(&0)));
+    }
+
+    #[gpui::test]
+    fn restore_defaults_resets_every_setting(cx: &mut TestAppContext) {
+        let (view, cx) = rooted(cx, Settings::default());
+        view.update(cx, |view, cx| {
+            view.choose(SettingId::Theme, Pick::Theme(Theme::Dark), cx);
+            view.toggle(SettingId::ShowUpdatedTime, cx);
+        });
+
+        click(cx, "settings.restore");
+
+        assert_eq!(
+            view.read_with(cx, |view, _| view.settings.clone()),
+            Settings::default()
+        );
+    }
+
+    #[gpui::test]
+    fn keymap_lists_every_shortcut(cx: &mut TestAppContext) {
+        let (_view, cx) = rooted(cx, Settings::default());
+
+        click(cx, "settings.cat.4");
+
+        assert!(cx.debug_bounds("settings.keymap.9").is_some());
+        assert!(cx.debug_bounds("settings.keymap.10").is_none());
+    }
+
+    #[gpui::test]
+    fn aws_pane_has_cli_test_and_config_controls(cx: &mut TestAppContext) {
+        let (_view, cx) = rooted(cx, Settings::default());
+
+        click(cx, "settings.cat.5");
+
+        assert!(cx.debug_bounds("settings.control.AwsCliPath").is_some());
+        assert!(cx.debug_bounds("settings.cli-test").is_some());
+        assert!(cx.debug_bounds("settings.control.AwsConfigFile").is_some());
     }
 }
