@@ -40,9 +40,8 @@ mod toolbar;
 mod view_models;
 mod welcome_window;
 
-use gpui::{App, Application, Bounds, actions, prelude::*, px, size};
-
-use shell::AppShell;
+use clouddeck_core::{WorkspaceContext, context_path};
+use gpui::{App, Application, actions};
 
 actions!(clouddeck, [Quit]);
 
@@ -54,12 +53,13 @@ fn main() {
             // SurgicalTheme is intentionally light. Keep gpui-component inputs and
             // popovers on the same palette even when macOS is using dark mode.
             gpui_component::Theme::change(gpui_component::ThemeMode::Light, None, cx);
-            let bounds = Bounds::centered(None, size(px(1280.0), px(800.0)), cx);
-            cx.open_window(main_window::window_options(bounds), |window, cx| {
-                let shell = cx.new(|cx| AppShell::new(window, cx));
-                cx.new(|cx| gpui_component::Root::new(shell, window, cx))
-            })
-            .unwrap();
+            let (demo, demo_scenario) = shell::launch_options();
+            let saved = WorkspaceContext::load(&context_path());
+            if welcome_window::should_show_welcome(demo, saved.as_ref()) {
+                welcome_window::open_welcome_window(cx).expect("welcome window opens");
+            } else {
+                shell::open_main_window(cx, demo, demo_scenario).expect("main window opens");
+            }
             cx.on_action(|_: &Quit, cx| cx.quit());
             cx.bind_keys(shell::app_key_bindings());
             cx.activate(true);

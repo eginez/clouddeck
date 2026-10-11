@@ -10,9 +10,10 @@ use clouddeck_core::{
     Settings, UiState, WindowFrame, WorkspaceContext, settings_path,
 };
 use gpui::{
-    AnyWindowHandle, App, Context, Entity, IntoElement, KeyBinding, ParentElement, Render, Styled,
-    Subscription, Task, Window, actions, div, prelude::*, px,
+    AnyWindowHandle, App, Bounds, Context, Entity, IntoElement, KeyBinding, ParentElement, Render,
+    Styled, Subscription, Task, Window, WindowHandle, actions, div, prelude::*, px, size,
 };
+use gpui_component::Root;
 use std::{path::PathBuf, time::Duration};
 
 actions!(clouddeck, [Refresh]);
@@ -52,7 +53,7 @@ pub struct AppShell {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum DemoScenario {
+pub(crate) enum DemoScenario {
     Happy,
     Empty,
     Failure,
@@ -60,7 +61,7 @@ enum DemoScenario {
     Large,
 }
 
-fn launch_options() -> (bool, DemoScenario) {
+pub(crate) fn launch_options() -> (bool, DemoScenario) {
     let mut demo = false;
     let mut scenario = DemoScenario::Happy;
     let mut args = std::env::args().skip(1);
@@ -99,12 +100,32 @@ fn is_real_mode() -> bool {
     !std::env::args_os().any(|arg| arg == "--demo")
 }
 
-impl AppShell {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let (demo, scenario) = launch_options();
-        Self::build_with_scenario(window, demo, scenario, cx)
-    }
+pub(crate) fn open_main_window(
+    cx: &mut App,
+    demo: bool,
+    demo_scenario: DemoScenario,
+) -> Option<WindowHandle<Root>> {
+    let bounds = Bounds::centered(None, size(px(1280.0), px(800.0)), cx);
+    cx.open_window(crate::main_window::window_options(bounds), |window, cx| {
+        let shell = cx.new(|cx| AppShell::build_with_scenario(window, demo, demo_scenario, cx));
+        cx.new(|cx| gpui_component::Root::new(shell, window, cx))
+    })
+    .ok()
+}
 
+pub(crate) fn open_main_window_with_setup(cx: &mut App) -> Option<WindowHandle<Root>> {
+    let handle = open_main_window(cx, false, DemoScenario::Happy)?;
+    let shell = handle
+        .update(cx, |root, _, _| {
+            root.view().clone().downcast::<AppShell>().ok()
+        })
+        .ok()
+        .flatten()?;
+    shell.update(cx, |shell, cx| shell.open_setup(cx));
+    Some(handle)
+}
+
+impl AppShell {
     #[cfg(test)]
     fn new_demo(window: &mut Window, cx: &mut Context<Self>) -> Self {
         Self::build_with_scenario(window, true, DemoScenario::Happy, cx)
