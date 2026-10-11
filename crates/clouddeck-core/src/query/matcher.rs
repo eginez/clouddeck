@@ -19,7 +19,7 @@ pub struct QueryError {
 pub struct CompiledQuery {
     terms: Vec<Term>,
     errors: Vec<QueryError>,
-    // per term: an invalid age or has term, which always matches
+    // per term: an invalid or empty-valued term, which always matches
     ignored: Vec<bool>,
     now: SystemTime,
 }
@@ -33,7 +33,7 @@ pub fn compile(query: &str, known_tag_keys: &[String], now: SystemTime) -> Compi
         .collect();
     let ignored = terms
         .iter()
-        .map(|term| invalid_message(term).is_some())
+        .map(|term| invalid_message(term).is_some() || is_blank(term))
         .collect();
     let errors = problems
         .into_iter()
@@ -110,19 +110,27 @@ impl CompiledQuery {
             } => field_values(value)
                 .first()
                 .is_none_or(|age| age_matches(instance, age, self.now)),
-            TermKind::Field { field, value, .. } => {
-                let values = field_values(value);
-                values.is_empty() || values.iter().any(|v| field_matches(*field, instance, v))
-            }
-            TermKind::TagShorthand { key, value, .. } => {
-                let values = field_values(value);
-                values.is_empty() || values.iter().any(|v| tag_value_matches(instance, key, v))
-            }
+            TermKind::Field { field, value, .. } => field_values(value)
+                .iter()
+                .any(|v| field_matches(*field, instance, v)),
+            TermKind::TagShorthand { key, value, .. } => field_values(value)
+                .iter()
+                .any(|v| tag_value_matches(instance, key, v)),
         }
     }
 }
 
 const AGE_HELP: &str = "age needs > or <, a number and h, d or w. Example: age:>30d";
+
+/// Whether a field or tag term has no usable value, so it is ignored even when negated.
+fn is_blank(term: &Term) -> bool {
+    match &term.kind {
+        TermKind::Field { value, .. } | TermKind::TagShorthand { value, .. } => {
+            field_values(value).is_empty()
+        }
+        _ => false,
+    }
+}
 
 /// Why an `age:` or `has:` term is ignored, or `None` when it is usable.
 fn invalid_message(term: &Term) -> Option<String> {
@@ -519,6 +527,16 @@ mod tests {
     }
 
     #[test]
+    fn negated_empty_terms_are_ignored() {
+        assert_eq!(ids("-owner:"), vec![1, 2, 3, 4, 5]);
+        assert_eq!(ids("-tag:"), vec![1, 2, 3, 4, 5]);
+        assert_eq!(ids("-state:"), vec![1, 2, 3, 4, 5]);
+        assert_eq!(ids("-age:"), vec![1, 2, 3, 4, 5]);
+        assert_eq!(ids("-has:"), vec![1, 2, 3, 4, 5]);
+        assert_eq!(ids("-owner: web"), vec![1, 3]);
+    }
+
+    #[test]
     fn tag_and_state_filters_combine() {
         assert_eq!(ids("state:running team:platform"), vec![1]);
     }
@@ -530,6 +548,7 @@ mod tests {
             |query: &str| compile(query, &known_tag_keys(&fleet), now()).recognised_field_count();
         assert_eq!(count("owner:esteban tag:Team web"), 2);
         assert_eq!(count("owner:"), 0);
+        assert_eq!(count("-owner:"), 0);
     }
 
     #[test]
