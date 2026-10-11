@@ -1331,9 +1331,11 @@ mod tests {
             })
         });
 
+        let sidebar_before = shell.read_with(cx, |shell, cx| shell.fleet.read(cx).sidebar_open);
         shell.update(cx, |shell, cx| {
             shell.fleet.update(cx, |fleet, cx| {
                 fleet.pinned_searches.push("state:stopped".into());
+                fleet.sidebar_open = !fleet.sidebar_open;
                 cx.notify();
             });
         });
@@ -1346,13 +1348,16 @@ mod tests {
                 .contains(&"state:stopped".to_string()),
             "the save should wait out the debounce"
         );
+        assert!(
+            !path.exists(),
+            "nothing should be written before the debounce elapses"
+        );
 
         cx.executor().advance_clock(Duration::from_millis(200));
         cx.run_until_parked();
-        assert_eq!(
-            UiState::load(&path).pinned_searches,
-            vec!["state:stopped".to_string()]
-        );
+        let saved = UiState::load(&path);
+        assert_eq!(saved.pinned_searches, vec!["state:stopped".to_string()]);
+        assert_eq!(saved.sidebar_open, !sidebar_before);
         if let Some(dir) = path.parent() {
             let _ = std::fs::remove_dir_all(dir);
         }
