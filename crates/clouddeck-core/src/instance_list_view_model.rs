@@ -1,9 +1,9 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::time::SystemTime;
 
 use crate::{
     CompiledQuery, ComputeInstanceFilters, ComputeService, ComputeServicePartialFailure,
-    EC2Instance, QueryError,
+    EC2Instance, QueryError, merge_with_previous,
 };
 
 /// Rust port of the Swift oracle's `InstanceListViewModel`
@@ -25,6 +25,9 @@ pub struct InstanceListViewModel {
     selected_state: String,
     selected_instance_type: String,
     selected_instance_id: Option<String>,
+    stale_regions: Vec<String>,
+    last_success: Option<SystemTime>,
+    region_loaded_at: HashMap<String, SystemTime>,
 }
 
 impl InstanceListViewModel {
@@ -40,11 +43,29 @@ impl InstanceListViewModel {
             selected_state: String::new(),
             selected_instance_type: String::new(),
             selected_instance_id: None,
+            stale_regions: Vec::new(),
+            last_success: None,
+            region_loaded_at: HashMap::new(),
         }
     }
 
     pub fn instances(&self) -> &[EC2Instance] {
         &self.instances
+    }
+
+    /// Regions whose rows are carried over from a previous load because they failed.
+    pub fn stale_regions(&self) -> &[String] {
+        &self.stale_regions
+    }
+
+    /// When the most recent successful load finished.
+    pub fn last_success(&self) -> Option<SystemTime> {
+        self.last_success
+    }
+
+    /// When the given region last returned rows in a successful load.
+    pub fn region_loaded_at(&self, region: &str) -> Option<SystemTime> {
+        self.region_loaded_at.get(region).copied()
     }
 
     pub fn is_loading(&self) -> bool {
@@ -212,12 +233,29 @@ impl InstanceListViewModel {
         &mut self,
         result: Result<crate::ComputeInstanceLoadResult, crate::BoxError>,
     ) {
+        self.finish_load_at(result, SystemTime::now());
+    }
+
+    /// Like `finish_load`, recording `now` as the load's finish time.
+    pub fn finish_load_at(
+        &mut self,
+        result: Result<crate::ComputeInstanceLoadResult, crate::BoxError>,
+        now: SystemTime,
+    ) {
         match result {
             Ok(result) => {
                 self.error_message = None;
-                self.instances = result.instances;
+                let merged = merge_with_previous(&self.instances, &result);
+                self.instances = merged.instances;
+                self.stale_regions = merged.stale_regions;
                 self.known_tag_keys = crate::known_tag_keys(&self.instances);
                 self.partial_failures = result.partial_failures;
+                self.last_success = Some(now);
+                for instance in &result.instances {
+                    if let Some(region) = instance.region.as_deref() {
+                        self.region_loaded_at.insert(region.to_string(), now);
+                    }
+                }
                 self.reconcile_selected_filters();
                 self.reconcile_selection_with_filtered_instances();
             }
@@ -225,6 +263,7 @@ impl InstanceListViewModel {
                 self.instances = vec![];
                 self.known_tag_keys = vec![];
                 self.partial_failures = vec![];
+                self.stale_regions = vec![];
                 self.selected_instance_id = None;
                 let cloud_deck_error = crate::CloudDeckError::from_service_error(error.as_ref());
                 self.error_message = Some(cloud_deck_error.message_for("list instances"));
@@ -305,6 +344,7 @@ impl InstanceListViewModel {
 mod tests {
     use super::*;
     use crate::{DirectoryScenarioCatalog, ScenarioService, TestScenarioKind};
+    use std::time::{Duration, UNIX_EPOCH};
 
     const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/testdata/ec2-scenarios");
 
@@ -800,5 +840,146 @@ mod tests {
             vm.partial_failure_summary(),
             Some("2 regions failed: eu-west-1, us-west-2".to_string())
         );
+    }
+
+    /// 2026-10-08T12:01:00Z as seconds since the Unix epoch.
+    const T1_SECS: u64 = 1_791_460_860;
+    /// 2026-10-08T12:04:00Z as seconds since the Unix epoch.
+    const T2_SECS: u64 = 1_791_461_040;
+
+    fn at(secs: u64) -> SystemTime {
+        UNIX_EPOCH + Duration::from_secs(secs)
+    }
+
+    fn in_region(region: &str, instance_id: &str) -> EC2Instance {
+        EC2Instance {
+            instance_id: instance_id.to_string(),
+            region: Some(region.to_string()),
+            instance_type: None,
+            state: None,
+            launch_time: None,
+            public_ip_address: None,
+            private_ip_address: None,
+            vpc_id: None,
+            subnet_id: None,
+            security_groups: vec![],
+            tags: vec![],
+            availability_zone: None,
+            image_id: None,
+            key_name: None,
+            architecture: None,
+            state_transition_reason: None,
+            iam_instance_profile_arn: None,
+            private_dns_name: None,
+            public_dns_name: None,
+        }
+    }
+
+    fn loaded(
+        instances: Vec<EC2Instance>,
+        failed_regions: &[&str],
+    ) -> Result<crate::ComputeInstanceLoadResult, crate::BoxError> {
+        Ok(crate::ComputeInstanceLoadResult {
+            instances,
+            partial_failures: failed_regions
+                .iter()
+                .map(|region| ComputeServicePartialFailure {
+                    region: region.to_string(),
+                    message: "request failed".to_string(),
+                })
+                .collect(),
+        })
+    }
+
+    fn loaded_ids(vm: &InstanceListViewModel) -> Vec<&str> {
+        vm.instances()
+            .iter()
+            .map(|i| i.instance_id.as_str())
+            .collect()
+    }
+
+    #[test]
+    fn failed_region_keeps_previous_rows_and_is_marked_stale_with_load_times() {
+        let mut vm =
+            InstanceListViewModel::new(Box::new(crate::MockComputeService::new(vec![], None)));
+        vm.finish_load_at(
+            loaded(
+                vec![in_region("us-east-1", "a"), in_region("eu-central-1", "b")],
+                &[],
+            ),
+            at(T1_SECS),
+        );
+
+        vm.finish_load_at(
+            loaded(vec![in_region("us-east-1", "a")], &["eu-central-1"]),
+            at(T2_SECS),
+        );
+
+        assert_eq!(loaded_ids(&vm), vec!["a", "b"]);
+        assert_eq!(vm.stale_regions(), ["eu-central-1".to_string()]);
+        assert_eq!(vm.last_success(), Some(at(T2_SECS)));
+        assert_eq!(vm.region_loaded_at("us-east-1"), Some(at(T2_SECS)));
+        assert_eq!(vm.region_loaded_at("eu-central-1"), Some(at(T1_SECS)));
+    }
+
+    #[test]
+    fn recovered_region_clears_stale_marker_and_refreshes_its_load_time() {
+        let mut vm =
+            InstanceListViewModel::new(Box::new(crate::MockComputeService::new(vec![], None)));
+        vm.finish_load_at(
+            loaded(
+                vec![in_region("us-east-1", "a"), in_region("eu-central-1", "b")],
+                &[],
+            ),
+            at(T1_SECS),
+        );
+        vm.finish_load_at(
+            loaded(vec![in_region("us-east-1", "a")], &["eu-central-1"]),
+            at(T2_SECS),
+        );
+
+        vm.finish_load_at(
+            loaded(
+                vec![in_region("us-east-1", "a"), in_region("eu-central-1", "b")],
+                &[],
+            ),
+            at(T2_SECS),
+        );
+
+        assert!(vm.stale_regions().is_empty());
+        assert_eq!(vm.region_loaded_at("eu-central-1"), Some(at(T2_SECS)));
+    }
+
+    #[test]
+    fn failed_load_clears_rows_and_stale_regions_but_keeps_last_success() {
+        let mut vm =
+            InstanceListViewModel::new(Box::new(crate::MockComputeService::new(vec![], None)));
+        vm.finish_load_at(
+            loaded(
+                vec![in_region("us-east-1", "a"), in_region("eu-central-1", "b")],
+                &[],
+            ),
+            at(T1_SECS),
+        );
+        vm.finish_load_at(
+            loaded(vec![in_region("us-east-1", "a")], &["eu-central-1"]),
+            at(T2_SECS),
+        );
+
+        vm.finish_load_at(Err(Box::new(StubError)), at(T2_SECS + 60));
+
+        assert!(vm.instances().is_empty());
+        assert!(vm.stale_regions().is_empty());
+        assert_eq!(vm.last_success(), Some(at(T2_SECS)));
+    }
+
+    #[test]
+    fn finish_load_without_time_records_a_last_success() {
+        let mut vm =
+            InstanceListViewModel::new(Box::new(crate::MockComputeService::new(vec![], None)));
+
+        vm.finish_load(loaded(vec![in_region("us-east-1", "a")], &[]));
+
+        assert!(vm.last_success().is_some());
     }
 }
