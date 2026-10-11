@@ -136,7 +136,7 @@ fn identity_error(code: Option<&str>, detail: &str) -> BoxError {
             "AWS identity access was denied. Verify sts:GetCallerIdentity permission.".to_string()
         }
         CloudDeckError::Auth => {
-            "AWS credentials are invalid or expired. Sign in to the selected profile, then retry."
+            "AWS credentials for the selected profile are invalid or expired. Renew SSO sessions or replace access keys, then retry."
                 .to_string()
         }
         CloudDeckError::Throttled => {

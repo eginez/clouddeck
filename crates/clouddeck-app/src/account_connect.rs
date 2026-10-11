@@ -374,7 +374,7 @@ mod tests {
     fn classifies_auth_failures_as_expired_login_not_generic_unknown() {
         assert_eq!(
             classify(
-                "AWS credentials are invalid or expired. Sign in to the selected profile, then retry."
+                "AWS credentials for the selected profile are invalid or expired. Renew SSO sessions or replace access keys, then retry."
             ),
             AccountConnectionError::ExpiredLogin
         );

@@ -263,7 +263,7 @@ async fn run_describe_instances(
             message.trim().to_string()
         };
         return Err(std::io::Error::other(format!(
-            "AWS CLI: {message}. For expired SSO credentials, run aws sso login for the selected profile in your terminal, then Refresh."
+            "AWS CLI: {message}. If the selected profile's credentials are expired, renew them with the AWS CLI, then Refresh."
         ))
         .into());
     }
@@ -529,7 +529,8 @@ mod tests {
         .unwrap_err();
         let message = error.to_string();
         assert!(message.contains("access denied"));
-        assert!(message.contains("expired SSO credentials"));
+        assert!(message.contains("selected profile's credentials are expired"));
+        assert!(!message.contains("SSO"));
         let _ = std::fs::remove_file(script);
     }
 
