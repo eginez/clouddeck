@@ -1,6 +1,10 @@
 mod account_connect;
 mod account_window;
+mod app_menus;
 mod assets;
+mod center_state_view;
+mod command_palette;
+mod context_bar;
 // `account_provider_step`, `account_profile_picker`, and
 // `account_workspace_setup` (the old multi-step onboarding wizard views)
 // were removed under clouddeck-rs-w6s.18: the approved single-screen
@@ -9,23 +13,38 @@ mod assets;
 // directly into `account_window::AccountWindowView`. Nothing outside their
 // own files referenced them.
 mod ec2_tab;
+mod failure_popover;
+mod fleet_state;
 mod icons;
+mod inspector_pane;
 mod instance_detail;
 mod instance_list;
+mod instance_table;
+mod linux_titlebar;
+mod main_window;
+mod profile_picker_view;
 mod quick_picker;
+mod region_picker_view;
+mod row_context_menu;
 mod runtime;
+mod search_field;
+mod settings_window;
 mod shell;
+mod sidebar;
 mod status_badge;
 mod status_bar;
 #[cfg(test)]
 mod test_support;
 mod theme;
+mod tokens;
+mod toolbar;
 // `sidebar` (the port of the oracle's left-nav `SidebarView`) was removed:
 // the agreed layout (clouddeck-rs-wz2.3) drops the left sidebar in favor of
 // a full-width central table with a bottom context bar. `shell.rs` already
 // composes the shell without it; see
 // `AppShell::render`'s `table_and_status_are_docked_without_a_sidebar` test.
 mod view_models;
+mod welcome_window;
 
 use gpui::{
     App, Application, Bounds, SharedString, TitlebarOptions, WindowBounds, WindowOptions, actions,
