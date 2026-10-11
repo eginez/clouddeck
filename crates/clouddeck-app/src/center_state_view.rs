@@ -242,10 +242,10 @@ mod tests {
     }
 
     #[gpui::test]
-    fn signed_out_renders_command(cx: &mut TestAppContext) {
+    fn signed_out_renders_action_without_command(cx: &mut TestAppContext) {
         let (_view, _events, cx) = open_view(cx, CenterState::SignedOut);
 
-        assert!(cx.debug_bounds("center.command").is_some());
+        assert!(cx.debug_bounds("center.command").is_none());
         assert!(cx.debug_bounds("center.action").is_some());
     }
 

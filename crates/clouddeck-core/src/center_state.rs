@@ -140,11 +140,11 @@ pub fn center_text(state: &CenterState, ctx: &CenterContext) -> CenterText {
             }
         }
         CenterState::SignedOut => CenterText {
-            action: Some("Sign in".to_string()),
-            command: Some(format!("aws sso login --profile {}", ctx.profile)),
+            action: Some("Retry".to_string()),
             ..text(
-                &format!("Sign in to {}", ctx.profile),
-                "Your AWS SSO session expired. Signing in opens your browser; credentials stay with the AWS CLI.".to_string(),
+                &format!("Credentials for {} need attention", ctx.profile),
+                "AWS rejected this profile’s credentials. Renew them with the AWS CLI, then retry."
+                    .to_string(),
             )
         },
         CenterState::Offline => text(
@@ -185,7 +185,7 @@ pub fn error_strip_text(state: &CenterState, ctx: &CenterContext) -> Option<Stri
             Some(seconds) => format!("Throttled · retry in {seconds}s"),
             None => "Throttled".to_string(),
         }),
-        CenterState::SignedOut => Some("Sign-in required".to_string()),
+        CenterState::SignedOut => Some("Check credentials".to_string()),
         CenterState::Error { .. } => Some("Couldn’t load".to_string()),
         CenterState::Loading | CenterState::EmptyFleet | CenterState::NoMatch => None,
     }
@@ -450,14 +450,14 @@ mod tests {
     }
 
     #[test]
-    fn signed_out_text_offers_sso_login_command() {
+    fn signed_out_text_is_neutral_across_credential_types() {
         assert_eq!(
             center_text(&CenterState::SignedOut, &ctx()),
             expected(
-                "Sign in to prod-readonly",
-                "Your AWS SSO session expired. Signing in opens your browser; credentials stay with the AWS CLI.",
-                Some("Sign in"),
-                Some("aws sso login --profile prod-readonly")
+                "Credentials for prod-readonly need attention",
+                "AWS rejected this profile’s credentials. Renew them with the AWS CLI, then retry.",
+                Some("Retry"),
+                None
             )
         );
     }
@@ -540,7 +540,7 @@ mod tests {
         );
         assert_eq!(
             error_strip_text(&CenterState::SignedOut, &ctx()),
-            Some("Sign-in required".to_string())
+            Some("Check credentials".to_string())
         );
         assert_eq!(
             error_strip_text(
