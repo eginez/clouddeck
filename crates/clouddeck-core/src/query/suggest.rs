@@ -237,7 +237,7 @@ fn tag_value_items(
 ) -> Vec<Suggestion> {
     tag_value_counts(instances, key)
         .into_iter()
-        .filter(|(value, _)| !value.contains('"'))
+        .filter(|(value, _)| !value.contains(['"', ',']))
         .filter(|(value, _)| starts_with_ignore_case(value, filter))
         .take(MAX_VALUE_ITEMS)
         .map(|(value, count)| Suggestion {
@@ -962,6 +962,22 @@ mod tests {
             ["Team=Data Platform", "Team=search"]
         );
         let s = suggest("team:b", &instances, &known_tag_keys(&instances));
+        assert!(s.items.is_empty());
+    }
+
+    #[test]
+    fn tag_value_with_comma_is_not_suggested() {
+        let mut instances = spaced_fleet();
+        instances[2].tags = vec![EC2InstanceTag {
+            key: "Team".to_string(),
+            value: "Ops,Tier1".to_string(),
+        }];
+        let s = suggest("tag:team=", &instances, &known_tag_keys(&instances));
+        assert_eq!(
+            s.items.iter().map(|i| i.label.as_str()).collect::<Vec<_>>(),
+            ["Team=Data Platform", "Team=search"]
+        );
+        let s = suggest("team:o", &instances, &known_tag_keys(&instances));
         assert!(s.items.is_empty());
     }
 
