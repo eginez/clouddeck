@@ -4,9 +4,10 @@ use clouddeck_core::{
     CellText, Column, EC2Instance, SortState, cell_text, is_stale_instance, visible_columns,
 };
 use gpui::{
-    ClickEvent, Context, Div, Entity, FocusHandle, Focusable, FontWeight, IntoElement, KeyBinding,
-    ParentElement, Render, ScrollStrategy, SharedString, Stateful, Styled, UniformListScrollHandle,
-    Window, actions, div, prelude::*, px, uniform_list,
+    ClickEvent, Context, Div, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
+    IntoElement, KeyBinding, MouseButton, MouseDownEvent, ParentElement, Pixels, Point, Render,
+    ScrollStrategy, SharedString, Stateful, Styled, UniformListScrollHandle, Window, actions, div,
+    prelude::*, px, uniform_list,
 };
 
 use crate::{
@@ -26,11 +27,21 @@ pub fn table_key_bindings() -> Vec<KeyBinding> {
     ]
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum InstanceTableEvent {
+    RowContextMenu {
+        key: String,
+        position: Point<Pixels>,
+    },
+}
+
 pub struct InstanceTable {
     state: Entity<FleetState>,
     focus_handle: FocusHandle,
     scroll: UniformListScrollHandle,
 }
+
+impl EventEmitter<InstanceTableEvent> for InstanceTable {}
 
 impl InstanceTable {
     pub fn new(state: Entity<FleetState>, cx: &mut Context<Self>) -> Self {
@@ -100,6 +111,7 @@ impl Render for InstanceTable {
             );
 
         let row_entity = entity.clone();
+        let table = cx.entity();
         let body = uniform_list("table.rows", row_count, move |range, _window, _cx| {
             range
                 .map(|ix| {
@@ -113,6 +125,7 @@ impl Render for InstanceTable {
                         is_stale,
                         palette,
                         row_entity.clone(),
+                        table.clone(),
                     )
                 })
                 .collect()
@@ -193,15 +206,24 @@ fn row(
     stale: bool,
     palette: Palette,
     state: Entity<FleetState>,
+    table: Entity<InstanceTable>,
 ) -> Stateful<Div> {
     let key = instance.id();
     let row_key = format!("table.row.{key}");
+    let menu_key = key.clone();
     let mut row = div()
         .id(SharedString::from(row_key.clone()))
         .debug_selector(|| row_key.clone())
         .on_click(move |_: &ClickEvent, _, cx| {
             let key = key.clone();
             state.update(cx, |state, cx| state.select(Some(key), cx));
+        })
+        .on_mouse_down(MouseButton::Right, move |event: &MouseDownEvent, _, cx| {
+            let key = menu_key.clone();
+            let position = event.position;
+            table.update(cx, |_, cx| {
+                cx.emit(InstanceTableEvent::RowContextMenu { key, position })
+            });
         })
         .flex()
         .items_center()
