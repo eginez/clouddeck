@@ -4,12 +4,14 @@ use std::ops::Range;
 use std::time::SystemTime;
 
 use clouddeck_core::{
-    EscapeAction, EscapeContext, Suggestion, SuggestionKind, Suggestions, TermKind,
-    apply_suggestion, compile, escape_action, known_tag_keys, suggest,
+    DEFAULT_RECENT_SEARCH_LIMIT, EscapeAction, EscapeContext, RECENT_SEARCHES_SHOWN, Suggestion,
+    SuggestionKind, Suggestions, TermKind, apply_suggestion, compile, escape_action,
+    known_tag_keys, push_recent, suggest,
 };
 use gpui::{
-    App, Context, Entity, Focusable, Font, Hsla, IntoElement, KeyBinding, Render, StyledText,
-    TextRun, UnderlineStyle, Window, WindowAppearance, actions, div, prelude::*, px, rems,
+    App, ClickEvent, Context, Entity, Focusable, Font, Hsla, IntoElement, KeyBinding, Render,
+    SharedString, StyledText, TextRun, UnderlineStyle, Window, WindowAppearance, actions, div,
+    prelude::*, px, rems,
 };
 use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::{Sizable, Size};
@@ -31,7 +33,9 @@ const CARET_HEIGHT: f32 = 14.0;
 const RIGHT_MARGIN: f32 = 10.0;
 const SUGGESTIONS_WIDTH: f32 = 280.0;
 const ERROR_ROW_HEIGHT: f32 = 26.0;
+const RECENT_ICON_SIZE: f32 = 13.0;
 const PLACEHOLDER: &str = "Search or filter";
+const SYNTAX_REMINDER: &str = "Filter with field:value · -not · a,b either · * wildcard";
 
 actions!(
     search_field,
@@ -40,7 +44,8 @@ actions!(
         ClearSearch,
         PreviousSuggestion,
         NextSuggestion,
-        AcceptSuggestion
+        AcceptSuggestion,
+        SubmitSearch
     ]
 );
 
@@ -254,6 +259,75 @@ fn suggestion_panel(
     panel
 }
 
+fn recent_row(
+    index: usize,
+    query: &str,
+    palette: &Palette,
+    cx: &Context<SearchField>,
+) -> impl IntoElement {
+    let query = query.to_string();
+    div()
+        .id(SharedString::from(format!("search.recent.{index}")))
+        .debug_selector(move || format!("search.recent.{index}"))
+        .flex()
+        .items_center()
+        .gap(px(GAP))
+        .px(px(SIDE_PADDING))
+        .py(px(3.0))
+        .text_color(palette.text)
+        .child(
+            AppIcon::Search
+                .icon()
+                .with_size(Size::Size(px(RECENT_ICON_SIZE)))
+                .text_color(palette.faint),
+        )
+        .child(query.clone())
+        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+            this.replace_query(&query, window, cx);
+        }))
+}
+
+fn recent_panel(
+    recent: &[String],
+    top: f32,
+    palette: &Palette,
+    cx: &Context<SearchField>,
+) -> impl IntoElement {
+    let mut panel = div()
+        .debug_selector(|| "search.recent".into())
+        .absolute()
+        .top(px(top))
+        .left_0()
+        .w(px(SUGGESTIONS_WIDTH))
+        .flex()
+        .flex_col()
+        .py(px(4.0))
+        .rounded(px(SEARCH_RADIUS))
+        .bg(palette.panel)
+        .border_1()
+        .border_color(palette.line)
+        .text_size(px(STATUS_FONT_SIZE));
+    if !recent.is_empty() {
+        panel = panel.child(
+            div()
+                .px(px(SIDE_PADDING))
+                .py(px(3.0))
+                .text_color(palette.faint)
+                .child("Recent"),
+        );
+        for (index, query) in recent.iter().take(RECENT_SEARCHES_SHOWN).enumerate() {
+            panel = panel.child(recent_row(index, query, palette, cx));
+        }
+    }
+    panel.child(
+        div()
+            .px(px(SIDE_PADDING))
+            .py(px(4.0))
+            .text_color(palette.faint)
+            .child(SYNTAX_REMINDER),
+    )
+}
+
 pub fn search_key_bindings() -> Vec<KeyBinding> {
     vec![
         KeyBinding::new("cmd-f", FocusSearch, None),
@@ -262,7 +336,7 @@ pub fn search_key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("up", PreviousSuggestion, Some("SearchField")),
         KeyBinding::new("down", NextSuggestion, Some("SearchField")),
         KeyBinding::new("tab", AcceptSuggestion, Some("SearchField")),
-        KeyBinding::new("enter", AcceptSuggestion, Some("SearchField")),
+        KeyBinding::new("enter", SubmitSearch, Some("SearchField")),
     ]
 }
 
@@ -290,7 +364,11 @@ impl SearchField {
                     .update(cx, |state, cx| state.set_query(&text, cx));
                 cx.notify();
             }
-            InputEvent::Focus | InputEvent::Blur => cx.notify(),
+            InputEvent::Focus => cx.notify(),
+            InputEvent::Blur => {
+                this.remember_query(cx);
+                cx.notify();
+            }
             _ => {}
         })
         .detach();
@@ -373,28 +451,56 @@ impl SearchField {
         self.step_highlight(true, cx);
     }
 
+    fn remember_query(&self, cx: &mut App) {
+        let query = self.state.read(cx).query().to_string();
+        self.state.update(cx, |state, cx| {
+            push_recent(
+                &mut state.recent_searches,
+                &query,
+                DEFAULT_RECENT_SEARCH_LIMIT,
+            );
+            cx.notify();
+        });
+    }
+
+    fn replace_query(&mut self, query: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.highlight = 0;
+        self.input.update(cx, |input, cx| {
+            input.set_value(query.to_string(), window, cx)
+        });
+        self.state
+            .update(cx, |state, cx| state.set_query(query, cx));
+        cx.notify();
+    }
+
+    fn accept_highlighted(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let state = self.state.read(cx);
+        let suggestions = suggestions_for(state);
+        let index = self
+            .highlight
+            .min(suggestions.items.len().saturating_sub(1));
+        let Some(query) = apply_suggestion(state.query(), &suggestions, index) else {
+            return false;
+        };
+        self.replace_query(&query, window, cx);
+        true
+    }
+
     fn accept_suggestion(
         &mut self,
         _: &AcceptSuggestion,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let state = self.state.read(cx);
-        let suggestions = suggestions_for(state);
-        let index = self
-            .highlight
-            .min(suggestions.items.len().saturating_sub(1));
-        let accepted = apply_suggestion(state.query(), &suggestions, index);
-        let Some(query) = accepted else {
+        if !self.accept_highlighted(window, cx) {
             cx.propagate();
-            return;
-        };
-        self.highlight = 0;
-        self.input
-            .update(cx, |input, cx| input.set_value(query.clone(), window, cx));
-        self.state
-            .update(cx, |state, cx| state.set_query(&query, cx));
-        cx.notify();
+        }
+    }
+
+    fn submit_search(&mut self, _: &SubmitSearch, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.accept_highlighted(window, cx) {
+            self.remember_query(cx);
+        }
     }
 }
 
@@ -495,6 +601,7 @@ impl Render for SearchField {
             .on_action(cx.listener(Self::previous_suggestion))
             .on_action(cx.listener(Self::next_suggestion))
             .on_action(cx.listener(Self::accept_suggestion))
+            .on_action(cx.listener(Self::submit_search))
             .flex()
             .items_center()
             .gap(px(GAP))
@@ -531,6 +638,14 @@ impl Render for SearchField {
                 &palette,
             )
         });
+        let recent = (focused && typed.is_empty()).then(|| {
+            recent_panel(
+                &state.recent_searches,
+                SEARCH_HEIGHT + ERROR_OFFSET,
+                &palette,
+                cx,
+            )
+        });
 
         div()
             .relative()
@@ -540,6 +655,7 @@ impl Render for SearchField {
                 outer.child(error_row(&message, &palette))
             })
             .when_some(panel, |outer, panel| outer.child(panel))
+            .when_some(recent, |outer, recent| outer.child(recent))
     }
 }
 
@@ -875,5 +991,70 @@ mod tests {
             ""
         );
         assert!(cx.debug_bounds("search.suggestions").is_none());
+    }
+
+    fn owner_view_model() -> InstanceListViewModel {
+        let mut tagged = instance("i-1", "api-server", "running");
+        tagged.tags.push(EC2InstanceTag {
+            key: "Owner".to_string(),
+            value: "platform".to_string(),
+        });
+        let mut vm =
+            InstanceListViewModel::new(Box::new(MockComputeService::new(vec![tagged], None)));
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        rt.block_on(vm.load_instances());
+        vm
+    }
+
+    #[gpui::test]
+    fn focused_empty_field_lists_the_newest_recent_searches(cx: &mut TestAppContext) {
+        let (state, _search, cx) = rooted_search_with(cx, true, three_state_view_model());
+        state.update(cx, |state, cx| {
+            state.recent_searches = ["a", "b", "c", "d", "e"].map(String::from).to_vec();
+            cx.notify();
+        });
+        cx.run_until_parked();
+
+        assert!(cx.debug_bounds("search.recent").is_some());
+        assert!(cx.debug_bounds("search.recent.3").is_some());
+        assert!(cx.debug_bounds("search.recent.4").is_none());
+    }
+
+    #[gpui::test]
+    fn clicking_a_recent_search_sets_the_query(cx: &mut TestAppContext) {
+        let (state, _search, cx) = rooted_search_with(cx, true, three_state_view_model());
+        state.update(cx, |state, cx| {
+            state.recent_searches = ["a", "b", "c", "d", "e"].map(String::from).to_vec();
+            cx.notify();
+        });
+        cx.run_until_parked();
+
+        let row = cx
+            .debug_bounds("search.recent.1")
+            .expect("second recent search renders");
+        cx.simulate_click(row.center(), Default::default());
+        cx.run_until_parked();
+
+        assert_eq!(
+            state.read_with(cx, |state, _| state.query().to_string()),
+            "b"
+        );
+    }
+
+    #[gpui::test]
+    fn enter_with_no_dropdown_records_the_query(cx: &mut TestAppContext) {
+        let (state, _search, cx) = rooted_search_with(cx, true, owner_view_model());
+
+        cx.simulate_input("owner:esteban");
+        cx.run_until_parked();
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+
+        assert_eq!(
+            state.read_with(cx, |state, _| state.recent_searches.first().cloned()),
+            Some("owner:esteban".to_string())
+        );
     }
 }
