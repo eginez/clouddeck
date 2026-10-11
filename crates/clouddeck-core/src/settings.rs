@@ -11,6 +11,17 @@ pub const REFRESH_INTERVALS: [u32; 5] = [1, 2, 5, 10, 15];
 pub const RECENT_SEARCH_LIMITS: [u32; 4] = [0, 5, 10, 20];
 /// Allowed request timeouts in seconds.
 pub const REQUEST_TIMEOUTS: [u32; 3] = [15, 30, 60];
+/// Settings categories in sidebar order.
+pub const SETTINGS_CATEGORIES: [&str; 8] = [
+    "Appearance",
+    "Fleet",
+    "Table",
+    "Search",
+    "Keymap",
+    "AWS & Privacy",
+    "Advanced",
+    "About",
+];
 
 /// Appearance theme.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -216,6 +227,233 @@ pub fn settings_path() -> PathBuf {
     context_path().with_file_name("settings.json")
 }
 
+/// One user-facing setting, in display order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SettingId {
+    /// Appearance theme.
+    Theme,
+    /// Table row density.
+    Density,
+    /// Show the sidebar at launch.
+    ShowSidebarOnLaunch,
+    /// Open the inspector on selection.
+    OpenInspectorOnSelect,
+    /// Show the updated time in the status bar.
+    ShowUpdatedTime,
+    /// Refresh automatically.
+    AutoRefresh,
+    /// Minutes between automatic refreshes.
+    RefreshInterval,
+    /// Refresh when the window regains focus.
+    RefreshOnFocus,
+    /// What happens at launch.
+    OnLaunch,
+    /// Regions to load.
+    Regions,
+    /// Default table sort.
+    DefaultSort,
+    /// Label instances without a Name tag as unnamed.
+    ShowUnnamedLabel,
+    /// Recent search list length.
+    RecentSearchLimit,
+    /// Match tag keys and values in search.
+    MatchTags,
+    /// Path to the AWS CLI.
+    AwsCliPath,
+    /// Path to the AWS config file.
+    AwsConfigFile,
+    /// Seconds before an AWS request times out.
+    RequestTimeout,
+    /// Simulated fleet without AWS calls.
+    DemoMode,
+    /// Diagnostic logging verbosity.
+    LogLevel,
+}
+
+impl SettingId {
+    /// Every setting in display order.
+    pub const ALL: [SettingId; 19] = [
+        Self::Theme,
+        Self::Density,
+        Self::ShowSidebarOnLaunch,
+        Self::OpenInspectorOnSelect,
+        Self::ShowUpdatedTime,
+        Self::AutoRefresh,
+        Self::RefreshInterval,
+        Self::RefreshOnFocus,
+        Self::OnLaunch,
+        Self::Regions,
+        Self::DefaultSort,
+        Self::ShowUnnamedLabel,
+        Self::RecentSearchLimit,
+        Self::MatchTags,
+        Self::AwsCliPath,
+        Self::AwsConfigFile,
+        Self::RequestTimeout,
+        Self::DemoMode,
+        Self::LogLevel,
+    ];
+
+    /// Settings category this setting is listed under.
+    pub fn category(self) -> &'static str {
+        match self {
+            Self::Theme
+            | Self::Density
+            | Self::ShowSidebarOnLaunch
+            | Self::OpenInspectorOnSelect
+            | Self::ShowUpdatedTime => "Appearance",
+            Self::AutoRefresh
+            | Self::RefreshInterval
+            | Self::RefreshOnFocus
+            | Self::OnLaunch
+            | Self::Regions => "Fleet",
+            Self::DefaultSort | Self::ShowUnnamedLabel => "Table",
+            Self::RecentSearchLimit | Self::MatchTags => "Search",
+            Self::AwsCliPath | Self::AwsConfigFile | Self::RequestTimeout => "AWS & Privacy",
+            Self::DemoMode | Self::LogLevel => "Advanced",
+        }
+    }
+
+    /// Subsection heading within the category.
+    pub fn group(self) -> &'static str {
+        match self {
+            Self::Theme | Self::Density => "Window",
+            Self::ShowSidebarOnLaunch | Self::OpenInspectorOnSelect | Self::ShowUpdatedTime => {
+                "Panels"
+            }
+            Self::AutoRefresh | Self::RefreshInterval | Self::RefreshOnFocus => "Loading",
+            Self::OnLaunch | Self::Regions => "Scope",
+            Self::DefaultSort | Self::ShowUnnamedLabel => "Display",
+            Self::RecentSearchLimit | Self::MatchTags => "Behaviour",
+            Self::AwsCliPath | Self::AwsConfigFile | Self::RequestTimeout => "AWS CLI",
+            Self::DemoMode | Self::LogLevel => "Developer",
+        }
+    }
+
+    /// Row label shown in the settings window.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Theme => "Theme",
+            Self::Density => "Table density",
+            Self::ShowSidebarOnLaunch => "Show sidebar on launch",
+            Self::OpenInspectorOnSelect => "Open the inspector when selecting an instance",
+            Self::ShowUpdatedTime => "Show “Updated” time in the status bar",
+            Self::AutoRefresh => "Refresh automatically",
+            Self::RefreshInterval => "Refresh interval",
+            Self::RefreshOnFocus => "Refresh when the window regains focus",
+            Self::OnLaunch => "On launch",
+            Self::Regions => "Regions to load",
+            Self::DefaultSort => "Default sort",
+            Self::ShowUnnamedLabel => "Show instances without a Name tag as “unnamed”",
+            Self::RecentSearchLimit => "Remember recent searches",
+            Self::MatchTags => "Match tag keys and values",
+            Self::AwsCliPath => "AWS CLI",
+            Self::AwsConfigFile => "AWS config file",
+            Self::RequestTimeout => "Request timeout",
+            Self::DemoMode => "Demo mode",
+            Self::LogLevel => "Log level",
+        }
+    }
+
+    /// One-line explanation shown under the label.
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::Theme => "Follows macOS appearance by default.",
+            Self::Density => "Row height in the instance table.",
+            Self::ShowSidebarOnLaunch => "Facets, pinned searches and recent instances.",
+            Self::OpenInspectorOnSelect => {
+                "Turn off to keep the table full width until you ask for details (⌘⌥I)."
+            }
+            Self::ShowUpdatedTime => "Hidden automatically in narrow windows.",
+            Self::AutoRefresh => {
+                "Only while the window is active. Old rows stay visible while loading."
+            }
+            Self::RefreshInterval => "Data older than twice this interval is marked stale.",
+            Self::RefreshOnFocus => "After more than one interval away.",
+            Self::OnLaunch => "Reopen into your last profile and regions.",
+            Self::Regions => "Region list the picker offers. At least one.",
+            Self::DefaultSort => "Applied until you click a column header.",
+            Self::ShowUnnamedLabel => "Otherwise they show their instance ID in the Name column.",
+            Self::RecentSearchLimit => "Shown when you focus an empty search field.",
+            Self::MatchTags => "Search also looks at name, ID, IPs, zone and type.",
+            Self::AwsCliPath => {
+                "CloudDeck runs the AWS CLI (v2) read-only; it handles SSO and credentials."
+            }
+            Self::AwsConfigFile => "Where profiles are read from.",
+            Self::RequestTimeout => "Per region, per request.",
+            Self::DemoMode => "Simulated fleet, no AWS calls. A DEMO tag stays in the status bar.",
+            Self::LogLevel => "Written to ~/.config/clouddeck/logs.",
+        }
+    }
+
+    /// Whether this setting differs from its default in `settings`.
+    pub fn is_changed(self, settings: &Settings) -> bool {
+        let mut restored = settings.clone();
+        self.reset(&mut restored);
+        restored != *settings
+    }
+
+    /// Restores this setting's field to its default value.
+    pub fn reset(self, settings: &mut Settings) {
+        let defaults = Settings::default();
+        match self {
+            Self::Theme => settings.theme = defaults.theme,
+            Self::Density => settings.density = defaults.density,
+            Self::ShowSidebarOnLaunch => {
+                settings.show_sidebar_on_launch = defaults.show_sidebar_on_launch
+            }
+            Self::OpenInspectorOnSelect => {
+                settings.open_inspector_on_select = defaults.open_inspector_on_select
+            }
+            Self::ShowUpdatedTime => settings.show_updated_time = defaults.show_updated_time,
+            Self::AutoRefresh => settings.auto_refresh = defaults.auto_refresh,
+            Self::RefreshInterval => {
+                settings.refresh_interval_minutes = defaults.refresh_interval_minutes
+            }
+            Self::RefreshOnFocus => settings.refresh_on_focus = defaults.refresh_on_focus,
+            Self::OnLaunch => settings.on_launch = defaults.on_launch,
+            Self::Regions => settings.regions = defaults.regions,
+            Self::DefaultSort => settings.default_sort = defaults.default_sort,
+            Self::ShowUnnamedLabel => settings.show_unnamed_label = defaults.show_unnamed_label,
+            Self::RecentSearchLimit => settings.recent_search_limit = defaults.recent_search_limit,
+            Self::MatchTags => settings.match_tags = defaults.match_tags,
+            Self::AwsCliPath => settings.aws_cli_path = defaults.aws_cli_path,
+            Self::AwsConfigFile => settings.aws_config_file = defaults.aws_config_file,
+            Self::RequestTimeout => {
+                settings.request_timeout_seconds = defaults.request_timeout_seconds
+            }
+            Self::DemoMode => settings.demo_mode = defaults.demo_mode,
+            Self::LogLevel => settings.log_level = defaults.log_level,
+        }
+    }
+
+    /// Whether this setting is greyed out in `settings`.
+    pub fn is_disabled(self, settings: &Settings) -> bool {
+        matches!(self, Self::RefreshInterval) && !settings.auto_refresh
+    }
+}
+
+/// Categories containing at least one changed setting, in catalog order.
+pub fn changed_categories(settings: &Settings) -> Vec<&'static str> {
+    SETTINGS_CATEGORIES
+        .iter()
+        .copied()
+        .filter(|category| {
+            SettingId::ALL
+                .iter()
+                .any(|id| id.category() == *category && id.is_changed(settings))
+        })
+        .collect()
+}
+
+/// Number of settings that differ from their defaults.
+pub fn changed_count(settings: &Settings) -> usize {
+    SettingId::ALL
+        .iter()
+        .filter(|id| id.is_changed(settings))
+        .count()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -353,5 +591,132 @@ mod tests {
     #[test]
     fn settings_path_is_under_clouddeck() {
         assert!(settings_path().ends_with("clouddeck/settings.json"));
+    }
+
+    #[test]
+    fn catalog_has_nineteen_labels_in_display_order() {
+        assert_eq!(SettingId::ALL.len(), 19);
+        let labels: Vec<&str> = SettingId::ALL.iter().map(|id| id.label()).collect();
+        assert_eq!(
+            labels,
+            vec![
+                "Theme",
+                "Table density",
+                "Show sidebar on launch",
+                "Open the inspector when selecting an instance",
+                "Show “Updated” time in the status bar",
+                "Refresh automatically",
+                "Refresh interval",
+                "Refresh when the window regains focus",
+                "On launch",
+                "Regions to load",
+                "Default sort",
+                "Show instances without a Name tag as “unnamed”",
+                "Remember recent searches",
+                "Match tag keys and values",
+                "AWS CLI",
+                "AWS config file",
+                "Request timeout",
+                "Demo mode",
+                "Log level",
+            ]
+        );
+    }
+
+    #[test]
+    fn catalog_strings_match_design() {
+        assert_eq!(
+            SettingId::OpenInspectorOnSelect.description(),
+            "Turn off to keep the table full width until you ask for details (⌘⌥I)."
+        );
+        assert_eq!(
+            SettingId::ShowUpdatedTime.label(),
+            "Show “Updated” time in the status bar"
+        );
+        assert_eq!(SettingId::AwsConfigFile.category(), "AWS & Privacy");
+        assert_eq!(SettingId::DemoMode.group(), "Developer");
+    }
+
+    #[test]
+    fn every_setting_category_is_listed_and_skips_keymap_and_about() {
+        for id in SettingId::ALL {
+            assert!(SETTINGS_CATEGORIES.contains(&id.category()));
+            assert_ne!(id.category(), "Keymap");
+            assert_ne!(id.category(), "About");
+        }
+    }
+
+    #[test]
+    fn default_settings_have_no_changes() {
+        let settings = Settings::default();
+        assert!(SettingId::ALL.iter().all(|id| !id.is_changed(&settings)));
+        assert!(changed_categories(&settings).is_empty());
+        assert_eq!(changed_count(&settings), 0);
+    }
+
+    #[test]
+    fn changed_settings_report_ids_categories_and_count() {
+        let settings = Settings {
+            theme: Theme::Dark,
+            refresh_interval_minutes: 10,
+            demo_mode: true,
+            ..Settings::default()
+        };
+        let changed: Vec<SettingId> = SettingId::ALL
+            .into_iter()
+            .filter(|id| id.is_changed(&settings))
+            .collect();
+        assert_eq!(
+            changed,
+            vec![
+                SettingId::Theme,
+                SettingId::RefreshInterval,
+                SettingId::DemoMode
+            ]
+        );
+        assert_eq!(
+            changed_categories(&settings),
+            vec!["Appearance", "Fleet", "Advanced"]
+        );
+        assert_eq!(changed_count(&settings), 3);
+    }
+
+    #[test]
+    fn regions_reset_restores_default_regions() {
+        let mut settings = Settings {
+            regions: vec!["us-east-1".into()],
+            ..Settings::default()
+        };
+        assert!(SettingId::Regions.is_changed(&settings));
+        SettingId::Regions.reset(&mut settings);
+        assert_eq!(settings.regions, Settings::default().regions);
+        assert_eq!(settings.regions.len(), 4);
+    }
+
+    #[test]
+    fn theme_reset_returns_to_follow_system() {
+        let mut settings = Settings {
+            theme: Theme::Dark,
+            ..Settings::default()
+        };
+        SettingId::Theme.reset(&mut settings);
+        assert_eq!(settings.theme, Theme::FollowSystem);
+        assert!(!SettingId::Theme.is_changed(&settings));
+    }
+
+    #[test]
+    fn refresh_interval_is_disabled_only_without_auto_refresh() {
+        let on = Settings {
+            auto_refresh: true,
+            ..Settings::default()
+        };
+        let off = Settings {
+            auto_refresh: false,
+            ..Settings::default()
+        };
+        assert!(!SettingId::RefreshInterval.is_disabled(&on));
+        assert!(SettingId::RefreshInterval.is_disabled(&off));
+        assert!(!SettingId::Theme.is_disabled(&on));
+        assert!(!SettingId::Theme.is_disabled(&off));
     }
 }
