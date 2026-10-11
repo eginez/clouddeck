@@ -8,7 +8,7 @@ use clouddeck_core::{
 };
 use gpui::{
     App, ClickEvent, Context, Entity, FontWeight, Hsla, IntoElement, Render, SharedString, Window,
-    WindowAppearance, div, prelude::*, px,
+    div, prelude::*, px,
 };
 use gpui_component::Sizable;
 
@@ -69,12 +69,8 @@ impl Sidebar {
 }
 
 impl Render for Sidebar {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let dark = matches!(
-            window.appearance(),
-            WindowAppearance::Dark | WindowAppearance::VibrantDark
-        );
-        let palette = Palette::for_dark(dark);
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let palette = crate::tokens::palette(cx);
         let state = self.state.read(cx);
         let instances = state.view_model.instances();
         let query = state.query().to_string();

@@ -3,7 +3,7 @@
 use clouddeck_core::{CommandContext, CommandId, Platform, filter_commands, move_highlight};
 use gpui::{
     App, ClickEvent, Context, Entity, EventEmitter, Render, ScrollHandle, SharedString, Window,
-    WindowAppearance, div, prelude::*, px, white,
+    div, prelude::*, px, white,
 };
 use gpui_component::input::{Enter, Escape, Input, InputEvent, InputState, MoveDown, MoveUp};
 
@@ -126,12 +126,8 @@ fn command_row(
 }
 
 impl Render for CommandPalette {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let dark = matches!(
-            window.appearance(),
-            WindowAppearance::Dark | WindowAppearance::VibrantDark
-        );
-        let palette = Palette::for_dark(dark);
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let palette = crate::tokens::palette(cx);
         let platform = current_platform();
         let commands = self.visible(cx);
         let highlighted = self.highlighted;

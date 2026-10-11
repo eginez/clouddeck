@@ -1,6 +1,7 @@
 //! Colour palette (light/dark) and layout sizes from design/main-window.html.
 
-use gpui::{Hsla, rgb};
+use clouddeck_core::Theme;
+use gpui::{App, Global, Hsla, rgb};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Palette {
@@ -107,6 +108,24 @@ impl Palette {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ActivePalette(pub Palette);
+
+impl Global for ActivePalette {}
+
+pub fn palette(cx: &App) -> Palette {
+    cx.try_global::<ActivePalette>()
+        .map_or_else(Palette::light, |active| active.0)
+}
+
+pub fn is_dark(theme: Theme, system_dark: bool) -> bool {
+    match theme {
+        Theme::FollowSystem => system_dark,
+        Theme::Light => false,
+        Theme::Dark => true,
+    }
+}
+
 pub const TOOLBAR_HEIGHT: f32 = 44.0;
 pub const STATUS_BAR_HEIGHT: f32 = 24.0;
 pub const ROW_HEIGHT: f32 = 28.0;
@@ -138,6 +157,14 @@ mod tests {
     fn for_dark_selects_palette() {
         assert_eq!(Palette::for_dark(true), Palette::dark());
         assert_eq!(Palette::for_dark(false), Palette::light());
+    }
+
+    #[test]
+    fn theme_setting_decides_dark_mode() {
+        assert!(is_dark(Theme::FollowSystem, true));
+        assert!(!is_dark(Theme::FollowSystem, false));
+        assert!(!is_dark(Theme::Light, true));
+        assert!(is_dark(Theme::Dark, false));
     }
 
     #[test]

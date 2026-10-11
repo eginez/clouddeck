@@ -6,7 +6,7 @@ use clouddeck_core::{
 };
 use gpui::{
     App, ClickEvent, Context, Entity, EventEmitter, KeyDownEvent, Render, SharedString, Window,
-    WindowAppearance, div, prelude::*, px, white,
+    div, prelude::*, px, white,
 };
 use gpui_component::input::{Enter, Escape, Input, InputEvent, InputState, MoveDown, MoveUp};
 
@@ -190,12 +190,8 @@ fn region_row(
 }
 
 impl Render for RegionPicker {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let dark = matches!(
-            window.appearance(),
-            WindowAppearance::Dark | WindowAppearance::VibrantDark
-        );
-        let palette = Palette::for_dark(dark);
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let palette = crate::tokens::palette(cx);
         let rows = self.rows(cx);
         let highlighted = self.highlighted;
 

@@ -3,7 +3,7 @@
 use clouddeck_core::layout_rules;
 use gpui::{
     AnyView, App, ClickEvent, Context, Entity, EventEmitter, FontWeight, IntoElement, Render,
-    Window, WindowAppearance, div, prelude::*, px,
+    Window, div, prelude::*, px,
 };
 use gpui_component::Sizable;
 use gpui_component::tooltip::Tooltip;
@@ -71,11 +71,7 @@ fn filters_text(count: usize) -> String {
 
 impl Render for Toolbar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let dark = matches!(
-            window.appearance(),
-            WindowAppearance::Dark | WindowAppearance::VibrantDark
-        );
-        let palette = Palette::for_dark(dark);
+        let palette = crate::tokens::palette(cx);
         let viewport = window.viewport_size();
         let rules = layout_rules(f32::from(viewport.width), f32::from(viewport.height));
         let count = self.filter_count(cx);

@@ -6,8 +6,7 @@ use clouddeck_core::{
 };
 use gpui::{
     AnyElement, ClickEvent, ClipboardItem, Context, Div, ElementId, EventEmitter, FocusHandle,
-    FontWeight, KeyDownEvent, Render, Stateful, Window, WindowAppearance, div, prelude::*, px,
-    white,
+    FontWeight, KeyDownEvent, Render, Stateful, Window, div, prelude::*, px, white,
 };
 
 use crate::icons::AppIcon;
@@ -101,11 +100,7 @@ fn button(
 
 impl Render for FailurePopover {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let dark = matches!(
-            window.appearance(),
-            WindowAppearance::Dark | WindowAppearance::VibrantDark
-        );
-        let palette = Palette::for_dark(dark);
+        let palette = crate::tokens::palette(cx);
         let focus = match &self.focus {
             Some(focus) => focus.clone(),
             None => {

@@ -10,8 +10,7 @@ use clouddeck_core::{
 };
 use gpui::{
     App, ClickEvent, Context, Entity, Focusable, Font, Hsla, IntoElement, KeyBinding, Render,
-    SharedString, StyledText, TextRun, UnderlineStyle, Window, WindowAppearance, actions, div,
-    prelude::*, px, rems,
+    SharedString, StyledText, TextRun, UnderlineStyle, Window, actions, div, prelude::*, px, rems,
 };
 use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::{Sizable, Size};
@@ -506,11 +505,7 @@ impl SearchField {
 
 impl Render for SearchField {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let dark = matches!(
-            window.appearance(),
-            WindowAppearance::Dark | WindowAppearance::VibrantDark
-        );
-        let palette = Palette::for_dark(dark);
+        let palette = crate::tokens::palette(cx);
         let input = self.input.read(cx);
         let focused = input.focus_handle(cx).is_focused(window);
         let typed = input.value().to_string();

@@ -5,7 +5,7 @@ use clouddeck_core::{
 };
 use gpui::{
     AnyElement, AnyView, AppContext, ClickEvent, Context, Entity, EventEmitter, IntoElement,
-    Render, Window, WindowAppearance, div, prelude::*, px,
+    Render, Window, div, prelude::*, px,
 };
 use gpui_component::{Sizable, tooltip::Tooltip};
 
@@ -52,11 +52,7 @@ impl ContextBar {
 
 impl Render for ContextBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let dark = matches!(
-            window.appearance(),
-            WindowAppearance::Dark | WindowAppearance::VibrantDark
-        );
-        let palette = Palette::for_dark(dark);
+        let palette = crate::tokens::palette(cx);
         let viewport = window.viewport_size();
         let rules = layout_rules(viewport.width.into(), viewport.height.into());
 

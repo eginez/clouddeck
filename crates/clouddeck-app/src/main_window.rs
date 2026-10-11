@@ -5,10 +5,10 @@ use std::time::Duration;
 use clouddeck_core::{
     CenterContext, CenterInput, CenterState, CenterText, CloudDeckError, CommandContext, CommandId,
     ComputeServicePartialFailure, EC2Instance, EscapeAction, EscapeContext, OPEN_IN_CONSOLE_FLASH,
-    ProfileInput, RegionScope, Settings, center_state, center_text, clock_text, console_url_for,
-    copied_flash, escape_action, filter_command_query, known_tag_keys, layout_rules,
-    region_scope_label, settings_path, should_auto_refresh, should_refresh_on_focus, stale_count,
-    updated_text,
+    ProfileInput, RegionScope, Settings, Theme, center_state, center_text, clock_text,
+    console_url_for, copied_flash, escape_action, filter_command_query, known_tag_keys,
+    layout_rules, region_scope_label, settings_path, should_auto_refresh, should_refresh_on_focus,
+    stale_count, updated_text,
 };
 use gpui::{
     AnyElement, AnyView, App, Bounds, ClickEvent, ClipboardItem, Context, Div, Entity,
@@ -31,7 +31,8 @@ use crate::row_context_menu::{RowContextMenu, RowMenuEvent};
 use crate::search_field::{SearchField, search_key_bindings};
 use crate::sidebar::Sidebar;
 use crate::tokens::{
-    FONT_SIZE, INSPECTOR_WIDTH, Palette, SIDEBAR_WIDTH, STATUS_BAR_HEIGHT, UI_FONT,
+    ActivePalette, FONT_SIZE, INSPECTOR_WIDTH, Palette, SIDEBAR_WIDTH, STATUS_BAR_HEIGHT, UI_FONT,
+    is_dark,
 };
 use crate::toolbar::{Toolbar, ToolbarEvent};
 
@@ -96,6 +97,8 @@ pub struct MainWindow {
     refresh_interval_minutes: u32,
     refresh_on_focus: bool,
     window_active: bool,
+    theme: Theme,
+    _appearance_observer: Subscription,
     _auto_refresh_loop: Task<()>,
     /// Elements drawn by the last render, so tests can see removals that `debug_bounds` keeps.
     #[cfg(test)]
@@ -113,6 +116,25 @@ struct RenderedPanes {
     inspector: bool,
     scrim: bool,
     center_state: bool,
+}
+
+fn apply_appearance(theme: Theme, window: &mut Window, cx: &mut App) {
+    let system_dark = matches!(
+        window.appearance(),
+        WindowAppearance::Dark | WindowAppearance::VibrantDark
+    );
+    let dark = is_dark(theme, system_dark);
+    cx.set_global(ActivePalette(Palette::for_dark(dark)));
+    gpui_component::Theme::change(
+        if dark {
+            gpui_component::ThemeMode::Dark
+        } else {
+            gpui_component::ThemeMode::Light
+        },
+        Some(window),
+        cx,
+    );
+    cx.refresh_windows();
 }
 
 impl MainWindow {
@@ -199,6 +221,10 @@ impl MainWindow {
         .detach();
 
         let settings = Settings::load(&settings_path());
+        apply_appearance(settings.theme, window, cx);
+        let appearance_observer = cx.observe_window_appearance(window, |this, window, cx| {
+            apply_appearance(this.theme, window, cx);
+        });
         let auto_refresh_loop = cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(AUTO_REFRESH_TICK).await;
@@ -231,6 +257,8 @@ impl MainWindow {
             refresh_interval_minutes: settings.refresh_interval_minutes,
             refresh_on_focus: settings.refresh_on_focus,
             window_active: window.is_window_active(),
+            theme: settings.theme,
+            _appearance_observer: appearance_observer,
             _auto_refresh_loop: auto_refresh_loop,
             #[cfg(test)]
             rendered: RenderedPanes::default(),
@@ -758,11 +786,7 @@ impl MainWindow {
 
 impl Render for MainWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let dark = matches!(
-            window.appearance(),
-            WindowAppearance::Dark | WindowAppearance::VibrantDark
-        );
-        let palette = Palette::for_dark(dark);
+        let palette = crate::tokens::palette(cx);
         let viewport = window.viewport_size();
         let rules = layout_rules(f32::from(viewport.width), f32::from(viewport.height));
 
@@ -1539,5 +1563,38 @@ mod tests {
             main.context_bar.read(cx).last_success_text.clone()
         });
         assert!(text.starts_with("Updated "), "got {text:?}");
+    }
+
+    #[gpui::test]
+    fn dark_active_palette_renders_the_main_window(cx: &mut TestAppContext) {
+        let (_, _main, cx) = rooted_main_window(cx, three_instances(), 1200.0, 800.0);
+        cx.update(|_, cx| cx.set_global(ActivePalette(Palette::dark())));
+        cx.update(|_, cx| cx.refresh_windows());
+        cx.run_until_parked();
+
+        assert!(cx.debug_bounds("main.table").is_some());
+        assert_eq!(
+            cx.update(|_, cx| crate::tokens::palette(cx)),
+            Palette::dark()
+        );
+    }
+
+    #[gpui::test]
+    fn appearance_setting_drives_the_active_palette_and_component_theme(cx: &mut TestAppContext) {
+        let (_, _main, cx) = rooted_main_window(cx, three_instances(), 1200.0, 800.0);
+
+        cx.update(|window, cx| apply_appearance(Theme::Dark, window, cx));
+        assert_eq!(
+            cx.update(|_, cx| crate::tokens::palette(cx)),
+            Palette::dark()
+        );
+        assert!(cx.update(|_, cx| gpui_component::Theme::global(cx).is_dark()));
+
+        cx.update(|window, cx| apply_appearance(Theme::Light, window, cx));
+        assert_eq!(
+            cx.update(|_, cx| crate::tokens::palette(cx)),
+            Palette::light()
+        );
+        assert!(!cx.update(|_, cx| gpui_component::Theme::global(cx).is_dark()));
     }
 }

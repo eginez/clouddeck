@@ -3,7 +3,7 @@
 use clouddeck_core::{CommandContext, CommandId, Platform};
 use gpui::{
     ClickEvent, Context, EventEmitter, FocusHandle, KeyDownEvent, Render, SharedString, Window,
-    WindowAppearance, div, prelude::*, px, white,
+    div, prelude::*, px, white,
 };
 
 use crate::icons::AppIcon;
@@ -106,11 +106,7 @@ fn menu_item(
 
 impl Render for RowContextMenu {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let dark = matches!(
-            window.appearance(),
-            WindowAppearance::Dark | WindowAppearance::VibrantDark
-        );
-        let palette = Palette::for_dark(dark);
+        let palette = crate::tokens::palette(cx);
         let platform = if cfg!(target_os = "macos") {
             Platform::Mac
         } else {

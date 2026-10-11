@@ -84,7 +84,7 @@ impl Focusable for InstanceTable {
 
 impl Render for InstanceTable {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let palette = Palette::light();
+        let palette = crate::tokens::palette(cx);
         let columns = visible_columns(window.viewport_size().width.into());
         let entity = self.state.clone();
         let state = self.state.read(cx);

@@ -10,7 +10,7 @@ use clouddeck_core::{
 };
 use gpui::{
     ClickEvent, ClipboardItem, Context, Div, Entity, FontWeight, IntoElement, Render, SharedString,
-    Stateful, Window, WindowAppearance, div, prelude::*, px,
+    Stateful, Window, div, prelude::*, px,
 };
 use gpui_component::Sizable;
 
@@ -76,12 +76,8 @@ impl InspectorPane {
 }
 
 impl Render for InspectorPane {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let dark = matches!(
-            window.appearance(),
-            WindowAppearance::Dark | WindowAppearance::VibrantDark
-        );
-        let palette = Palette::for_dark(dark);
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let palette = crate::tokens::palette(cx);
 
         let state = self.state.read(cx);
         let Some(instance) = state.selected_instance() else {
