@@ -187,7 +187,7 @@ fn tag_items(
     match seg.split_once('=') {
         None => known_tag_keys
             .iter()
-            .filter(|key| !key.contains(char::is_whitespace))
+            .filter(|key| !key.contains(char::is_whitespace) && !key.contains('"'))
             .filter(|key| starts_with_ignore_case(key, seg))
             .take(MAX_VALUE_ITEMS)
             .map(|key| Suggestion {
@@ -206,7 +206,7 @@ fn tag_items(
         Some((kpart, vpart)) => {
             match known_tag_keys
                 .iter()
-                .find(|key| key.eq_ignore_ascii_case(kpart))
+                .find(|key| !key.contains('"') && key.eq_ignore_ascii_case(kpart))
             {
                 Some(key) => tag_value_items(
                     instances,
@@ -928,6 +928,25 @@ mod tests {
                 .collect::<Vec<_>>(),
             [("Data Platform", "team:\"Data Platform\"")]
         );
+    }
+
+    #[test]
+    fn tag_key_with_double_quote_is_not_suggested() {
+        let mut instances = spaced_fleet();
+        instances[2].tags = vec![EC2InstanceTag {
+            key: "Bo\"b".to_string(),
+            value: "x".to_string(),
+        }];
+        let keys = ["Bo\"b", "Team"].map(String::from);
+        let s = suggest("tag:", &instances, &keys);
+        assert_eq!(
+            s.items.iter().map(|i| i.label.as_str()).collect::<Vec<_>>(),
+            ["Team"]
+        );
+        let s = suggest("tag:Bo\"b=", &instances, &keys);
+        assert!(s.items.is_empty());
+        let s = suggest("bo", &instances, &keys);
+        assert!(s.items.iter().all(|i| !i.label.contains('"')));
     }
 
     #[test]
