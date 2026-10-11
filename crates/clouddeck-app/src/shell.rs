@@ -513,7 +513,10 @@ impl AppShell {
         }
         match state.save(&path) {
             Ok(()) => self.ui_state_saved = state,
-            Err(error) => self.message = Some(format!("Could not save UI state: {error}")),
+            Err(error) => {
+                eprintln!("Could not save UI state: {error}");
+                self.message = Some(format!("Could not save UI state: {error}"));
+            }
         }
     }
 
