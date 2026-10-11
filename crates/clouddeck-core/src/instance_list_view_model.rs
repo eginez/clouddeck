@@ -2,8 +2,8 @@ use std::collections::{HashMap, HashSet};
 use std::time::SystemTime;
 
 use crate::{
-    CompiledQuery, ComputeInstanceFilters, ComputeService, ComputeServicePartialFailure,
-    EC2Instance, QueryError, merge_with_previous,
+    CloudDeckError, CompiledQuery, ComputeInstanceFilters, ComputeService,
+    ComputeServicePartialFailure, EC2Instance, QueryError, merge_with_previous,
 };
 
 /// Rust port of the Swift oracle's `InstanceListViewModel`
@@ -18,6 +18,7 @@ pub struct InstanceListViewModel {
     service: std::sync::Arc<dyn ComputeService + Send + Sync>,
     instances: Vec<EC2Instance>,
     is_loading: bool,
+    error: Option<CloudDeckError>,
     error_message: Option<String>,
     partial_failures: Vec<ComputeServicePartialFailure>,
     search_text: String,
@@ -36,6 +37,7 @@ impl InstanceListViewModel {
             service: service.into(),
             instances: Vec::new(),
             is_loading: false,
+            error: None,
             error_message: None,
             partial_failures: Vec::new(),
             search_text: String::new(),
@@ -74,6 +76,11 @@ impl InstanceListViewModel {
 
     pub fn error_message(&self) -> Option<&str> {
         self.error_message.as_deref()
+    }
+
+    /// The classified error from the last failed load, if it has not been cleared.
+    pub fn error(&self) -> Option<&CloudDeckError> {
+        self.error.as_ref()
     }
 
     // Not yet read by any view: the partial-failure banner in
@@ -223,6 +230,7 @@ impl InstanceListViewModel {
             return None;
         }
         self.is_loading = true;
+        self.error = None;
         self.error_message = None;
         self.partial_failures = vec![];
 
@@ -244,6 +252,7 @@ impl InstanceListViewModel {
     ) {
         match result {
             Ok(result) => {
+                self.error = None;
                 self.error_message = None;
                 let merged = merge_with_previous(&self.instances, &result);
                 self.instances = merged.instances;
@@ -265,8 +274,9 @@ impl InstanceListViewModel {
                 self.partial_failures = vec![];
                 self.stale_regions = vec![];
                 self.selected_instance_id = None;
-                let cloud_deck_error = crate::CloudDeckError::from_service_error(error.as_ref());
+                let cloud_deck_error = CloudDeckError::from_service_error(error.as_ref());
                 self.error_message = Some(cloud_deck_error.message_for("list instances"));
+                self.error = Some(cloud_deck_error);
             }
         }
 
@@ -403,6 +413,7 @@ mod tests {
         let mut vm = view_model_for(TestScenarioKind::ThrottledFailure);
         vm.load_instances().await;
         assert!(vm.instances().is_empty());
+        assert_eq!(vm.error(), Some(&CloudDeckError::Throttled));
         assert_eq!(
             vm.error_message(),
             Some(
@@ -418,6 +429,7 @@ mod tests {
         let mut vm = view_model_for(TestScenarioKind::PermissionFailure);
         vm.load_instances().await;
         assert!(vm.instances().is_empty());
+        assert_eq!(vm.error(), Some(&CloudDeckError::Permission));
         assert_eq!(
             vm.error_message(),
             Some(

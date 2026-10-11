@@ -621,10 +621,7 @@ impl MainWindow {
             is_loading: fleet.view_model.is_loading(),
             loaded_count: fleet.view_model.instances().len(),
             shown_count: fleet.visible_rows().len(),
-            error: fleet
-                .view_model
-                .error_message()
-                .map(|message| CloudDeckError::Unknown(message.to_string())),
+            error: fleet.view_model.error().cloned(),
         };
         let state = center_state(&input)?;
         let context = CenterContext {
@@ -931,11 +928,29 @@ mod tests {
         Entity<MainWindow>,
         &mut VisualTestContext,
     ) {
-        let vm = InstanceListViewModel::new(Box::new(MockComputeService::new(instances, None)));
+        rooted_main_window_with_service(cx, MockComputeService::new(instances, None), width, height)
+    }
+
+    /// Opens the main window at the given size with a refreshed fleet backed by `service`.
+    fn rooted_main_window_with_service(
+        cx: &mut TestAppContext,
+        service: MockComputeService,
+        width: f32,
+        height: f32,
+    ) -> (
+        Entity<FleetState>,
+        Entity<MainWindow>,
+        &mut VisualTestContext,
+    ) {
+        let vm = InstanceListViewModel::new(Box::new(service));
         let fleet = cx.new(|_| FleetState::new(vm, "default".to_string(), true));
         fleet.update(cx, |fleet, cx| fleet.refresh(cx));
         wait_until(cx, |cx| {
-            fleet.read_with(cx, |fleet, _| fleet.view_model.last_success().is_some())
+            fleet.read_with(cx, |fleet, _| {
+                !fleet.view_model.is_loading()
+                    && (fleet.view_model.last_success().is_some()
+                        || fleet.view_model.error().is_some())
+            })
         });
 
         let main_slot: Rc<RefCell<Option<Entity<MainWindow>>>> = Rc::new(RefCell::new(None));
@@ -1049,6 +1064,38 @@ mod tests {
 
         assert!(cx.debug_bounds("main.center-state").is_some());
         assert!(cx.debug_bounds("main.table").is_none());
+    }
+
+    fn center_state_of(
+        main: &Entity<MainWindow>,
+        cx: &mut VisualTestContext,
+    ) -> Option<CenterState> {
+        main.read_with(cx, |main, cx| {
+            main.center_state_for(cx).map(|(state, _)| state)
+        })
+    }
+
+    #[gpui::test]
+    fn throttled_load_shows_the_throttled_centered_state(cx: &mut TestAppContext) {
+        let service =
+            MockComputeService::new(vec![], Some(std::io::Error::other("Rate exceeded").into()));
+        let (_fleet, main, cx) = rooted_main_window_with_service(cx, service, 1280.0, 760.0);
+
+        assert_eq!(center_state_of(&main, cx), Some(CenterState::Throttled));
+    }
+
+    #[gpui::test]
+    fn expired_credentials_load_shows_the_signed_out_centered_state(cx: &mut TestAppContext) {
+        let service = MockComputeService::new(
+            vec![],
+            Some(
+                std::io::Error::other("The security token included in the request is expired")
+                    .into(),
+            ),
+        );
+        let (_fleet, main, cx) = rooted_main_window_with_service(cx, service, 1280.0, 760.0);
+
+        assert_eq!(center_state_of(&main, cx), Some(CenterState::SignedOut));
     }
 
     #[gpui::test]
