@@ -4,9 +4,8 @@ use std::ops::Range;
 use std::time::SystemTime;
 
 use clouddeck_core::{
-    DEFAULT_RECENT_SEARCH_LIMIT, EscapeAction, EscapeContext, RECENT_SEARCHES_SHOWN, Suggestion,
-    SuggestionKind, Suggestions, TermKind, apply_suggestion, compile, escape_action,
-    known_tag_keys, push_recent, suggest,
+    DEFAULT_RECENT_SEARCH_LIMIT, RECENT_SEARCHES_SHOWN, Suggestion, SuggestionKind, Suggestions,
+    TermKind, apply_suggestion, compile, known_tag_keys, push_recent, suggest,
 };
 use gpui::{
     App, ClickEvent, Context, Entity, Focusable, Font, Hsla, IntoElement, KeyBinding, Render,
@@ -41,7 +40,6 @@ actions!(
     search_field,
     [
         FocusSearch,
-        ClearSearch,
         PreviousSuggestion,
         NextSuggestion,
         AcceptSuggestion,
@@ -332,7 +330,6 @@ pub fn search_key_bindings() -> Vec<KeyBinding> {
     vec![
         KeyBinding::new("cmd-f", FocusSearch, None),
         KeyBinding::new("/", FocusSearch, Some("InstanceTable")),
-        KeyBinding::new("escape", ClearSearch, Some("SearchField")),
         KeyBinding::new("up", PreviousSuggestion, Some("SearchField")),
         KeyBinding::new("down", NextSuggestion, Some("SearchField")),
         KeyBinding::new("tab", AcceptSuggestion, Some("SearchField")),
@@ -405,22 +402,6 @@ impl SearchField {
 
     pub fn focus(&self, window: &mut Window, cx: &mut App) {
         self.input.update(cx, |input, cx| input.focus(window, cx));
-    }
-
-    fn clear(&mut self, _: &ClearSearch, window: &mut Window, cx: &mut Context<Self>) {
-        let query_empty = self.state.read(cx).query().is_empty();
-        let action = escape_action(&EscapeContext {
-            search_focused: true,
-            query_empty,
-            ..Default::default()
-        });
-        if action != EscapeAction::ClearSearch {
-            cx.propagate();
-            return;
-        }
-        self.input
-            .update(cx, |input, cx| input.set_value("", window, cx));
-        self.state.update(cx, |state, cx| state.set_query("", cx));
     }
 
     fn step_highlight(&mut self, forward: bool, cx: &mut Context<Self>) {
@@ -597,7 +578,6 @@ impl Render for SearchField {
         let field = div()
             .debug_selector(|| "search.field".into())
             .key_context("SearchField")
-            .on_action(cx.listener(Self::clear))
             .on_action(cx.listener(Self::previous_suggestion))
             .on_action(cx.listener(Self::next_suggestion))
             .on_action(cx.listener(Self::accept_suggestion))
@@ -665,7 +645,7 @@ mod tests {
     use std::rc::Rc;
 
     use clouddeck_core::{EC2Instance, EC2InstanceTag, MockComputeService};
-    use gpui::{Entity, Focusable, TestAppContext, VisualTestContext};
+    use gpui::{Entity, TestAppContext, VisualTestContext};
 
     use super::*;
     use crate::view_models::InstanceListViewModel;
@@ -803,31 +783,6 @@ mod tests {
             state.read_with(cx, |state, _| state.query().to_string()),
             "state:stopped"
         );
-    }
-
-    #[gpui::test]
-    fn cmd_f_focuses_the_input_and_escape_clears_the_query(cx: &mut TestAppContext) {
-        let (state, search, cx) = rooted_search(cx, false);
-
-        cx.simulate_keystrokes("cmd-f");
-        let input = search.read_with(cx, |search, _| search.input.clone());
-        let focused = cx.update(|window, cx| input.read(cx).focus_handle(cx).is_focused(window));
-        assert!(focused, "cmd-f should focus the search input");
-
-        cx.simulate_input("state:stopped");
-        cx.run_until_parked();
-        assert_eq!(
-            state.read_with(cx, |state, _| state.query().to_string()),
-            "state:stopped"
-        );
-
-        cx.simulate_keystrokes("escape");
-        cx.run_until_parked();
-        assert_eq!(
-            state.read_with(cx, |state, _| state.query().to_string()),
-            ""
-        );
-        assert_eq!(input_text(&search, cx), "");
     }
 
     #[gpui::test]
