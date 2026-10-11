@@ -1,5 +1,6 @@
 mod account_connect;
 mod account_window;
+mod assets;
 // `account_provider_step`, `account_profile_picker`, and
 // `account_workspace_setup` (the old multi-step onboarding wizard views)
 // were removed under clouddeck-rs-w6s.18: the approved single-screen
@@ -8,6 +9,7 @@ mod account_window;
 // directly into `account_window::AccountWindowView`. Nothing outside their
 // own files referenced them.
 mod ec2_tab;
+mod icons;
 mod instance_detail;
 mod instance_list;
 mod quick_picker;
@@ -35,30 +37,32 @@ use shell::AppShell;
 actions!(clouddeck, [Quit]);
 
 fn main() {
-    Application::new().run(|cx: &mut App| {
-        gpui_component::init(cx);
-        // SurgicalTheme is intentionally light. Keep gpui-component inputs and
-        // popovers on the same palette even when macOS is using dark mode.
-        gpui_component::Theme::change(gpui_component::ThemeMode::Light, None, cx);
-        let bounds = Bounds::centered(None, size(px(1280.0), px(800.0)), cx);
-        cx.open_window(
-            WindowOptions {
-                titlebar: Some(TitlebarOptions {
-                    title: Some(SharedString::from("CloudDeck")),
+    Application::new()
+        .with_assets(assets::Assets)
+        .run(|cx: &mut App| {
+            gpui_component::init(cx);
+            // SurgicalTheme is intentionally light. Keep gpui-component inputs and
+            // popovers on the same palette even when macOS is using dark mode.
+            gpui_component::Theme::change(gpui_component::ThemeMode::Light, None, cx);
+            let bounds = Bounds::centered(None, size(px(1280.0), px(800.0)), cx);
+            cx.open_window(
+                WindowOptions {
+                    titlebar: Some(TitlebarOptions {
+                        title: Some(SharedString::from("CloudDeck")),
+                        ..Default::default()
+                    }),
+                    window_min_size: Some(size(px(920.0), px(600.0))),
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
                     ..Default::default()
-                }),
-                window_min_size: Some(size(px(920.0), px(600.0))),
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                ..Default::default()
-            },
-            |window, cx| {
-                let shell = cx.new(|cx| AppShell::new(cx));
-                cx.new(|cx| gpui_component::Root::new(shell, window, cx))
-            },
-        )
-        .unwrap();
-        cx.on_action(|_: &Quit, cx| cx.quit());
-        cx.bind_keys(shell::app_key_bindings());
-        cx.activate(true);
-    });
+                },
+                |window, cx| {
+                    let shell = cx.new(|cx| AppShell::new(cx));
+                    cx.new(|cx| gpui_component::Root::new(shell, window, cx))
+                },
+            )
+            .unwrap();
+            cx.on_action(|_: &Quit, cx| cx.quit());
+            cx.bind_keys(shell::app_key_bindings());
+            cx.activate(true);
+        });
 }
