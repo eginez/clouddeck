@@ -454,6 +454,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn multi_region_all_throttled_surfaces_throttled_error_on_view_model() {
+        let regions = vec!["us-east-1".to_string(), "eu-west-1".to_string()];
+        let fleet = crate::FleetComputeService::new(regions, |_| {
+            let resolved = ScenarioService::for_kind(
+                TestScenarioKind::ThrottledFailure,
+                &DirectoryScenarioCatalog::new(FIXTURES),
+            )
+            .unwrap();
+            Box::new(resolved.into_service())
+        });
+        let mut vm = InstanceListViewModel::new(Box::new(fleet));
+        vm.load_instances().await;
+        assert!(vm.instances().is_empty());
+        assert_eq!(vm.error(), Some(&CloudDeckError::Throttled));
+    }
+
+    #[tokio::test]
     async fn multi_region_all_failing_errors_the_whole_load() {
         let regions = vec!["us-east-1".to_string(), "eu-west-1".to_string()];
         let fleet = crate::FleetComputeService::new(regions, |_| {

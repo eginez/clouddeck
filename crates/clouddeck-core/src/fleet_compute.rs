@@ -154,9 +154,7 @@ impl ComputeService for FleetComputeService {
         });
 
         if !had_successful_region_load && let Some(first_failure) = partial_failures.first() {
-            return Err(Box::new(CloudDeckError::Unknown(
-                first_failure.message.clone(),
-            )));
+            return Err(Box::new(first_failure.error.clone()));
         }
 
         partial_failures.sort_by_key(|f| f.region.to_lowercase());
@@ -333,6 +331,20 @@ mod tests {
         assert_eq!(
             result.partial_failures[0].message,
             CloudDeckError::Throttled.user_message()
+        );
+    }
+
+    #[tokio::test]
+    async fn all_regions_throttled_surfaces_typed_throttled_error() {
+        let service = FleetComputeService::new(
+            vec!["us-east-1".to_string(), "us-west-2".to_string()],
+            |_: &str| -> Box<dyn ComputeService + Send + Sync> { Box::new(ThrottledService) },
+        );
+
+        let error = service.list_instances(None).await.unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<CloudDeckError>(),
+            Some(&CloudDeckError::Throttled)
         );
     }
 
