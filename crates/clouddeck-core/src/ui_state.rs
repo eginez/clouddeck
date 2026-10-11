@@ -14,9 +14,13 @@ pub const SIDEBAR_WIDTH_RANGE: (f32, f32) = (180.0, 320.0);
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WindowFrame {
+    /// Horizontal window position.
     pub x: f32,
+    /// Vertical window position.
     pub y: f32,
+    /// Window width.
     pub width: f32,
+    /// Window height.
     pub height: f32,
 }
 
@@ -35,15 +39,23 @@ impl Default for WindowFrame {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UiState {
+    /// Selected region codes.
     pub selected_regions: Vec<String>,
+    /// Pinned search queries, in pin order.
     pub pinned_searches: Vec<String>,
+    /// Recent search queries, most recent first.
     pub recent_searches: Vec<String>,
     /// `EC2Instance::id()` keys, most recent first.
     pub recent_instances: Vec<String>,
+    /// Whether the sidebar is shown.
     pub sidebar_open: bool,
+    /// Whether the inspector is shown.
     pub inspector_open: bool,
+    /// Sidebar width in logical pixels.
     pub sidebar_width: f32,
+    /// Inspector width in logical pixels.
     pub inspector_width: f32,
+    /// Last window frame, if known.
     pub window: Option<WindowFrame>,
 }
 
