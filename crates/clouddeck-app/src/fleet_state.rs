@@ -1,11 +1,16 @@
 //! Shared state entity the new views observe: instances, query, sort, selection, panes.
 
-use std::time::Duration;
+#[cfg(test)]
+use std::cell::OnceCell;
+#[cfg(test)]
+use std::time::Instant;
+use std::time::{Duration, SystemTime};
 
 use clouddeck_core::{
-    Column, EC2Instance, RECENT_INSTANCE_LIMIT, SortState, push_recent, sort_instances,
+    CloudDeckError, Column, EC2Instance, RECENT_INSTANCE_LIMIT, SortState, push_recent,
+    sort_instances, throttle_retry_delay,
 };
-use gpui::Context;
+use gpui::{App, Context};
 
 use crate::view_models::InstanceListViewModel;
 
@@ -30,7 +35,13 @@ pub struct FleetState {
     pub recent_searches: Vec<String>,
     pub pinned_searches: Vec<String>,
     pub recent_instances: Vec<String>,
+    /// Seconds until a throttled load is retried, while one is scheduled.
+    pub retry_in_seconds: Option<u32>,
     flash_generation: u64,
+    throttle_attempt: u32,
+    retry_generation: u64,
+    #[cfg(test)]
+    clock: OnceCell<(SystemTime, Instant)>,
 }
 
 impl FleetState {
@@ -49,7 +60,31 @@ impl FleetState {
             recent_searches: Vec::new(),
             pinned_searches: Vec::new(),
             recent_instances: Vec::new(),
+            retry_in_seconds: None,
             flash_generation: 0,
+            throttle_attempt: 0,
+            retry_generation: 0,
+            #[cfg(test)]
+            clock: OnceCell::new(),
+        }
+    }
+
+    /// The current wall time, shared by load stamps and refresh checks.
+    pub fn now(&self, cx: &App) -> SystemTime {
+        #[cfg(test)]
+        {
+            let (wall, origin) = *self
+                .clock
+                .get_or_init(|| (SystemTime::now(), cx.background_executor().now()));
+            wall + cx
+                .background_executor()
+                .now()
+                .saturating_duration_since(origin)
+        }
+        #[cfg(not(test))]
+        {
+            let _ = cx;
+            SystemTime::now()
         }
     }
 
@@ -126,6 +161,8 @@ impl FleetState {
         let Some(service) = self.view_model.begin_load() else {
             return;
         };
+        self.retry_generation += 1;
+        self.retry_in_seconds = None;
         cx.notify();
         let task =
             crate::runtime::runtime().spawn(async move { service.list_instances(None).await });
@@ -134,9 +171,50 @@ impl FleetState {
                 .await
                 .unwrap_or_else(|error| Err(std::io::Error::other(error.to_string()).into()));
             let _ = this.update(cx, |this, cx| {
-                this.view_model.finish_load(result);
+                let now = this.now(cx);
+                this.view_model.finish_load_at(result, now);
                 this.reconcile_selection();
+                this.after_load(cx);
                 cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn after_load(&mut self, cx: &mut Context<Self>) {
+        match self.view_model.error() {
+            None => self.throttle_attempt = 0,
+            Some(CloudDeckError::Throttled) => self.schedule_throttle_retry(cx),
+            Some(_) => {}
+        }
+    }
+
+    fn schedule_throttle_retry(&mut self, cx: &mut Context<Self>) {
+        let delay = throttle_retry_delay(self.throttle_attempt);
+        self.throttle_attempt = self.throttle_attempt.saturating_add(1);
+        let mut remaining = delay.as_secs() as u32;
+        self.retry_in_seconds = Some(remaining);
+        let generation = self.retry_generation;
+        cx.spawn(async move |this, cx| {
+            while remaining > 0 {
+                cx.background_executor().timer(Duration::from_secs(1)).await;
+                remaining -= 1;
+                let still_pending = this.update(cx, |this, cx| {
+                    if this.retry_generation != generation {
+                        return false;
+                    }
+                    this.retry_in_seconds = Some(remaining);
+                    cx.notify();
+                    true
+                });
+                if !matches!(still_pending, Ok(true)) {
+                    return;
+                }
+            }
+            let _ = this.update(cx, |this, cx| {
+                if this.retry_generation == generation {
+                    this.refresh(cx);
+                }
             });
         })
         .detach();

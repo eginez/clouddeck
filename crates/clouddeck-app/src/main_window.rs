@@ -1,16 +1,19 @@
 //! Main window layout: toolbar, sidebar, table or centered state, inspector, status bar (design/images/01, 04, 41-43).
 
+use std::time::Duration;
+
 use clouddeck_core::{
     CenterContext, CenterInput, CenterState, CenterText, CloudDeckError, CommandContext, CommandId,
     ComputeServicePartialFailure, EC2Instance, EscapeAction, EscapeContext, OPEN_IN_CONSOLE_FLASH,
-    ProfileInput, RegionScope, center_state, center_text, clock_text, console_url_for,
+    ProfileInput, RegionScope, Settings, center_state, center_text, clock_text, console_url_for,
     copied_flash, escape_action, filter_command_query, known_tag_keys, layout_rules,
-    region_scope_label, stale_count, updated_text,
+    region_scope_label, settings_path, should_auto_refresh, should_refresh_on_focus, stale_count,
+    updated_text,
 };
 use gpui::{
     AnyElement, AnyView, App, Bounds, ClickEvent, ClipboardItem, Context, Div, Entity,
     EventEmitter, FocusHandle, Focusable, Global, IntoElement, KeyBinding, MouseDownEvent, Pixels,
-    Point, Render, SharedString, Subscription, TitlebarOptions, Window, WindowAppearance,
+    Point, Render, SharedString, Subscription, Task, TitlebarOptions, Window, WindowAppearance,
     WindowBounds, WindowOptions, actions, div, hsla, point, prelude::*, px, relative, size,
 };
 
@@ -42,6 +45,7 @@ const OVERLAY_ABOVE_STATUS_BAR: f32 = STATUS_BAR_HEIGHT + 4.0;
 const REGION_OVERLAY_LEFT: f32 = 150.0;
 const PALETTE_TOP: f32 = 80.0;
 const OVERLAY_EDGE_INSET: f32 = 8.0;
+const AUTO_REFRESH_TICK: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Overlay {
@@ -88,6 +92,11 @@ pub struct MainWindow {
     region_scope_dirty: bool,
     /// Whether the window was narrow on the last render, to reset panes only when it crosses.
     last_narrow: Option<bool>,
+    auto_refresh: bool,
+    refresh_interval_minutes: u32,
+    refresh_on_focus: bool,
+    window_active: bool,
+    _auto_refresh_loop: Task<()>,
     /// Elements drawn by the last render, so tests can see removals that `debug_bounds` keeps.
     #[cfg(test)]
     rendered: RenderedPanes,
@@ -181,6 +190,23 @@ impl MainWindow {
             },
         )
         .detach();
+        cx.observe_window_activation(window, |this, window, cx| {
+            this.window_active = window.is_window_active();
+            if this.window_active {
+                this.refresh_on_focus_if_due(cx);
+            }
+        })
+        .detach();
+
+        let settings = Settings::load(&settings_path());
+        let auto_refresh_loop = cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(AUTO_REFRESH_TICK).await;
+                if this.update(cx, |this, cx| this.refresh_if_due(cx)).is_err() {
+                    break;
+                }
+            }
+        });
 
         Self {
             fleet,
@@ -201,6 +227,11 @@ impl MainWindow {
             overlay_subscription: None,
             region_scope_dirty: false,
             last_narrow: Some(rules.narrow),
+            auto_refresh: settings.auto_refresh,
+            refresh_interval_minutes: settings.refresh_interval_minutes,
+            refresh_on_focus: settings.refresh_on_focus,
+            window_active: window.is_window_active(),
+            _auto_refresh_loop: auto_refresh_loop,
             #[cfg(test)]
             rendered: RenderedPanes::default(),
             #[cfg(test)]
@@ -224,6 +255,40 @@ impl MainWindow {
 
     fn refresh(&mut self, cx: &mut Context<Self>) {
         self.fleet.update(cx, |fleet, cx| fleet.refresh(cx));
+    }
+
+    fn refresh_if_due(&mut self, cx: &mut Context<Self>) {
+        let fleet = self.fleet.read(cx);
+        if fleet.retry_in_seconds.is_some() {
+            return;
+        }
+        let now = fleet.now(cx);
+        let due = should_auto_refresh(
+            fleet.view_model.last_success(),
+            now,
+            self.auto_refresh,
+            self.refresh_interval_minutes,
+            self.window_active,
+            fleet.view_model.is_loading(),
+        );
+        if due {
+            self.refresh(cx);
+        }
+    }
+
+    fn refresh_on_focus_if_due(&mut self, cx: &mut Context<Self>) {
+        let fleet = self.fleet.read(cx);
+        let now = fleet.now(cx);
+        let due = should_refresh_on_focus(
+            fleet.view_model.last_success(),
+            now,
+            self.refresh_on_focus,
+            self.refresh_interval_minutes,
+            fleet.view_model.is_loading(),
+        );
+        if due {
+            self.refresh(cx);
+        }
     }
 
     fn toggle_overlay(&mut self, overlay: Overlay, window: &mut Window, cx: &mut Context<Self>) {
@@ -649,7 +714,7 @@ impl MainWindow {
             scope_is_all: self.scope.is_all(&self.available_regions),
             query: fleet.query().to_string(),
             last_good: None,
-            retry_in_seconds: None,
+            retry_in_seconds: fleet.retry_in_seconds,
         };
         let text = center_text(&state, &context);
         Some((state, text))
@@ -881,10 +946,17 @@ fn local_offset_minutes() -> i32 {
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
+    use std::future::Future;
+    use std::pin::Pin;
     use std::rc::Rc;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
 
-    use clouddeck_core::{EC2Instance, EC2InstanceTag, MockComputeService};
+    use clouddeck_core::{
+        BoxError, ComputeInstanceFilters, ComputeInstanceLoadResult, ComputeService, EC2Instance,
+        EC2InstanceTag, MockComputeService,
+    };
     use gpui::{Bounds, Entity, MouseButton, TestAppContext, VisualTestContext, point, size};
 
     use super::*;
@@ -950,10 +1022,55 @@ mod tests {
         rooted_main_window_with_service(cx, MockComputeService::new(instances, None), width, height)
     }
 
+    /// Counts `list_instances` calls, failing the first with `first_call_error` when set.
+    struct CountingService {
+        calls: Arc<AtomicUsize>,
+        first_call_error: Option<&'static str>,
+        inner: MockComputeService,
+    }
+
+    impl ComputeService for CountingService {
+        fn list_instances<'life0, 'async_trait>(
+            &'life0 self,
+            filters: Option<ComputeInstanceFilters>,
+        ) -> Pin<
+            Box<
+                dyn Future<Output = Result<ComputeInstanceLoadResult, BoxError>>
+                    + Send
+                    + 'async_trait,
+            >,
+        >
+        where
+            'life0: 'async_trait,
+            Self: 'async_trait,
+        {
+            let call = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
+            match self.first_call_error {
+                Some(message) if call == 1 => {
+                    Box::pin(
+                        async move { Err(Box::new(std::io::Error::other(message)) as BoxError) },
+                    )
+                }
+                _ => self.inner.list_instances(filters),
+            }
+        }
+    }
+
+    fn counting_service(
+        calls: &Arc<AtomicUsize>,
+        first_call_error: Option<&'static str>,
+    ) -> CountingService {
+        CountingService {
+            calls: calls.clone(),
+            first_call_error,
+            inner: MockComputeService::new(three_instances(), None),
+        }
+    }
+
     /// Opens the main window at the given size with a refreshed fleet backed by `service`.
     fn rooted_main_window_with_service(
         cx: &mut TestAppContext,
-        service: MockComputeService,
+        service: impl ComputeService + Send + Sync + 'static,
         width: f32,
         height: f32,
     ) -> (
@@ -1309,5 +1426,118 @@ mod tests {
                 "us-east-1".to_string()
             ])]
         );
+    }
+
+    fn set_refresh_policy(
+        main: &Entity<MainWindow>,
+        auto: bool,
+        on_focus: bool,
+        cx: &mut VisualTestContext,
+    ) {
+        main.update(cx, |main, _| {
+            main.auto_refresh = auto;
+            main.refresh_on_focus = on_focus;
+        });
+    }
+
+    fn loads(calls: &Arc<AtomicUsize>) -> usize {
+        calls.load(Ordering::SeqCst)
+    }
+
+    #[gpui::test]
+    fn auto_refresh_loads_again_once_the_interval_passes_while_active(cx: &mut TestAppContext) {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let (_fleet, main, cx) =
+            rooted_main_window_with_service(cx, counting_service(&calls, None), 1280.0, 760.0);
+        cx.update(|window, _| window.activate_window());
+        set_refresh_policy(&main, true, false, cx);
+        cx.run_until_parked();
+        assert_eq!(loads(&calls), 1);
+
+        cx.executor()
+            .advance_clock(Duration::from_secs(5 * 60 + 30));
+        wait_until(cx, |_| loads(&calls) == 2);
+
+        cx.executor().advance_clock(Duration::from_secs(30));
+        cx.run_until_parked();
+        assert_eq!(loads(&calls), 2);
+    }
+
+    #[gpui::test]
+    fn auto_refresh_off_does_not_reload_on_the_interval(cx: &mut TestAppContext) {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let (_fleet, main, cx) =
+            rooted_main_window_with_service(cx, counting_service(&calls, None), 1280.0, 760.0);
+        cx.update(|window, _| window.activate_window());
+        set_refresh_policy(&main, false, false, cx);
+        cx.run_until_parked();
+
+        cx.executor()
+            .advance_clock(Duration::from_secs(5 * 60 + 30));
+        cx.run_until_parked();
+
+        assert_eq!(loads(&calls), 1);
+    }
+
+    #[gpui::test]
+    fn regaining_focus_after_an_interval_away_reloads(cx: &mut TestAppContext) {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let (_fleet, main, cx) =
+            rooted_main_window_with_service(cx, counting_service(&calls, None), 1280.0, 760.0);
+        cx.update(|window, _| window.activate_window());
+        set_refresh_policy(&main, false, true, cx);
+        cx.run_until_parked();
+        assert_eq!(loads(&calls), 1);
+
+        cx.deactivate_window();
+        cx.executor().advance_clock(Duration::from_secs(5 * 60 + 1));
+        cx.run_until_parked();
+        cx.update(|window, _| window.activate_window());
+        wait_until(cx, |_| loads(&calls) == 2);
+    }
+
+    #[gpui::test]
+    fn throttled_load_is_retried_after_the_backoff_delay(cx: &mut TestAppContext) {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let (fleet, _main, cx) = rooted_main_window_with_service(
+            cx,
+            counting_service(&calls, Some("Rate exceeded")),
+            1280.0,
+            760.0,
+        );
+        assert_eq!(loads(&calls), 1);
+        assert_eq!(
+            fleet.read_with(cx, |fleet, _| fleet.retry_in_seconds),
+            Some(2)
+        );
+
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        assert_eq!(loads(&calls), 1);
+        assert_eq!(
+            fleet.read_with(cx, |fleet, _| fleet.retry_in_seconds),
+            Some(1)
+        );
+
+        cx.executor().advance_clock(Duration::from_secs(1));
+        wait_until(cx, |cx| {
+            loads(&calls) == 2
+                && fleet.read_with(cx, |fleet, _| {
+                    fleet.view_model.error().is_none()
+                        && fleet.view_model.last_success().is_some()
+                        && fleet.retry_in_seconds.is_none()
+                })
+        });
+    }
+
+    #[gpui::test]
+    fn updated_status_text_shows_the_last_successful_load(cx: &mut TestAppContext) {
+        let (_fleet, main, cx) = rooted_main_window(cx, three_instances(), 1280.0, 760.0);
+        cx.run_until_parked();
+
+        let text = main.read_with(cx, |main, cx| {
+            main.context_bar.read(cx).last_success_text.clone()
+        });
+        assert!(text.starts_with("Updated "), "got {text:?}");
     }
 }
