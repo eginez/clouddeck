@@ -55,6 +55,8 @@ mod recents;
 pub use recents::*;
 mod ui_state;
 pub use ui_state::*;
+mod settings;
+pub use settings::*;
 pub use aws_cli::{AwsCliComputeService, CliVersionError, DEFAULT_REQUEST_TIMEOUT, test_aws_cli};
 pub use aws_identity::{AwsIdentity, AwsIdentityProvider, AwsIdentityService};
 pub use aws_sdk::{AwsSdkComputeService, Ec2Page, Ec2PageSource};
