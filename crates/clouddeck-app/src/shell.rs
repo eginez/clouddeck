@@ -1283,6 +1283,24 @@ mod tests {
         panic!("timed out waiting for: {label}");
     }
 
+    /// Polls until the switched-in context has finished loading, the status
+    /// bar reads `Ready`, and instances are present. Row presence alone is
+    /// not enough: the status bar is only refreshed on the next shell render,
+    /// so it can lag the view model's settled state.
+    fn wait_until_context_settled(
+        cx: &mut gpui::VisualTestContext,
+        shell: &gpui::Entity<AppShell>,
+    ) {
+        wait_until(cx, "context load to settle to Ready", |cx| {
+            shell.read_with(cx, |shell, cx| {
+                let vm = &shell.ec2_tab.read(cx).list.read(cx).view_model;
+                !vm.is_loading()
+                    && shell.status_bar.read(cx).status == ContextStatusState::Ready
+                    && !vm.instances().is_empty()
+            })
+        });
+    }
+
     /// End-to-end proof that the *real* picker -> shell observer ->
     /// `apply_context` path works, not just `apply_context` called by hand:
     /// clicking the region chip in the live status bar opens the quick
@@ -1345,12 +1363,7 @@ mod tests {
             );
         });
 
-        // The fresh load resolves through the same cx.spawn-bridged tokio
-        // path the startup load used; poll for the fleet rows to appear.
-        wait_until(cx, "fleet rows to appear after context switch", |cx| {
-            cx.debug_bounds("ec2.instance.row.us-east-1:i-scenario-001")
-                .is_some()
-        });
+        wait_until_context_settled(cx, &shell);
         let (loading, ready, has_instances) = shell.read_with(cx, |shell, cx| {
             let vm = &shell.ec2_tab.read(cx).list.read(cx).view_model;
             let loading = vm.is_loading();
@@ -1442,11 +1455,7 @@ mod tests {
             "with no selection after the switch the list-only (standalone prompt) layout is active"
         );
 
-        // Wait for the load to settle, then confirm the fleet shows instances.
-        wait_until(cx, "fleet rows to appear after context switch", |cx| {
-            cx.debug_bounds("ec2.instance.row.us-east-1:i-scenario-001")
-                .is_some()
-        });
+        wait_until_context_settled(cx, &shell);
         let (ready, has_instances) = shell.read_with(cx, |shell, cx| {
             let vm = &shell.ec2_tab.read(cx).list.read(cx).view_model;
             (
