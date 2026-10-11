@@ -41,6 +41,7 @@ pub struct AppShell {
     ui_window_frame: Option<WindowFrame>,
     ui_save_task: Option<Task<()>>,
     window_bounds: Subscription,
+    quit_observer: Subscription,
     settings_subscription: Option<Subscription>,
     applied_scope: RegionScope,
     /// Test-only: an optional compute service injected into `apply_context`
@@ -449,6 +450,15 @@ impl AppShell {
             this.ui_window_frame = Some(Self::window_frame(window));
             this.schedule_ui_state_save(cx);
         });
+        let quit_observer = cx.on_app_quit(|this: &mut Self, cx| {
+            this.save_ui_state(cx);
+            std::future::ready(())
+        });
+        let weak = cx.weak_entity();
+        window.on_window_should_close(cx, move |_, cx| {
+            let _ = weak.update(cx, |this, cx| this.save_ui_state(cx));
+            true
+        });
         fleet.update(cx, |fleet, cx| fleet.refresh(cx));
         Self {
             fleet,
@@ -463,6 +473,7 @@ impl AppShell {
             ui_state_path,
             ui_save_task: None,
             window_bounds,
+            quit_observer,
             settings_subscription: None,
             applied_scope,
             wizard: None,
@@ -1354,6 +1365,40 @@ mod tests {
         let saved = UiState::load(&path);
         assert_eq!(saved.pinned_searches, vec!["state:stopped".to_string()]);
         assert_eq!(saved.sidebar_open, !sidebar_before);
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
+    #[gpui::test]
+    fn pending_ui_state_is_flushed_on_quit(cx: &mut TestAppContext) {
+        let path = temp_ui_state_path("quit-flush");
+        let build_path = path.clone();
+        let (shell, cx) = add_rooted_shell(cx, move |window, cx| {
+            AppShell::build(window, true, DemoScenario::Happy, Some(build_path), cx)
+        });
+        wait_until(cx, "the startup load to settle", |cx| {
+            shell.read_with(cx, |shell, cx| {
+                !shell.fleet.read(cx).view_model.is_loading()
+            })
+        });
+
+        shell.update(cx, |shell, cx| {
+            shell.fleet.update(cx, |fleet, cx| {
+                fleet.sidebar_open = !fleet.sidebar_open;
+                cx.notify();
+            });
+        });
+        let sidebar_open = shell.read_with(cx, |shell, cx| shell.fleet.read(cx).sidebar_open);
+        cx.run_until_parked();
+        assert!(
+            !path.exists(),
+            "the change should still be inside the debounce window"
+        );
+
+        cx.cx.update(|cx| cx.shutdown());
+
+        assert_eq!(UiState::load(&path).sidebar_open, sidebar_open);
         if let Some(dir) = path.parent() {
             let _ = std::fs::remove_dir_all(dir);
         }
