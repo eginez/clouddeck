@@ -1,18 +1,21 @@
 //! Settings window (design/images/50-59).
 
+use std::ops::Range;
 use std::path::PathBuf;
 use std::time::Duration;
 
 use clouddeck_core::{
     DefaultSort, Density, FLEET_REGIONS, KEYMAP, LaunchBehavior, LogLevel, Platform,
     RECENT_SEARCH_LIMITS, REFRESH_INTERVALS, REQUEST_TIMEOUTS, SETTINGS_CATEGORIES, SettingId,
-    Settings, Theme, UiState, changed_categories, context_path, settings_path, shortcut_label,
-    test_aws_cli, ui_state_path,
+    Settings, SettingsSearchResults, Theme, UiState, changed_categories, context_path,
+    search_settings, settings_no_match_text, settings_path, settings_search_breadcrumb,
+    shortcut_label, test_aws_cli, ui_state_path,
 };
 use gpui::{
-    AnyElement, App, Bounds, ClickEvent, Context, Div, Entity, EventEmitter, Global, IntoElement,
-    ParentElement, Render, SharedString, Stateful, Styled, Subscription, TitlebarOptions, Window,
-    WindowBounds, WindowHandle, WindowOptions, div, point, prelude::*, px, size, white,
+    AnyElement, App, Bounds, ClickEvent, Context, Div, Entity, EventEmitter, Global,
+    HighlightStyle, IntoElement, ParentElement, Render, SharedString, Stateful, Styled, StyledText,
+    Subscription, TitlebarOptions, Window, WindowBounds, WindowHandle, WindowOptions, div, point,
+    prelude::*, px, size, white,
 };
 use gpui_component::checkbox::Checkbox;
 use gpui_component::input::{Input, InputEvent, InputState};
@@ -60,6 +63,10 @@ pub struct SettingsWindow {
     rendered_changes: Vec<SettingId>,
     #[cfg(test)]
     rendered_dots: Vec<usize>,
+    #[cfg(test)]
+    rendered_search: bool,
+    #[cfg(test)]
+    rendered_categories: Vec<usize>,
 }
 
 impl EventEmitter<SettingsEvent> for SettingsWindow {}
@@ -263,13 +270,140 @@ fn groups_for(category: &str) -> Vec<(&'static str, Vec<SettingId>)> {
     groups
 }
 
+fn fold_case(c: char) -> char {
+    c.to_lowercase().next().unwrap_or(c)
+}
+
+fn match_ranges(text: &str, query: &str) -> Vec<Range<usize>> {
+    let needle: Vec<char> = query.trim().chars().map(fold_case).collect();
+    let mut ranges = Vec::new();
+    if needle.is_empty() {
+        return ranges;
+    }
+    let chars: Vec<(usize, char)> = text.char_indices().collect();
+    let mut start = 0;
+    while start + needle.len() <= chars.len() {
+        let hit = chars[start..start + needle.len()]
+            .iter()
+            .zip(&needle)
+            .all(|((_, c), n)| fold_case(*c) == *n);
+        if hit {
+            let begin = chars[start].0;
+            let end = chars
+                .get(start + needle.len())
+                .map_or(text.len(), |(index, _)| *index);
+            ranges.push(begin..end);
+            start += needle.len();
+        } else {
+            start += 1;
+        }
+    }
+    ranges
+}
+
+fn highlighted(text: &str, query: &str, palette: &Palette) -> StyledText {
+    StyledText::new(text.to_owned()).with_highlights(match_ranges(text, query).into_iter().map(
+        |range| {
+            (
+                range,
+                HighlightStyle {
+                    background_color: Some(palette.sel),
+                    ..Default::default()
+                },
+            )
+        },
+    ))
+}
+
+fn host_platform() -> Platform {
+    if cfg!(target_os = "macos") {
+        Platform::Mac
+    } else {
+        Platform::Linux
+    }
+}
+
+fn keymap_row(
+    index: usize,
+    action: &str,
+    shortcut: &str,
+    query: &str,
+    palette: &Palette,
+) -> AnyElement {
+    div()
+        .debug_selector(move || format!("settings.keymap.{index}"))
+        .flex()
+        .items_center()
+        .justify_between()
+        .py(px(8.))
+        .border_b_1()
+        .border_color(palette.line)
+        .child(
+            div()
+                .text_size(px(13.))
+                .child(highlighted(action, query, palette)),
+        )
+        .child(
+            div()
+                .px(px(6.))
+                .py(px(2.))
+                .rounded(px(4.))
+                .border_1()
+                .border_color(palette.line)
+                .bg(palette.surf)
+                .text_size(px(11.))
+                .text_color(palette.dim)
+                .child(shortcut_label(shortcut, host_platform())),
+        )
+        .into_any_element()
+}
+
+fn keymap_results(
+    query: &str,
+    rows: &[(&'static str, &'static str)],
+    palette: &Palette,
+) -> AnyElement {
+    div()
+        .flex()
+        .flex_col()
+        .mb(px(18.))
+        .child(
+            div()
+                .text_size(px(11.))
+                .text_color(palette.faint)
+                .mb(px(4.))
+                .child("KEYMAP"),
+        )
+        .child(
+            div()
+                .flex()
+                .justify_between()
+                .py(px(4.))
+                .text_size(px(11.))
+                .text_color(palette.faint)
+                .child("Action")
+                .child("Shortcut"),
+        )
+        .children(
+            rows.iter().enumerate().map(|(index, (action, shortcut))| {
+                keymap_row(index, action, shortcut, query, palette)
+            }),
+        )
+        .into_any_element()
+}
+
 impl SettingsWindow {
     pub fn new(settings: Settings, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search settings"));
+        let search = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("Search settings")
+                .clean_on_escape()
+        });
         let config_input = cx
             .new(|cx| InputState::new(window, cx).default_value(settings.aws_config_file.clone()));
         let mut selects = Vec::new();
-        let mut subscriptions = vec![cx.subscribe_in(
+        let mut subscriptions = vec![cx.observe(&search, |_, _, cx| cx.notify())];
+        subscriptions.push(cx.subscribe_in(
             &config_input,
             window,
             |this: &mut Self, state, event: &InputEvent, _, cx| {
@@ -278,7 +412,7 @@ impl SettingsWindow {
                     this.change(cx, |settings| settings.aws_config_file = value);
                 }
             },
-        )];
+        ));
         for id in SettingId::ALL {
             let items = choices(id);
             if items.is_empty() {
@@ -317,7 +451,22 @@ impl SettingsWindow {
             rendered_changes: Vec::new(),
             #[cfg(test)]
             rendered_dots: Vec::new(),
+            #[cfg(test)]
+            rendered_search: false,
+            #[cfg(test)]
+            rendered_categories: Vec::new(),
         }
+    }
+
+    fn query(&self, cx: &App) -> String {
+        self.search.read(cx).value().to_string()
+    }
+
+    fn open_category(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        self.category = SETTINGS_CATEGORIES[index];
+        self.search
+            .update(cx, |state, cx| state.set_value("", window, cx));
+        cx.notify();
     }
 
     fn change(&mut self, cx: &mut Context<Self>, edit: impl FnOnce(&mut Settings)) {
@@ -511,17 +660,16 @@ impl SettingsWindow {
         &self,
         index: usize,
         name: &'static str,
+        selected: bool,
         changed: bool,
         palette: &Palette,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let selected = name == self.category;
         div()
             .id(("settings-cat", index))
             .debug_selector(move || format!("settings.cat.{index}"))
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                this.category = SETTINGS_CATEGORIES[index];
-                cx.notify();
+            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                this.open_category(index, window, cx)
             }))
             .flex()
             .items_center()
@@ -641,6 +789,7 @@ impl SettingsWindow {
     fn setting_row(&self, id: SettingId, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
         let disabled = id.is_disabled(&self.settings);
         let changed = id.is_changed(&self.settings);
+        let query = self.query(cx);
         div()
             .debug_selector(move || format!("settings.item.{id:?}"))
             .flex()
@@ -670,7 +819,11 @@ impl SettingsWindow {
                                         .debug_selector(move || format!("settings.changed.{id:?}"))
                                 },
                             ))
-                            .child(div().text_size(px(13.)).child(id.label()))
+                            .child(div().text_size(px(13.)).child(highlighted(
+                                id.label(),
+                                &query,
+                                palette,
+                            )))
                             .when(changed, |label| {
                                 label.child(
                                     div()
@@ -695,7 +848,7 @@ impl SettingsWindow {
                         div()
                             .text_size(px(11.))
                             .text_color(palette.dim)
-                            .child(id.description()),
+                            .child(highlighted(id.description(), &query, palette)),
                     ),
             )
             .child(self.control(id, palette, cx))
@@ -781,11 +934,6 @@ impl SettingsWindow {
     }
 
     fn keymap_section(&self, palette: &Palette) -> Vec<AnyElement> {
-        let platform = if cfg!(target_os = "macos") {
-            Platform::Mac
-        } else {
-            Platform::Linux
-        };
         let info = div()
             .text_size(px(11.))
             .text_color(palette.dim)
@@ -795,31 +943,36 @@ impl SettingsWindow {
         let rows = KEYMAP
             .iter()
             .enumerate()
-            .map(|(index, (action, shortcut))| {
-                div()
-                    .debug_selector(move || format!("settings.keymap.{index}"))
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .py(px(8.))
-                    .border_b_1()
-                    .border_color(palette.line)
-                    .child(div().text_size(px(13.)).child(*action))
-                    .child(
-                        div()
-                            .px(px(6.))
-                            .py(px(2.))
-                            .rounded(px(4.))
-                            .border_1()
-                            .border_color(palette.line)
-                            .bg(palette.surf)
-                            .text_size(px(11.))
-                            .text_color(palette.dim)
-                            .child(shortcut_label(shortcut, platform)),
-                    )
-                    .into_any_element()
-            });
+            .map(|(index, (action, shortcut))| keymap_row(index, action, shortcut, "", palette));
         std::iter::once(info).chain(rows).collect()
+    }
+
+    fn search_body(
+        &self,
+        query: &str,
+        results: &SettingsSearchResults,
+        palette: &Palette,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        if results.count() == 0 {
+            return vec![
+                div()
+                    .debug_selector(|| "settings.no-match".into())
+                    .text_size(px(13.))
+                    .text_color(palette.dim)
+                    .child(settings_no_match_text(query))
+                    .into_any_element(),
+            ];
+        }
+        let mut sections: Vec<AnyElement> = results
+            .groups
+            .iter()
+            .map(|(category, ids)| self.group_section(*category, ids, palette, cx))
+            .collect();
+        if !results.keymap_rows.is_empty() {
+            sections.push(keymap_results(query, &results.keymap_rows, palette));
+        }
+        sections
     }
 
     fn about_section(&self, palette: &Palette) -> Vec<AnyElement> {
@@ -866,6 +1019,10 @@ impl SettingsWindow {
 impl Render for SettingsWindow {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = palette(cx);
+        let query = self.query(cx);
+        let searching = !query.trim().is_empty();
+        let results = search_settings(&query);
+        let visible = results.visible_categories();
         let changed_dots = changed_categories(&self.settings);
         let tree = div()
             .debug_selector(|| "settings.tree".into())
@@ -903,14 +1060,32 @@ impl Render for SettingsWindow {
                         ),
                     ),
             )
-            .children(SETTINGS_CATEGORIES.iter().enumerate().map(|(index, name)| {
-                self.category_button(index, name, changed_dots.contains(name), &palette, cx)
-            }));
+            .children(
+                SETTINGS_CATEGORIES
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, name)| !searching || visible.contains(*name))
+                    .map(|(index, name)| {
+                        let selected = !searching && *name == self.category;
+                        self.category_button(
+                            index,
+                            name,
+                            selected,
+                            changed_dots.contains(name),
+                            &palette,
+                            cx,
+                        )
+                    }),
+            );
 
-        let groups = groups_for(self.category);
         #[cfg(test)]
         {
-            self.rendered = groups
+            let drawn = if searching {
+                results.groups.clone()
+            } else {
+                groups_for(self.category)
+            };
+            self.rendered = drawn
                 .iter()
                 .flat_map(|(_, ids)| ids.iter().copied())
                 .collect();
@@ -923,20 +1098,36 @@ impl Render for SettingsWindow {
             self.rendered_dots = (0..SETTINGS_CATEGORIES.len())
                 .filter(|&index| changed_dots.contains(&SETTINGS_CATEGORIES[index]))
                 .collect();
+            self.rendered_search = searching;
+            self.rendered_categories = (0..SETTINGS_CATEGORIES.len())
+                .filter(|&index| !searching || visible.contains(&SETTINGS_CATEGORIES[index]))
+                .collect();
         }
-        let body = match self.category {
-            "Keymap" => self.keymap_section(&palette),
-            "About" => self.about_section(&palette),
-            _ => {
-                let mut sections: Vec<AnyElement> = groups
-                    .into_iter()
-                    .map(|(group, ids)| self.group_section(group, &ids, &palette, cx))
-                    .collect();
-                if self.category == "AWS & Privacy" {
-                    sections.push(self.stored_data_section(&palette, cx));
+        let body = if searching {
+            self.search_body(&query, &results, &palette, cx)
+        } else {
+            match self.category {
+                "Keymap" => self.keymap_section(&palette),
+                "About" => self.about_section(&palette),
+                category => {
+                    let mut sections: Vec<AnyElement> = groups_for(category)
+                        .into_iter()
+                        .map(|(group, ids)| self.group_section(group, &ids, &palette, cx))
+                        .collect();
+                    if category == "AWS & Privacy" {
+                        sections.push(self.stored_data_section(&palette, cx));
+                    }
+                    sections
                 }
-                sections
             }
+        };
+        let (breadcrumb, heading) = if searching {
+            (settings_search_breadcrumb(&query), results.title())
+        } else {
+            (
+                format!("Settings › {}", self.category),
+                self.category.to_owned(),
+            )
         };
         let pane = div()
             .debug_selector(|| "settings.pane".into())
@@ -949,14 +1140,17 @@ impl Render for SettingsWindow {
                     .text_size(px(11.))
                     .text_color(palette.dim)
                     .mb(px(4.))
-                    .child(format!("Settings › {}", self.category)),
+                    .when(searching, |row| {
+                        row.debug_selector(|| "settings.search-crumb".into())
+                    })
+                    .child(breadcrumb),
             )
             .child(
                 div()
                     .text_size(px(18.))
                     .text_color(palette.text)
                     .mb(px(14.))
-                    .child(self.category),
+                    .child(heading),
             )
             .children(body);
 
@@ -1313,5 +1507,87 @@ mod tests {
         assert!(cx.debug_bounds("settings.control.AwsCliPath").is_some());
         assert!(cx.debug_bounds("settings.cli-test").is_some());
         assert!(cx.debug_bounds("settings.control.AwsConfigFile").is_some());
+    }
+
+    fn type_query(view: &Entity<SettingsWindow>, cx: &mut VisualTestContext, query: &'static str) {
+        let search = view.read_with(cx, |view, _| view.search.clone());
+        search.update_in(cx, |state, window, cx| state.set_value(query, window, cx));
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    fn search_shows_matching_settings_and_keymap_rows(cx: &mut TestAppContext) {
+        let (view, cx) = rooted(cx, Settings::default());
+
+        type_query(&view, cx, "refresh");
+
+        assert!(cx.debug_bounds("settings.search-crumb").is_some());
+        assert!(cx.debug_bounds("settings.item.AutoRefresh").is_some());
+        assert!(cx.debug_bounds("settings.item.RefreshOnFocus").is_some());
+        assert!(cx.debug_bounds("settings.keymap.0").is_some());
+        assert!(!view.read_with(cx, |view, _| view.rendered.contains(&SettingId::Theme)));
+        assert_eq!(
+            view.read_with(cx, |view, cx| search_settings(&view.query(cx)).title()),
+            "4 results"
+        );
+    }
+
+    #[gpui::test]
+    fn search_with_no_matches_shows_the_empty_message(cx: &mut TestAppContext) {
+        let (view, cx) = rooted(cx, Settings::default());
+
+        type_query(&view, cx, "zzz");
+
+        assert!(cx.debug_bounds("settings.no-match").is_some());
+    }
+
+    #[gpui::test]
+    fn clearing_the_query_restores_the_normal_pane(cx: &mut TestAppContext) {
+        let (view, cx) = rooted(cx, Settings::default());
+        type_query(&view, cx, "refresh");
+
+        type_query(&view, cx, "");
+
+        assert!(!view.read_with(cx, |view, _| view.rendered_search));
+        assert!(cx.debug_bounds("settings.item.Theme").is_some());
+    }
+
+    #[gpui::test]
+    fn search_tree_shows_only_categories_with_results(cx: &mut TestAppContext) {
+        let (view, cx) = rooted(cx, Settings::default());
+        type_query(&view, cx, "refresh");
+
+        assert!(!view.read_with(cx, |view, _| view.rendered_categories.contains(&0)));
+        assert!(cx.debug_bounds("settings.cat.1").is_some());
+        assert!(cx.debug_bounds("settings.cat.4").is_some());
+
+        click(cx, "settings.cat.1");
+
+        assert_eq!(view.read_with(cx, |view, _| view.category), "Fleet");
+        assert!(!view.read_with(cx, |view, _| view.rendered_search));
+        assert!(cx.debug_bounds("settings.item.AutoRefresh").is_some());
+    }
+
+    #[gpui::test]
+    fn escape_clears_the_search(cx: &mut TestAppContext) {
+        let (view, cx) = rooted(cx, Settings::default());
+        type_query(&view, cx, "refresh");
+        let search = view.read_with(cx, |view, _| view.search.clone());
+        search.update_in(cx, |state, window, cx| state.focus(window, cx));
+
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+
+        assert!(!view.read_with(cx, |view, _| view.rendered_search));
+        assert!(cx.debug_bounds("settings.item.Theme").is_some());
+    }
+
+    #[test]
+    fn match_ranges_are_case_insensitive_and_trimmed() {
+        assert_eq!(
+            match_ranges("Refresh interval, refresh", " REFRESH "),
+            vec![0..7, 18..25]
+        );
+        assert!(match_ranges("Theme", "   ").is_empty());
     }
 }
