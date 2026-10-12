@@ -17,6 +17,8 @@ mod fleet_state;
 mod icons;
 mod inspector_pane;
 mod instance_table;
+#[cfg(test)]
+mod layout_check;
 mod linux_titlebar;
 mod main_window;
 mod profile_picker_view;
@@ -32,6 +34,7 @@ mod test_support;
 mod theme;
 mod tokens;
 mod toolbar;
+mod ui_record;
 // `sidebar` (the port of the oracle's left-nav `SidebarView`) was removed:
 // the agreed layout (clouddeck-rs-wz2.3) drops the left sidebar in favor of
 // a full-width central table with a bottom context bar. `shell.rs` already
