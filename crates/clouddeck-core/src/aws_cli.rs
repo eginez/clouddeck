@@ -1,8 +1,8 @@
 //! Read-only AWS CLI adapter. The CLI owns credential/SSO resolution and pagination;
 //! CloudDeck never invokes a shell or stores credentials.
 use crate::{
-    BoxError, ComputeInstanceFilters, ComputeInstanceLoadResult, ComputeService, EC2Instance,
-    EC2InstanceTag, EC2SecurityGroup,
+    BoxError, CloudDeckError, ComputeInstanceFilters, ComputeInstanceLoadResult, ComputeService,
+    EC2Instance, EC2InstanceTag, EC2SecurityGroup,
 };
 use serde::Deserialize;
 use std::{
@@ -262,16 +262,26 @@ async fn run_describe_instances(
         } else {
             message.trim().to_string()
         };
-        return Err(std::io::Error::other(format!(
-            "AWS CLI: {message}. If the selected profile's credentials are expired, renew them with the AWS CLI, then Refresh."
-        ))
-        .into());
+        return Err(classify_cli_failure(&message).into());
     }
     let instances = parse_instances(&output.stdout, region)?;
     Ok(ComputeInstanceLoadResult {
         instances: filters.map_or_else(|| instances.clone(), |f| f.apply(&instances)),
         partial_failures: vec![],
     })
+}
+
+fn classify_cli_failure(stderr: &str) -> CloudDeckError {
+    let error = std::io::Error::other(format!("AWS CLI: {stderr}"));
+    match CloudDeckError::from_service_error(&error) {
+        CloudDeckError::Unknown(_) if is_expired_sso_session(stderr) => CloudDeckError::Auth,
+        classified => classified,
+    }
+}
+
+fn is_expired_sso_session(stderr: &str) -> bool {
+    let normalized = stderr.to_lowercase();
+    normalized.contains("sso session") && normalized.contains("expired")
 }
 
 fn validate_context(profile: &str, region: &str) -> std::io::Result<()> {
@@ -516,8 +526,8 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn fake_cli_failure_includes_stderr_and_exit_status() {
-        let script = fake_cli("printf '%s' 'access denied' >&2; exit 7");
+    async fn fake_cli_failure_with_unrelated_stderr_is_unknown() {
+        let script = fake_cli("printf '%s' 'something broke' >&2; exit 7");
         let error = run_describe_instances(
             "team",
             "us-east-1",
@@ -527,10 +537,58 @@ mod tests {
         )
         .await
         .unwrap_err();
-        let message = error.to_string();
-        assert!(message.contains("access denied"));
-        assert!(message.contains("selected profile's credentials are expired"));
-        assert!(!message.contains("SSO"));
+        assert_eq!(
+            error.downcast_ref::<CloudDeckError>(),
+            Some(&CloudDeckError::Unknown(
+                "AWS CLI: something broke".to_string()
+            ))
+        );
+        let _ = std::fs::remove_file(script);
+    }
+
+    #[test]
+    fn cli_failure_classification_follows_stderr() {
+        assert_eq!(
+            classify_cli_failure("Unable to locate credentials"),
+            CloudDeckError::Auth
+        );
+        assert_eq!(
+            classify_cli_failure(
+                "An error occurred (ExpiredToken) when calling the DescribeInstances operation"
+            ),
+            CloudDeckError::Auth
+        );
+        assert_eq!(
+            classify_cli_failure(
+                "The SSO session associated with this profile has expired or is otherwise invalid."
+            ),
+            CloudDeckError::Auth
+        );
+        assert_eq!(
+            classify_cli_failure(
+                "An error occurred (UnauthorizedOperation): not authorized to perform ec2:DescribeInstances"
+            ),
+            CloudDeckError::Permission
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn fake_cli_failure_classifies_from_stderr_alone() {
+        let script = fake_cli("printf '%s' 'Unable to locate credentials' >&2; exit 255");
+        let error = run_describe_instances(
+            "team",
+            "us-east-1",
+            script.clone(),
+            Duration::from_secs(10),
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<CloudDeckError>(),
+            Some(&CloudDeckError::Auth)
+        );
         let _ = std::fs::remove_file(script);
     }
 
