@@ -181,10 +181,14 @@ impl MainWindow {
         });
 
         cx.subscribe(&center, |this, _, event: &CenterEvent, cx| match event {
-            CenterEvent::Action(CenterState::SignedOut | CenterState::Error { .. }) => {
-                this.refresh(cx)
+            CenterEvent::Action(
+                CenterState::SignedOut | CenterState::Error { .. } | CenterState::Throttled,
+            ) => this.refresh(cx),
+            CenterEvent::Action(CenterState::NoMatch) => {
+                this.fleet.update(cx, |fleet, cx| fleet.set_query("", cx))
             }
-            CenterEvent::Action(_) => {}
+            CenterEvent::Action(CenterState::EmptyFleet) => this.select_all_regions(cx),
+            CenterEvent::Action(CenterState::Loading | CenterState::Offline) => {}
         })
         .detach();
         cx.observe(&fleet, |_, _, cx| cx.notify()).detach();
@@ -470,6 +474,15 @@ impl MainWindow {
                 self.scope.selected().to_vec(),
             ));
         }
+    }
+
+    fn select_all_regions(&mut self, cx: &mut Context<Self>) {
+        self.scope = RegionScope::all(&self.available_regions);
+        self.region_scope_dirty = false;
+        cx.emit(MainWindowEvent::RegionsChanged(
+            self.scope.selected().to_vec(),
+        ));
+        cx.notify();
     }
 
     fn open_row_menu(
@@ -1346,6 +1359,69 @@ mod tests {
 
         assert_eq!(loads(&calls), 2);
         assert_eq!(center_state_of(&main, cx), None);
+    }
+
+    #[gpui::test]
+    fn throttled_retry_now_reloads_the_fleet(cx: &mut TestAppContext) {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let service = counting_service(&calls, Some("Rate exceeded"));
+        let (_fleet, main, cx) = rooted_main_window_with_service(cx, service, 1280.0, 760.0);
+        assert_eq!(center_state_of(&main, cx), Some(CenterState::Throttled));
+
+        click_center_of("center.action", cx);
+        wait_until(cx, |cx| {
+            loads(&calls) == 2 && main.read_with(cx, |main, cx| main.center_state_for(cx).is_none())
+        });
+
+        assert_eq!(loads(&calls), 2);
+        assert_eq!(center_state_of(&main, cx), None);
+    }
+
+    #[gpui::test]
+    fn no_match_clear_filters_clears_the_query(cx: &mut TestAppContext) {
+        let (fleet, main, cx) = rooted_main_window(cx, three_instances(), 1280.0, 760.0);
+        set_query(&fleet, "zzz-no-match", cx);
+        assert_eq!(center_state_of(&main, cx), Some(CenterState::NoMatch));
+
+        click_center_of("center.action", cx);
+
+        assert_eq!(
+            fleet.read_with(cx, |fleet, _| fleet.query().to_string()),
+            ""
+        );
+        assert_eq!(center_state_of(&main, cx), None);
+    }
+
+    #[gpui::test]
+    fn empty_fleet_select_all_regions_emits_regions_changed(cx: &mut TestAppContext) {
+        let (_fleet, main, cx) = rooted_main_window(cx, vec![], 1280.0, 760.0);
+        main.update(cx, |main, cx| {
+            main.available_regions = vec!["us-east-1".to_string(), "eu-west-1".to_string()];
+            main.scope =
+                RegionScope::from_selected(&["us-east-1".to_string()], &main.available_regions);
+            cx.notify();
+        });
+        cx.run_until_parked();
+        assert_eq!(center_state_of(&main, cx), Some(CenterState::EmptyFleet));
+        let events: Rc<RefCell<Vec<MainWindowEvent>>> = Rc::new(RefCell::new(Vec::new()));
+        let sink = events.clone();
+        cx.update(|_, cx| {
+            cx.subscribe(&main, move |_, event: &MainWindowEvent, _| {
+                sink.borrow_mut().push(event.clone())
+            })
+            .detach();
+        });
+
+        click_center_of("center.action", cx);
+
+        assert_eq!(
+            *events.borrow(),
+            vec![MainWindowEvent::RegionsChanged(vec![
+                "us-east-1".to_string(),
+                "eu-west-1".to_string(),
+            ])]
+        );
+        assert!(main.read_with(cx, |main, _| main.scope.is_all(&main.available_regions)));
     }
 
     #[gpui::test]
