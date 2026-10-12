@@ -28,6 +28,12 @@ pub(crate) enum State {
     MainPartial,
     /// A fleet of 120 instances.
     MainLarge,
+    /// Search field focused and empty, with recent searches listed.
+    SearchFocusedEmpty,
+    /// Search field focused with "st" typed, showing field suggestions.
+    SearchTypingSt,
+    /// Search field focused with an unknown field term typed, showing the error hint.
+    SearchError,
 }
 
 /// The fixture scenario catalog shipped with clouddeck-core.
@@ -75,7 +81,11 @@ fn large_fleet() -> Vec<EC2Instance> {
 fn service_for(state: State) -> (Box<dyn ComputeService + Send + Sync>, Vec<String>) {
     let us_east = vec!["us-east-1".to_string()];
     match state {
-        State::MainIdle | State::MainRowSelected => (
+        State::MainIdle
+        | State::MainRowSelected
+        | State::SearchFocusedEmpty
+        | State::SearchTypingSt
+        | State::SearchError => (
             Box::new(resolve(TestScenarioKind::SmallHappyPath).into_service()),
             us_east,
         ),
@@ -114,6 +124,16 @@ fn wait_until(cx: &mut TestAppContext, mut condition: impl FnMut(&mut TestAppCon
     panic!("condition was not satisfied within the timeout");
 }
 
+/// Focuses the search field with cmd-f, then types `text` if given.
+fn focus_search(cx: &mut VisualTestContext, text: Option<&str>) {
+    cx.simulate_keystrokes("cmd-f");
+    cx.run_until_parked();
+    if let Some(text) = text {
+        cx.simulate_input(text);
+        cx.run_until_parked();
+    }
+}
+
 /// Builds `state` in a fresh main window of the given size, with its fleet loaded.
 pub(crate) fn build<'a>(
     state: State,
@@ -135,6 +155,19 @@ pub(crate) fn build<'a>(
                 && (fleet.view_model.last_success().is_some() || fleet.view_model.error().is_some())
         })
     });
+
+    if state == State::SearchFocusedEmpty {
+        fleet.update(cx, |fleet, _| {
+            fleet.recent_searches = [
+                "state:stopped age:>30d",
+                "owner:esteban",
+                "has:public-ip type:t3.*",
+                "billing prod",
+            ]
+            .map(String::from)
+            .to_vec();
+        });
+    }
 
     let main_slot: Rc<RefCell<Option<Entity<MainWindow>>>> = Rc::new(RefCell::new(None));
     let bounds = Bounds::new(point(px(0.0), px(0.0)), size(px(width), px(height)));
@@ -187,6 +220,13 @@ pub(crate) fn build<'a>(
         });
         fleet.update(cx, |fleet, cx| fleet.select(Some(key), cx));
         cx.run_until_parked();
+    }
+
+    match state {
+        State::SearchFocusedEmpty => focus_search(cx, None),
+        State::SearchTypingSt => focus_search(cx, Some("st")),
+        State::SearchError => focus_search(cx, Some("colour:x")),
+        _ => {}
     }
 
     (fleet, main, cx)
@@ -260,5 +300,28 @@ mod tests {
         let (_fleet, _main, cx) = build(State::MainPartial, 1280.0, 760.0, cx);
 
         assert!(cx.debug_bounds("bar.failure").is_some());
+    }
+
+    #[gpui::test]
+    fn focused_empty_search_shows_recents_and_hides_the_hint(cx: &mut TestAppContext) {
+        let (_fleet, _main, cx) = build(State::SearchFocusedEmpty, 1280.0, 760.0, cx);
+
+        assert!(cx.debug_bounds("search.recent").is_some());
+        assert!(cx.debug_bounds("search.hint").is_none());
+    }
+
+    #[gpui::test]
+    fn typing_st_shows_suggestions_for_the_query(cx: &mut TestAppContext) {
+        let (fleet, _main, cx) = build(State::SearchTypingSt, 1280.0, 760.0, cx);
+
+        assert!(cx.debug_bounds("search.suggestions").is_some());
+        assert_eq!(fleet.read_with(cx, |fleet, _| fleet.query().to_string()), "st");
+    }
+
+    #[gpui::test]
+    fn unknown_field_shows_the_search_error(cx: &mut TestAppContext) {
+        let (_fleet, _main, cx) = build(State::SearchError, 1280.0, 760.0, cx);
+
+        assert!(cx.debug_bounds("search.error").is_some());
     }
 }
