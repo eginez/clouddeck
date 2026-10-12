@@ -187,7 +187,7 @@ fn tag_items(
     match seg.split_once('=') {
         None => known_tag_keys
             .iter()
-            .filter(|key| !key.contains(char::is_whitespace) && !key.contains('"'))
+            .filter(|key| !key.contains(char::is_whitespace) && !key.contains(['"', ',', '=']))
             .filter(|key| starts_with_ignore_case(key, seg))
             .take(MAX_VALUE_ITEMS)
             .map(|key| Suggestion {
@@ -947,6 +947,27 @@ mod tests {
         assert!(s.items.is_empty());
         let s = suggest("bo", &instances, &keys);
         assert!(s.items.iter().all(|i| !i.label.contains('"')));
+    }
+
+    #[test]
+    fn tag_key_with_comma_or_equals_is_not_suggested() {
+        let mut instances = spaced_fleet();
+        instances[2].tags = vec![
+            EC2InstanceTag {
+                key: "Cost,Center".to_string(),
+                value: "x".to_string(),
+            },
+            EC2InstanceTag {
+                key: "a=b".to_string(),
+                value: "y".to_string(),
+            },
+        ];
+        let keys = ["Cost,Center", "a=b", "Team"].map(String::from);
+        let s = suggest("tag:", &instances, &keys);
+        assert_eq!(
+            s.items.iter().map(|i| i.label.as_str()).collect::<Vec<_>>(),
+            ["Team"]
+        );
     }
 
     #[test]
