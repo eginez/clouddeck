@@ -325,7 +325,10 @@ fn classify(message: &str) -> AccountConnectionError {
         || lower.contains("not authorized")
     {
         AccountConnectionError::AccessDenied
-    } else if lower.contains("reach aws") || lower.contains("timed out") {
+    } else if lower.contains("reach aws")
+        || lower.contains("check connectivity")
+        || lower.contains("timed out")
+    {
         AccountConnectionError::Network
     } else {
         AccountConnectionError::Unknown(message.to_string())
@@ -420,6 +423,17 @@ mod tests {
         assert_eq!(
             classify("AWS identity request timed out. Retry the connection."),
             AccountConnectionError::Network
+        );
+        assert_eq!(
+            classify(
+                "Could not reach AWS to start the AWS SSO browser sign-in. Check connectivity."
+            ),
+            AccountConnectionError::Network
+        );
+        assert_eq!(
+            classify("Network request failed. Check connectivity and try again."),
+            AccountConnectionError::Network,
+            "the EC2 access check reports a bare CloudDeckError::Network with this wording"
         );
     }
 
