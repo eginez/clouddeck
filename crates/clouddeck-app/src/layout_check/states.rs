@@ -158,7 +158,18 @@ pub(crate) fn build<'a>(
         .expect("main window entity should be created")
         .clone();
 
-    // AppShell normally copies partial failures into the window; no shell here.
+    // Mirrors AppShell's fleet observer, which copies partial failures into the window.
+    let weak = main.downgrade();
+    cx.update(|_, app| {
+        app.observe(&fleet, move |observed, app| {
+            let failures = observed.read(app).view_model.partial_failures().to_vec();
+            let _ = weak.update(app, |main, cx| {
+                main.failures = failures;
+                cx.notify();
+            });
+        })
+        .detach();
+    });
     let failures = fleet.read_with(cx, |fleet, _| fleet.view_model.partial_failures().to_vec());
     main.update(cx, |main, cx| {
         main.failures = failures;
