@@ -564,6 +564,12 @@ mod tests {
             ),
             CloudDeckError::Permission
         );
+        assert_eq!(
+            classify_cli_failure(
+                "Could not connect to the endpoint URL: \"https://ec2.us-east-1.amazonaws.com/\""
+            ),
+            CloudDeckError::Network
+        );
     }
 
     #[cfg(unix)]

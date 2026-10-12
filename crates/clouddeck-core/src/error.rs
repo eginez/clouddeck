@@ -78,6 +78,7 @@ impl CloudDeckError {
 
         if normalized.contains("network")
             || normalized.contains("connection")
+            || normalized.contains("could not connect")
             || normalized.contains("offline")
         {
             return CloudDeckError::Network;
@@ -164,6 +165,17 @@ mod tests {
     #[test]
     fn classifies_network_errors() {
         let err = std::io::Error::other("network connection lost");
+        assert_eq!(
+            CloudDeckError::from_service_error(&err),
+            CloudDeckError::Network
+        );
+    }
+
+    #[test]
+    fn classifies_could_not_connect_as_network() {
+        let err = std::io::Error::other(
+            "Could not connect to the endpoint URL: \"https://ec2.us-east-1.amazonaws.com/\"",
+        );
         assert_eq!(
             CloudDeckError::from_service_error(&err),
             CloudDeckError::Network
