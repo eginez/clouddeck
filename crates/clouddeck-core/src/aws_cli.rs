@@ -239,18 +239,12 @@ async fn run_describe_instances(
     let mut command = build_command(executable, profile, region);
     let output = tokio::time::timeout(timeout, command.output())
         .await
-        .map_err(|_| {
-            std::io::Error::other(format!(
-                "AWS CLI at {} timed out after {} seconds. Retry or choose one region.",
-                executable_display,
-                timeout.as_secs_f64()
-            ))
-        })?
-        .map_err(|error| {
-            std::io::Error::other(format!(
-                "Could not run AWS CLI at {}: {error}. Install AWS CLI v2 and configure an AWS profile.",
-                executable_display
-            ))
+        .map_err(|_| CloudDeckError::Timeout)?
+        .map_err(|error| match CloudDeckError::from_service_error(&error) {
+            CloudDeckError::Unknown(_) => CloudDeckError::Unknown(format!(
+                "Could not run AWS CLI at {executable_display}: {error}. Install AWS CLI v2 and configure an AWS profile."
+            )),
+            classified => classified,
         })?;
     if !output.status.success() {
         let message: String = String::from_utf8_lossy(&output.stderr)
@@ -588,6 +582,81 @@ mod tests {
         assert_eq!(
             error.downcast_ref::<CloudDeckError>(),
             Some(&CloudDeckError::Auth)
+        );
+        let _ = std::fs::remove_file(script);
+    }
+
+    #[tokio::test]
+    async fn spawn_failure_is_not_classified_by_install_path_text() {
+        let missing = std::env::temp_dir()
+            .join("clouddeck-auth-token-missing-dir")
+            .join("aws");
+        let error =
+            run_describe_instances("team", "us-east-1", missing, Duration::from_secs(10), None)
+                .await
+                .unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<CloudDeckError>(),
+            Some(&CloudDeckError::NotFound)
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn unrunnable_cli_keeps_install_path_out_of_classification() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir =
+            std::env::temp_dir().join(format!("clouddeck-auth-unrunnable-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let data = dir.join("data");
+        let exe = dir.join("aws");
+        std::fs::write(&data, "not a program\n").unwrap();
+        std::fs::set_permissions(&data, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let status = std::process::Command::new("cp")
+            .args(["--remove-destination"])
+            .arg(&data)
+            .arg(&exe)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let error = run_describe_instances(
+            "team",
+            "us-east-1",
+            exe.clone(),
+            Duration::from_secs(10),
+            None,
+        )
+        .await
+        .unwrap_err();
+        let _ = std::fs::remove_dir_all(&dir);
+        match error.downcast_ref::<CloudDeckError>() {
+            Some(CloudDeckError::Unknown(message)) => {
+                assert!(
+                    message.starts_with("Could not run AWS CLI at "),
+                    "{message}"
+                );
+                assert!(message.contains(&exe.display().to_string()), "{message}");
+            }
+            other => panic!("expected Unknown with install path, got {other:?}"),
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn hung_cli_is_a_timeout() {
+        let script = fake_cli("sleep 5");
+        let error = run_describe_instances(
+            "team",
+            "us-east-1",
+            script.clone(),
+            Duration::from_millis(100),
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<CloudDeckError>(),
+            Some(&CloudDeckError::Timeout)
         );
         let _ = std::fs::remove_file(script);
     }

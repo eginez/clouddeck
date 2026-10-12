@@ -268,7 +268,10 @@ impl InstanceListViewModel {
                 self.reconcile_selection_with_filtered_instances();
             }
             Err(error) => {
-                let cloud_deck_error = CloudDeckError::from_service_error(error.as_ref());
+                let cloud_deck_error = error
+                    .downcast_ref::<CloudDeckError>()
+                    .cloned()
+                    .unwrap_or_else(|| CloudDeckError::from_service_error(error.as_ref()));
                 self.error_message = Some(cloud_deck_error.message_for("list instances"));
                 self.error = Some(cloud_deck_error);
             }
@@ -489,6 +492,32 @@ mod tests {
             vm.error_message()
                 .unwrap()
                 .starts_with("Could not list instances:")
+        );
+    }
+
+    #[tokio::test]
+    async fn classified_load_error_is_not_reclassified_from_its_message() {
+        struct AlreadyClassified;
+
+        #[async_trait::async_trait]
+        impl ComputeService for AlreadyClassified {
+            async fn list_instances(
+                &self,
+                _filters: Option<ComputeInstanceFilters>,
+            ) -> Result<crate::ComputeInstanceLoadResult, crate::BoxError> {
+                Err(Box::new(CloudDeckError::Unknown(
+                    "Could not run AWS CLI at /opt/auth/aws: boom".to_string(),
+                )))
+            }
+        }
+
+        let mut vm = InstanceListViewModel::new(Box::new(AlreadyClassified));
+        vm.load_instances().await;
+        assert_eq!(
+            vm.error(),
+            Some(&CloudDeckError::Unknown(
+                "Could not run AWS CLI at /opt/auth/aws: boom".to_string()
+            ))
         );
     }
 
