@@ -390,10 +390,23 @@ impl AppShell {
         } else {
             WorkspaceContext::load(&clouddeck_core::context_path())
         };
-        let ui_state = ui_state_path
-            .as_deref()
-            .map(UiState::load)
-            .unwrap_or_default();
+        let (ui_state, ui_state_path, ui_state_message) = match ui_state_path {
+            Some(path) => match UiState::try_load(&path) {
+                Ok(state) => (state, Some(path), None),
+                Err(error) => {
+                    eprintln!("Could not read UI state; leaving it unchanged: {error}");
+                    (
+                        UiState::default(),
+                        None,
+                        Some(format!(
+                            "Could not read UI state, so it will not be saved this session: {error}"
+                        )),
+                    )
+                }
+            },
+            None => (UiState::default(), None, None),
+        };
+        let message = message.or(ui_state_message);
         let available = Self::available_regions(demo, demo_scenario);
         let mut context = saved
             .filter(|s| profiles.iter().any(|p| p.name == s.profile))
@@ -1428,6 +1441,47 @@ mod tests {
         cx.cx.update(|cx| cx.shutdown());
 
         assert_eq!(UiState::load(&path).sidebar_open, sidebar_open);
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
+    #[gpui::test]
+    fn corrupt_ui_state_is_not_overwritten_by_autosave(cx: &mut TestAppContext) {
+        let path = temp_ui_state_path("corrupt-autosave");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, b"not json").unwrap();
+        let build_path = path.clone();
+        let (shell, cx) = add_rooted_shell(cx, move |window, cx| {
+            AppShell::build(window, true, DemoScenario::Happy, Some(build_path), cx)
+        });
+        wait_until(cx, "the startup load to settle", |cx| {
+            shell.read_with(cx, |shell, cx| {
+                !shell.fleet.read(cx).view_model.is_loading()
+            })
+        });
+
+        shell.update(cx, |shell, cx| {
+            shell.fleet.update(cx, |fleet, cx| {
+                fleet.sidebar_open = !fleet.sidebar_open;
+                cx.notify();
+            });
+        });
+        shell.read_with(cx, |shell, _| {
+            assert!(
+                shell
+                    .message
+                    .as_deref()
+                    .is_some_and(|message| message.contains("UI state")),
+                "an unreadable UI state file should be reported in the shell"
+            );
+        });
+        cx.executor().advance_clock(Duration::from_millis(1100));
+        cx.run_until_parked();
+        assert_eq!(std::fs::read(&path).unwrap(), b"not json");
+
+        cx.cx.update(|cx| cx.shutdown());
+        assert_eq!(std::fs::read(&path).unwrap(), b"not json");
         if let Some(dir) = path.parent() {
             let _ = std::fs::remove_dir_all(dir);
         }
