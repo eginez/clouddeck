@@ -14,7 +14,7 @@ use crate::{
     fleet_state::FleetState,
     icons::AppIcon,
     tokens::{FONT_SIZE, MONO_FONT, Palette, ROW_HEIGHT},
-    ui_record::{Recorded, record},
+    ui_record::{Recorded, forget_prefix, record},
 };
 
 actions!(instance_table, [SelectNext, SelectPrevious]);
@@ -85,6 +85,7 @@ impl Focusable for InstanceTable {
 
 impl Render for InstanceTable {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        forget_prefix(cx, "table.");
         let palette = crate::tokens::palette(cx);
         let columns = visible_columns(window.viewport_size().width.into());
         let entity = self.state.clone();
@@ -706,6 +707,25 @@ mod tests {
         assert_eq!(
             cell_color(&palette, Column::Name, "running", false, false),
             ("text", palette.text)
+        );
+    }
+
+    #[gpui::test]
+    fn narrowing_forgets_the_header_records_of_dropped_columns(cx: &mut TestAppContext) {
+        let state = loaded_state(cx);
+        let cx = open_table(cx, state, 1280.0);
+        assert!(
+            cx.update(|_, app| recorded(app, "table.header.7"))
+                .is_some()
+        );
+
+        cx.simulate_resize(size(px(700.0), px(760.0)));
+        cx.run_until_parked();
+
+        assert_eq!(cx.update(|_, app| recorded(app, "table.header.4")), None);
+        assert!(
+            cx.update(|_, app| recorded(app, "table.header.3"))
+                .is_some()
         );
     }
 }

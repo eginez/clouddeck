@@ -50,6 +50,20 @@ pub fn clear(cx: &mut App) {
     cx.default_global::<Recordings>().0.clear();
 }
 
+/// Drops every recording whose selector starts with `prefix`; a view calls this at the top of its render.
+#[cfg(test)]
+pub fn forget_prefix(cx: &mut App, prefix: &str) {
+    cx.default_global::<Recordings>()
+        .0
+        .retain(|selector, _| !selector.starts_with(prefix));
+}
+
+/// Release builds keep no recordings, so this does nothing.
+#[cfg(not(test))]
+#[inline]
+#[allow(dead_code)]
+pub fn forget_prefix(_cx: &mut App, _prefix: &str) {}
+
 #[cfg(test)]
 mod tests {
     use gpui::TestAppContext;
@@ -112,5 +126,31 @@ mod tests {
         cx.update(|cx| record(cx, "status.run", run_label()));
 
         cx.read(|cx| assert_eq!(recorded(cx, "missing"), None));
+    }
+
+    #[gpui::test]
+    fn forget_prefix_drops_only_matching_selectors(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            record(cx, "bar.a", run_label());
+            record(cx, "bar.b", run_label());
+            record(cx, "table.x", run_label());
+            forget_prefix(cx, "bar.");
+        });
+
+        cx.read(|cx| {
+            assert_eq!(recorded(cx, "bar.a"), None);
+            assert_eq!(recorded(cx, "bar.b"), None);
+            assert_eq!(recorded(cx, "table.x"), Some(run_label()));
+        });
+    }
+
+    #[gpui::test]
+    fn forget_prefix_matching_nothing_keeps_every_entry(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            record(cx, "bar.a", run_label());
+            forget_prefix(cx, "table.");
+        });
+
+        cx.read(|cx| assert_eq!(recorded(cx, "bar.a"), Some(run_label())));
     }
 }

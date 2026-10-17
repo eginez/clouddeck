@@ -12,7 +12,7 @@ use gpui_component::{Sizable, tooltip::Tooltip};
 use crate::fleet_state::FleetState;
 use crate::icons::AppIcon;
 use crate::tokens::{Palette, STATUS_BAR_HEIGHT, STATUS_FONT_SIZE};
-use crate::ui_record::{Recorded, record};
+use crate::ui_record::{Recorded, forget_prefix, record};
 
 const SIDE_PADDING: f32 = 12.0;
 const GAP: f32 = 10.0;
@@ -55,6 +55,7 @@ impl ContextBar {
 
 impl Render for ContextBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        forget_prefix(cx, "bar.");
         let palette = crate::tokens::palette(cx);
         let viewport = window.viewport_size();
         let rules = layout_rules(viewport.width.into(), viewport.height.into());
@@ -560,5 +561,20 @@ mod tests {
             .update(|_, app| recorded(app, "bar.status"))
             .expect("status should be recorded");
         assert_eq!(status.text.as_deref(), Some("Ready"));
+    }
+
+    #[gpui::test]
+    fn switching_from_failure_to_ready_forgets_the_failure_record(cx: &mut TestAppContext) {
+        let (bar, _, cx) = open_bar(cx, 1280.0, "", &["eu-central-1"]);
+        assert!(cx.update(|_, app| recorded(app, "bar.failure")).is_some());
+
+        bar.update(cx, |bar, cx| {
+            bar.failed_regions.clear();
+            cx.notify();
+        });
+        cx.run_until_parked();
+
+        assert_eq!(cx.update(|_, app| recorded(app, "bar.failure")), None);
+        assert!(cx.update(|_, app| recorded(app, "bar.status")).is_some());
     }
 }
