@@ -114,6 +114,24 @@ pub(crate) fn rules() -> Vec<Rule> {
             why: "600pt is not compact: search is full width",
             known_bug: None,
         },
+        // Focusing the compact field expands it to 190pt.
+        Rule {
+            id: "srch-520-focused-width",
+            state: State::SearchFocusedEmpty,
+            window: (520.0, 760.0),
+            check: Check::WidthBetween("search.field", 180.0, 200.0),
+            why: "compact: focused search expands to 190pt",
+            known_bug: None,
+        },
+        // The compact Recent popover stays right-aligned to the expanded field.
+        Rule {
+            id: "srch-520-recent-right",
+            state: State::SearchFocusedEmpty,
+            window: (520.0, 760.0),
+            check: Check::RightAligned("search.recent", "search.field"),
+            why: "compact: Recent is right-aligned to the expanded field",
+            known_bug: None,
+        },
         // The collapsed field is still visible.
         Rule {
             id: "srch-520-in-window",

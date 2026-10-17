@@ -22,6 +22,8 @@ use crate::tokens::{FONT_SIZE, Palette, STATUS_FONT_SIZE};
 const SEARCH_WIDTH: f32 = 220.0;
 const COLLAPSED_WIDTH: f32 = 30.0;
 const COLLAPSED_SIDE_PADDING: f32 = 6.0;
+const COMPACT_FOCUSED_WIDTH: f32 = 190.0;
+const COMPACT_TEXT_WIDTH: f32 = 130.0;
 const SEARCH_HEIGHT: f32 = 28.0;
 const SEARCH_RADIUS: f32 = 6.0;
 const SIDE_PADDING: f32 = 7.0;
@@ -544,15 +546,18 @@ impl Render for SearchField {
 
         let inset = f32::from(Size::Medium.input_px());
         let viewport_size = window.viewport_size();
-        let collapsed = layout_rules(
+        let compact = layout_rules(
             f32::from(viewport_size.width),
             f32::from(viewport_size.height),
         )
         .search_collapsed;
-        let (field_width, side_padding, gap) = if collapsed {
-            (COLLAPSED_WIDTH, COLLAPSED_SIDE_PADDING, 0.0)
+        let collapsed = compact && !focused;
+        let (field_width, side_padding, gap, text_width) = if collapsed {
+            (COLLAPSED_WIDTH, COLLAPSED_SIDE_PADDING, 0.0, 0.0)
+        } else if compact {
+            (COMPACT_FOCUSED_WIDTH, SIDE_PADDING, GAP, COMPACT_TEXT_WIDTH)
         } else {
-            (SEARCH_WIDTH, SIDE_PADDING, GAP)
+            (SEARCH_WIDTH, SIDE_PADDING, GAP, SEARCH_WIDTH)
         };
         let font = window.text_style().font();
         let (shown, runs) = if typed.is_empty() {
@@ -571,7 +576,7 @@ impl Render for SearchField {
         let shift = if collapsed {
             0.0
         } else {
-            let viewport = SEARCH_WIDTH
+            let viewport = text_width
                 - 2.0 * BORDER_WIDTH
                 - 2.0 * SIDE_PADDING
                 - ICON_WIDTH
@@ -625,7 +630,10 @@ impl Render for SearchField {
             .when(collapsed, |text_box| {
                 text_box.w(px(0.0)).flex_none().overflow_hidden()
             })
-            .when(!collapsed, |text_box| text_box.flex_1())
+            .when(compact && !collapsed, |text_box| {
+                text_box.w(px(COMPACT_TEXT_WIDTH)).flex_none()
+            })
+            .when(!compact, |text_box| text_box.flex_1())
             .child(overlay)
             .child(input_field);
 
@@ -650,7 +658,11 @@ impl Render for SearchField {
             .text_color(palette.faint)
             .child(
                 div()
+                    .id("search.icon")
                     .debug_selector(|| "search.icon".into())
+                    .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                        this.focus(window, cx);
+                    }))
                     .child(AppIcon::Search.icon().xsmall().text_color(palette.faint)),
             )
             .child(text_box)
@@ -1115,5 +1127,66 @@ mod tests {
             .expect("search field renders");
         assert!((f32::from(field.size.width) - SEARCH_WIDTH).abs() <= 0.5);
         assert!(cx.debug_bounds("search.hint").is_some());
+    }
+
+    fn field_width(cx: &mut VisualTestContext) -> f32 {
+        let field = cx
+            .debug_bounds("search.field")
+            .expect("search field renders");
+        f32::from(field.size.width)
+    }
+
+    fn input_is_focused(search: &Entity<SearchField>, cx: &mut VisualTestContext) -> bool {
+        let input = search.read_with(cx, |search, _| search.input.clone());
+        cx.update(|window, cx| input.read(cx).focus_handle(cx).is_focused(window))
+    }
+
+    #[gpui::test]
+    fn compact_search_field_expands_on_focus_and_collapses_on_blur(cx: &mut TestAppContext) {
+        let (_fleet, main, cx) = states::build(State::MainIdle, 520.0, 760.0, cx);
+        let search = main
+            .expect("main window entity should be created")
+            .read_with(cx, |main, _| main.search_field());
+        assert!((field_width(cx) - COLLAPSED_WIDTH).abs() <= 0.5);
+
+        cx.update(|window, cx| search.update(cx, |search, cx| search.focus(window, cx)));
+        cx.run_until_parked();
+        assert!((field_width(cx) - COMPACT_FOCUSED_WIDTH).abs() <= 0.5);
+
+        cx.update(|window, _| window.blur());
+        cx.run_until_parked();
+        assert!((field_width(cx) - COLLAPSED_WIDTH).abs() <= 0.5);
+    }
+
+    #[gpui::test]
+    fn clicking_the_compact_icon_focuses_the_input(cx: &mut TestAppContext) {
+        let (_fleet, main, cx) = states::build(State::MainIdle, 520.0, 760.0, cx);
+        let search = main
+            .expect("main window entity should be created")
+            .read_with(cx, |main, _| main.search_field());
+        assert!(!input_is_focused(&search, cx));
+
+        let icon = cx
+            .debug_bounds("search.icon")
+            .expect("compact icon renders");
+        cx.simulate_click(icon.center(), Default::default());
+        cx.run_until_parked();
+
+        assert!(input_is_focused(&search, cx));
+        assert!((field_width(cx) - COMPACT_FOCUSED_WIDTH).abs() <= 0.5);
+    }
+
+    #[gpui::test]
+    fn search_field_stays_full_width_when_focused_at_1280pt(cx: &mut TestAppContext) {
+        let (_fleet, main, cx) = states::build(State::MainIdle, 1280.0, 760.0, cx);
+        let search = main
+            .expect("main window entity should be created")
+            .read_with(cx, |main, _| main.search_field());
+        assert!((field_width(cx) - SEARCH_WIDTH).abs() <= 0.5);
+
+        cx.update(|window, cx| search.update(cx, |search, cx| search.focus(window, cx)));
+        cx.run_until_parked();
+        assert!(input_is_focused(&search, cx));
+        assert!((field_width(cx) - SEARCH_WIDTH).abs() <= 0.5);
     }
 }
