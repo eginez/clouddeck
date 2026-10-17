@@ -72,7 +72,10 @@ pub(crate) fn scripts() -> Vec<Script> {
                     Step::Click("sidebar.state.stopped"),
                     vec![Expect::Query("state:stopped")],
                 ),
-                (Step::Click("sidebar.state.stopped"), vec![Expect::Query("")]),
+                (
+                    Step::Click("sidebar.state.stopped"),
+                    vec![Expect::Query("")],
+                ),
             ],
             why: "clicking a sidebar facet sets the query and clicking it again clears the query",
             known_bug: None,

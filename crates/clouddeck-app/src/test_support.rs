@@ -58,8 +58,7 @@ impl ComputeService for GatedComputeService {
                 // wrapping a new `io::Error` with the original's display
                 // text (the view model only uses the error's `Display`
                 // output via `CloudDeckError::from_service_error`).
-                Err(Box::new(std::io::Error::other(err.to_string()))
-                    as clouddeck_core::BoxError)
+                Err(Box::new(std::io::Error::other(err.to_string())) as clouddeck_core::BoxError)
             } else {
                 Ok(ComputeInstanceLoadResult {
                     instances,

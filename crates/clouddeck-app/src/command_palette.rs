@@ -150,15 +150,7 @@ impl Render for CommandPalette {
                 .flex_col()
                 .py(px(4.0))
                 .children(commands.iter().enumerate().map(|(ix, &id)| {
-                    command_row(
-                        ix,
-                        id,
-                        ix == highlighted,
-                        &context,
-                        platform,
-                        &palette,
-                        cx,
-                    )
+                    command_row(ix, id, ix == highlighted, &context, platform, &palette, cx)
                 }))
                 .into_any_element()
         };
