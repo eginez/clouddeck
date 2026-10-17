@@ -206,9 +206,4 @@ mod tests {
         .unwrap_err();
         assert!(err.contains("table.col"), "{err}");
     }
-
-    #[test]
-    fn all_rules_is_empty_until_area_beads_land() {
-        assert!(all_rules().is_empty());
-    }
 }
