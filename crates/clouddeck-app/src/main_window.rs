@@ -145,6 +145,18 @@ impl MainWindow {
         self.search.clone()
     }
 
+    /// The overlay drawn by the last render, if any.
+    #[cfg(test)]
+    pub(crate) fn rendered_overlay(&self) -> Option<&'static str> {
+        self.rendered_overlay
+    }
+
+    /// Whether the sidebar and inspector were drawn by the last render.
+    #[cfg(test)]
+    pub(crate) fn rendered_panes(&self) -> (bool, bool) {
+        (self.rendered.sidebar, self.rendered.inspector)
+    }
+
     pub fn new(
         fleet: Entity<FleetState>,
         available_regions: Vec<String>,
