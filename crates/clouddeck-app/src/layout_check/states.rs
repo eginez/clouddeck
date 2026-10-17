@@ -124,14 +124,12 @@ fn wait_until(cx: &mut TestAppContext, mut condition: impl FnMut(&mut TestAppCon
     panic!("condition was not satisfied within the timeout");
 }
 
-/// Focuses the search field with cmd-f, then types `text` if given.
-fn focus_search(cx: &mut VisualTestContext, text: Option<&str>) {
+/// Focuses the search field with cmd-f, then types `text`.
+fn focus_search(cx: &mut VisualTestContext, text: &str) {
     cx.simulate_keystrokes("cmd-f");
     cx.run_until_parked();
-    if let Some(text) = text {
-        cx.simulate_input(text);
-        cx.run_until_parked();
-    }
+    cx.simulate_input(text);
+    cx.run_until_parked();
 }
 
 /// Builds `state` in a fresh main window of the given size, with its fleet loaded.
@@ -178,6 +176,10 @@ pub(crate) fn build<'a>(
             gpui_component::init(cx);
             let scope = RegionScope::all(&regions);
             let main = cx.new(|cx| MainWindow::new(fleet_for_window, regions, scope, window, cx));
+            if state == State::SearchFocusedEmpty {
+                let search = main.read(cx).search_field();
+                search.update(cx, |search, cx| search.focus(window, cx));
+            }
             *slot_for_window.borrow_mut() = Some(main.clone());
             cx.new(|cx| gpui_component::Root::new(main, window, cx))
         })
@@ -223,9 +225,8 @@ pub(crate) fn build<'a>(
     }
 
     match state {
-        State::SearchFocusedEmpty => focus_search(cx, None),
-        State::SearchTypingSt => focus_search(cx, Some("st")),
-        State::SearchError => focus_search(cx, Some("colour:x")),
+        State::SearchTypingSt => focus_search(cx, "st"),
+        State::SearchError => focus_search(cx, "colour:x"),
         _ => {}
     }
 

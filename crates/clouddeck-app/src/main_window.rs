@@ -139,6 +139,12 @@ fn apply_appearance(theme: Theme, window: &mut Window, cx: &mut App) {
 }
 
 impl MainWindow {
+    /// The toolbar search field, for layout states that focus it before the first frame.
+    #[cfg(test)]
+    pub(crate) fn search_field(&self) -> Entity<SearchField> {
+        self.search.clone()
+    }
+
     pub fn new(
         fleet: Entity<FleetState>,
         available_regions: Vec<String>,
