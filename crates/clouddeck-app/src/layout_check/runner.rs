@@ -87,9 +87,8 @@ fn layout_rules_hold(cx: &mut TestAppContext) {
     assert!(problems.is_empty(), "\n{}", problems.join("\n"));
 }
 
-/// Enabled by the last area rule bead; clouddeck-rs-mac-ui.69.13 removes the ignore.
+/// Every named state has at least one layout rule.
 #[gpui::test]
-#[ignore = "enabled by the last area rule bead"]
 fn layout_rules_cover_states(_cx: &mut TestAppContext) {
     const ALL: [State; 15] = [
         State::MainIdle,
