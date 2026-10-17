@@ -30,6 +30,24 @@ pub fn set_field_value(
         .to_string()
 }
 
+/// Removes one value from the query's `field:` term, keeping its other comma-separated values.
+pub fn remove_field_value(
+    query: &str,
+    field: QueryField,
+    value: &str,
+    known_tag_keys: &[String],
+) -> String {
+    let terms = parse(query, known_tag_keys);
+    let value = value.trim();
+    let remaining: Vec<String> = last_facet_value(&terms, field)
+        .unwrap_or_default()
+        .split(',')
+        .filter(|piece| !piece.eq_ignore_ascii_case(value))
+        .map(str::to_string)
+        .collect();
+    set_field_value(query, field, &remaining.join(","), known_tag_keys)
+}
+
 /// The State and Type facet values selected by a query.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct FacetSelection {
@@ -138,6 +156,38 @@ mod tests {
             set_field_value("state:running,stopped web", QueryField::State, "", &k),
             "web"
         );
+    }
+
+    #[test]
+    fn remove_field_value_peels_one_value_off_the_term() {
+        let k = known();
+        assert_eq!(
+            remove_field_value("type:a,b", QueryField::Type, "a", &k),
+            "type:b"
+        );
+        assert_eq!(
+            remove_field_value("web type:a,b,c", QueryField::Type, "b", &k),
+            "web type:a,c"
+        );
+        assert_eq!(remove_field_value("type:a", QueryField::Type, "a", &k), "");
+        assert_eq!(
+            remove_field_value("web type:A,b", QueryField::Type, "a", &k),
+            "web type:b"
+        );
+        assert_eq!(
+            remove_field_value(
+                "state:running,stopped web",
+                QueryField::State,
+                "stopped",
+                &k
+            ),
+            "web state:running"
+        );
+        assert_eq!(
+            remove_field_value("-type:a type:a,b", QueryField::Type, "a", &k),
+            "-type:a type:b"
+        );
+        assert_eq!(remove_field_value("web", QueryField::Type, "a", &k), "web");
     }
 
     #[test]

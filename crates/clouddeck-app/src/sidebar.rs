@@ -4,7 +4,8 @@ use std::time::SystemTime;
 
 use clouddeck_core::{
     EC2Instance, QueryField, RECENT_INSTANCES_SHOWN, facet_selection, known_tag_keys,
-    resolve_recent_instances, set_field_value, state_facet_counts, top_types, type_facet_counts,
+    remove_field_value, resolve_recent_instances, set_field_value, state_facet_counts, top_types,
+    type_facet_counts,
 };
 use gpui::{
     App, ClickEvent, Context, Entity, FontWeight, Hsla, IntoElement, Render, SharedString, Window,
@@ -49,8 +50,11 @@ impl Sidebar {
     ) {
         self.state.update(cx, |state, cx| {
             let known = known_tag_keys(state.view_model.instances());
-            let next = if active { "" } else { value };
-            let query = set_field_value(state.query(), field, next, &known);
+            let query = if active {
+                remove_field_value(state.query(), field, value, &known)
+            } else {
+                set_field_value(state.query(), field, value, &known)
+            };
             state.set_query(&query, cx);
         });
     }
@@ -547,6 +551,31 @@ mod tests {
 
         click(cx, "sidebar.type.t3.micro");
         assert_eq!(query(&state, cx), "");
+    }
+
+    #[gpui::test]
+    fn clicking_an_active_multi_value_type_removes_only_that_value(cx: &mut TestAppContext) {
+        let (state, _sidebar, cx) = rooted_sidebar(cx, |state| {
+            state.view_model.set_search_text("type:t3.micro,t3.small");
+        });
+
+        click(cx, "sidebar.type.t3.micro");
+        assert_eq!(query(&state, cx), "type:t3.small");
+
+        click(cx, "sidebar.type.t3.small");
+        assert_eq!(query(&state, cx), "");
+    }
+
+    #[gpui::test]
+    fn clicking_an_inactive_type_replaces_a_multi_value_term(cx: &mut TestAppContext) {
+        let (state, _sidebar, cx) = rooted_sidebar(cx, |state| {
+            state
+                .view_model
+                .set_search_text("web type:t3.micro,t3.small");
+        });
+
+        click(cx, "sidebar.type.m6i.large");
+        assert_eq!(query(&state, cx), "web type:m6i.large");
     }
 
     #[gpui::test]
