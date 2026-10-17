@@ -94,7 +94,7 @@ pub(crate) fn rules() -> Vec<Rule> {
             window: (1280.0, 760.0),
             check: Check::RightAligned("search.recent", "search.field"),
             why: "REPORTED by Esteban 2026-10-11: the Recent popover runs off the window's right edge and clips this hint (mockup: right-aligned, right:0)",
-            known_bug: Some("search.recent (954,39.5 280x172.5) is left-aligned to search.field (954,7.5 220x28), not right-aligned (right:0)"),
+            known_bug: None,
         },
         // REPORTED by Esteban 2026-10-11: the Recent popover runs off the window's right edge and clips this hint.
         Rule {
@@ -184,7 +184,7 @@ pub(crate) fn rules() -> Vec<Rule> {
             window: (1280.0, 760.0),
             check: Check::RightAligned("search.suggestions", "search.field"),
             why: "mockup: right-aligned, right:0 (same family as the reported bug)",
-            known_bug: Some("search.suggestions (954,39.5 280x59.5) is left-aligned to search.field (954,7.5 220x28), not right-aligned (right:0)"),
+            known_bug: None,
         },
         // Suggestions are fully visible in the window.
         Rule {

@@ -30,7 +30,8 @@ const ERROR_OFFSET: f32 = 4.0;
 const CARET_HEIGHT: f32 = 14.0;
 // Mirrors gpui-component's Input, which keeps the caret this far inside the text box.
 const RIGHT_MARGIN: f32 = 10.0;
-const SUGGESTIONS_WIDTH: f32 = 280.0;
+const SUGGESTIONS_WIDTH: f32 = 300.0;
+const RECENT_WIDTH: f32 = 260.0;
 const ERROR_ROW_HEIGHT: f32 = 26.0;
 const RECENT_ICON_SIZE: f32 = 13.0;
 const PLACEHOLDER: &str = "Search or filter";
@@ -229,7 +230,7 @@ fn suggestion_panel(
         .debug_selector(|| "search.suggestions".into())
         .absolute()
         .top(px(top))
-        .left_0()
+        .right_0()
         .w(px(SUGGESTIONS_WIDTH))
         .flex()
         .flex_col()
@@ -295,8 +296,8 @@ fn recent_panel(
         .debug_selector(|| "search.recent".into())
         .absolute()
         .top(px(top))
-        .left_0()
-        .w(px(SUGGESTIONS_WIDTH))
+        .right_0()
+        .w(px(RECENT_WIDTH))
         .flex()
         .flex_col()
         .py(px(4.0))
