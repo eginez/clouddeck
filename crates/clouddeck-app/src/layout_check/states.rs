@@ -38,11 +38,11 @@ pub(crate) enum State {
     SearchTypingSt,
     /// Search field focused with an unknown field term typed, showing the error hint.
     SearchError,
-    /// Profile picker opened with cmd-p over the idle main window.
+    /// Profile picker opened with secondary-p over the idle main window.
     OverlayProfile,
-    /// Region picker opened with cmd-shift-r over the idle main window.
+    /// Region picker opened with secondary-shift-r over the idle main window.
     OverlayRegion,
-    /// Command palette opened with cmd-shift-p over the idle main window.
+    /// Command palette opened with secondary-shift-p over the idle main window.
     OverlayPalette,
     /// Failure popover opened by clicking the partial-failure bar.
     OverlayFailure,
@@ -310,9 +310,9 @@ pub(crate) fn build<'a>(
     match state {
         State::SearchTypingSt => focus_search(cx, "st"),
         State::SearchError => focus_search(cx, "colour:x"),
-        State::OverlayProfile => press(cx, "cmd-p"),
-        State::OverlayRegion => press(cx, "cmd-shift-r"),
-        State::OverlayPalette => press(cx, "cmd-shift-p"),
+        State::OverlayProfile => press(cx, "secondary-p"),
+        State::OverlayRegion => press(cx, "secondary-shift-r"),
+        State::OverlayPalette => press(cx, "secondary-shift-p"),
         State::OverlayFailure => click_center(cx, "bar.failure"),
         State::OverlayRowMenu => {
             let key = fleet.read_with(cx, |fleet, _| {
