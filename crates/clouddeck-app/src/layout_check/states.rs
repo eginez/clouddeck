@@ -6,13 +6,17 @@ use std::time::Duration;
 
 use clouddeck_core::{
     ComputeService, DirectoryScenarioCatalog, EC2Instance, EC2InstanceTag, MockComputeService,
-    RegionScope, ScenarioService, TestScenarioKind,
+    ProfileInput, RegionScope, ScenarioService, TestScenarioKind,
 };
-use gpui::{AppContext, Bounds, Entity, TestAppContext, VisualTestContext, point, px, size};
+use gpui::{
+    AppContext, Bounds, Entity, Modifiers, MouseButton, TestAppContext, VisualTestContext, point,
+    px, size,
+};
 
 use crate::fleet_state::FleetState;
 use crate::main_window::{MainWindow, window_options};
 use crate::view_models::InstanceListViewModel;
+use crate::welcome_window::WelcomeWindow;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum State {
@@ -34,6 +38,18 @@ pub(crate) enum State {
     SearchTypingSt,
     /// Search field focused with an unknown field term typed, showing the error hint.
     SearchError,
+    /// Profile picker opened with cmd-p over the idle main window.
+    OverlayProfile,
+    /// Region picker opened with cmd-shift-r over the idle main window.
+    OverlayRegion,
+    /// Command palette opened with cmd-shift-p over the idle main window.
+    OverlayPalette,
+    /// Failure popover opened by clicking the partial-failure bar.
+    OverlayFailure,
+    /// Row context menu opened by right-clicking the first row.
+    OverlayRowMenu,
+    /// First-run welcome window listing three profiles.
+    Welcome,
 }
 
 /// The fixture scenario catalog shipped with clouddeck-core.
@@ -85,7 +101,11 @@ fn service_for(state: State) -> (Box<dyn ComputeService + Send + Sync>, Vec<Stri
         | State::MainRowSelected
         | State::SearchFocusedEmpty
         | State::SearchTypingSt
-        | State::SearchError => (
+        | State::SearchError
+        | State::OverlayProfile
+        | State::OverlayRegion
+        | State::OverlayPalette
+        | State::OverlayRowMenu => (
             Box::new(resolve(TestScenarioKind::SmallHappyPath).into_service()),
             us_east,
         ),
@@ -97,7 +117,7 @@ fn service_for(state: State) -> (Box<dyn ComputeService + Send + Sync>, Vec<Stri
             )),
             us_east,
         ),
-        State::MainPartial => (
+        State::MainPartial | State::OverlayFailure => (
             Box::new(resolve(TestScenarioKind::MultiRegionPartialFailure).into_service()),
             vec![
                 "us-east-1".to_string(),
@@ -109,7 +129,66 @@ fn service_for(state: State) -> (Box<dyn ComputeService + Send + Sync>, Vec<Stri
             Box::new(MockComputeService::new(large_fleet(), None)),
             us_east,
         ),
+        State::Welcome => unreachable!("the welcome window has no fleet service"),
     }
+}
+
+/// The three profiles the welcome state lists.
+fn welcome_profiles() -> Vec<ProfileInput> {
+    [
+        ("prod-readonly", "111122223333", "us-east-1"),
+        ("staging-admin", "111122224444", "us-west-2"),
+        ("sandbox", "777788889999", "eu-west-1"),
+    ]
+    .map(|(name, account_id, region)| ProfileInput {
+        name: name.to_string(),
+        account_id: Some(account_id.to_string()),
+        region: Some(region.to_string()),
+    })
+    .to_vec()
+}
+
+/// Opens the welcome window at the given size and returns its context.
+fn open_welcome(width: f32, height: f32, cx: &mut TestAppContext) -> &mut VisualTestContext {
+    let bounds = Bounds::new(point(px(0.0), px(0.0)), size(px(width), px(height)));
+    let window = cx.update(|cx| {
+        cx.open_window(window_options(bounds), |window, cx| {
+            gpui_component::init(cx);
+            let welcome = cx.new(|cx| WelcomeWindow::new(welcome_profiles(), window, cx));
+            cx.new(|cx| gpui_component::Root::new(welcome, window, cx))
+        })
+        .unwrap()
+    });
+    let cx = VisualTestContext::from_window(window.into(), cx).into_mut();
+    cx.run_until_parked();
+    cx
+}
+
+/// Sends `keystrokes` to the window and runs until parked.
+fn press(cx: &mut VisualTestContext, keystrokes: &str) {
+    cx.simulate_keystrokes(keystrokes);
+    cx.run_until_parked();
+}
+
+/// Clicks the centre of the element with `selector`.
+fn click_center(cx: &mut VisualTestContext, selector: &'static str) {
+    let center = cx
+        .debug_bounds(selector)
+        .unwrap_or_else(|| panic!("{selector} should be rendered"))
+        .center();
+    cx.simulate_click(center, Modifiers::none());
+    cx.run_until_parked();
+}
+
+/// Right-clicks the centre of the element with `selector`.
+fn right_click_center(cx: &mut VisualTestContext, selector: &'static str) {
+    let center = cx
+        .debug_bounds(selector)
+        .unwrap_or_else(|| panic!("{selector} should be rendered"))
+        .center();
+    cx.simulate_mouse_down(center, MouseButton::Right, Modifiers::none());
+    cx.simulate_mouse_up(center, MouseButton::Right, Modifiers::none());
+    cx.run_until_parked();
 }
 
 /// Pumps the test dispatcher until `condition` holds, panicking after about a second.
@@ -132,17 +211,21 @@ fn focus_search(cx: &mut VisualTestContext, text: &str) {
     cx.run_until_parked();
 }
 
-/// Builds `state` in a fresh main window of the given size, with its fleet loaded.
+/// Builds `state` in a fresh window; the welcome state returns no fleet or main window.
 pub(crate) fn build<'a>(
     state: State,
     width: f32,
     height: f32,
     cx: &'a mut TestAppContext,
 ) -> (
-    Entity<FleetState>,
-    Entity<MainWindow>,
+    Option<Entity<FleetState>>,
+    Option<Entity<MainWindow>>,
     &'a mut VisualTestContext,
 ) {
+    if state == State::Welcome {
+        return (None, None, open_welcome(width, height, cx));
+    }
+
     let (service, regions) = service_for(state);
     let vm = InstanceListViewModel::new(service);
     let fleet = cx.new(|_| FleetState::new(vm, "default".to_string(), true));
@@ -227,10 +310,26 @@ pub(crate) fn build<'a>(
     match state {
         State::SearchTypingSt => focus_search(cx, "st"),
         State::SearchError => focus_search(cx, "colour:x"),
+        State::OverlayProfile => press(cx, "cmd-p"),
+        State::OverlayRegion => press(cx, "cmd-shift-r"),
+        State::OverlayPalette => press(cx, "cmd-shift-p"),
+        State::OverlayFailure => click_center(cx, "bar.failure"),
+        State::OverlayRowMenu => {
+            let key = fleet.read_with(cx, |fleet, _| {
+                fleet
+                    .visible_rows()
+                    .first()
+                    .expect("fleet has a visible row")
+                    .id()
+            });
+            // debug_bounds only takes 'static selectors; the leak lasts for one test.
+            let selector: &'static str = Box::leak(format!("table.row.{key}").into_boxed_str());
+            right_click_center(cx, selector);
+        }
         _ => {}
     }
 
-    (fleet, main, cx)
+    (Some(fleet), Some(main), cx)
 }
 
 #[cfg(test)]
@@ -289,6 +388,7 @@ mod tests {
     #[gpui::test]
     fn large_fleet_lists_every_instance(cx: &mut TestAppContext) {
         let (fleet, _main, cx) = build(State::MainLarge, 1280.0, 760.0, cx);
+        let fleet = fleet.expect("fleet state has a fleet");
 
         assert_eq!(
             fleet.read_with(cx, |fleet, _| fleet.visible_rows().len()),
@@ -314,6 +414,7 @@ mod tests {
     #[gpui::test]
     fn typing_st_shows_suggestions_for_the_query(cx: &mut TestAppContext) {
         let (fleet, _main, cx) = build(State::SearchTypingSt, 1280.0, 760.0, cx);
+        let fleet = fleet.expect("fleet state has a fleet");
 
         assert!(cx.debug_bounds("search.suggestions").is_some());
         assert_eq!(fleet.read_with(cx, |fleet, _| fleet.query().to_string()), "st");
@@ -324,5 +425,49 @@ mod tests {
         let (_fleet, _main, cx) = build(State::SearchError, 1280.0, 760.0, cx);
 
         assert!(cx.debug_bounds("search.error").is_some());
+    }
+
+    #[gpui::test]
+    fn profile_overlay_shows_its_panel(cx: &mut TestAppContext) {
+        let (_fleet, _main, cx) = build(State::OverlayProfile, 1280.0, 760.0, cx);
+
+        assert!(cx.debug_bounds("main.overlay.profile").is_some());
+    }
+
+    #[gpui::test]
+    fn region_overlay_shows_its_panel(cx: &mut TestAppContext) {
+        let (_fleet, _main, cx) = build(State::OverlayRegion, 1280.0, 760.0, cx);
+
+        assert!(cx.debug_bounds("main.overlay.region").is_some());
+    }
+
+    #[gpui::test]
+    fn palette_overlay_shows_its_panel(cx: &mut TestAppContext) {
+        let (_fleet, _main, cx) = build(State::OverlayPalette, 1280.0, 760.0, cx);
+
+        assert!(cx.debug_bounds("main.overlay.palette").is_some());
+    }
+
+    #[gpui::test]
+    fn failure_overlay_shows_its_panel(cx: &mut TestAppContext) {
+        let (_fleet, _main, cx) = build(State::OverlayFailure, 1280.0, 760.0, cx);
+
+        assert!(cx.debug_bounds("main.overlay.failure").is_some());
+    }
+
+    #[gpui::test]
+    fn row_menu_overlay_shows_its_panel(cx: &mut TestAppContext) {
+        let (_fleet, _main, cx) = build(State::OverlayRowMenu, 1280.0, 760.0, cx);
+
+        assert!(cx.debug_bounds("main.overlay.rowmenu").is_some());
+    }
+
+    #[gpui::test]
+    fn welcome_lists_the_profiles_with_search(cx: &mut TestAppContext) {
+        let (fleet, main, cx) = build(State::Welcome, 1280.0, 760.0, cx);
+
+        assert!(fleet.is_none() && main.is_none());
+        assert!(cx.debug_bounds("welcome.search").is_some());
+        assert!(cx.debug_bounds("welcome.profile.2").is_some());
     }
 }
