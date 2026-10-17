@@ -80,19 +80,15 @@ impl Render for Sidebar {
         let states = state_facet_counts(instances, &query, &known, now);
         let type_counts = type_facet_counts(instances, &query, &known, now);
         let type_total = type_counts.len();
-        let types = if self.show_all_types {
-            type_counts
-        } else {
-            top_types(&type_counts, TYPE_FACETS_SHOWN)
-        };
+        let state_value = selection.state.as_deref();
+        let type_value = selection.instance_type.as_deref();
+        let types = visible_types(&type_counts, self.show_all_types, type_value);
         let pins = state.pinned_searches.clone();
         let recent: Vec<EC2Instance> = resolve_recent_instances(&state.recent_instances, instances)
             .into_iter()
             .take(RECENT_INSTANCES_SHOWN)
             .cloned()
             .collect();
-        let state_value = selection.state.as_deref();
-        let type_value = selection.instance_type.as_deref();
 
         let state_rows = [
             ("all", "All", "", None, states.all, state_value.is_none()),
@@ -186,6 +182,27 @@ impl Render for Sidebar {
 
 fn is_value(selected: Option<&str>, value: &str) -> bool {
     selected.is_some_and(|s| s.eq_ignore_ascii_case(value))
+}
+
+fn visible_types(
+    counts: &[(String, usize)],
+    show_all: bool,
+    active: Option<&str>,
+) -> Vec<(String, usize)> {
+    if show_all {
+        return counts.to_vec();
+    }
+    let mut shown = top_types(counts, TYPE_FACETS_SHOWN);
+    let Some(active) = active else {
+        return shown;
+    };
+    if shown.iter().any(|(name, _)| is_value(Some(active), name)) {
+        return shown;
+    }
+    if let Some(entry) = counts.iter().find(|(name, _)| is_value(Some(active), name)) {
+        shown.push(entry.clone());
+    }
+    shown
 }
 
 fn facet_click(
@@ -526,6 +543,21 @@ mod tests {
         });
 
         click(cx, "sidebar.type.t3.micro");
+        assert_eq!(query(&state, cx), "");
+    }
+
+    #[gpui::test]
+    fn active_type_outside_the_top_five_stays_visible_and_clears(cx: &mut TestAppContext) {
+        let (state, sidebar, cx) = rooted_sidebar(cx, |state| {
+            state.view_model.set_search_text("type:T3.Small");
+        });
+
+        assert!(!sidebar.read_with(cx, |sidebar, _| sidebar.show_all_types));
+        assert!(rendered(cx, "sidebar.type.t3.small"));
+        assert!(rendered(cx, "sidebar.types-toggle"));
+        assert_eq!(rendered_type_rows(cx), 6);
+
+        click(cx, "sidebar.type.t3.small");
         assert_eq!(query(&state, cx), "");
     }
 
