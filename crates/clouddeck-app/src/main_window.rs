@@ -44,6 +44,7 @@ const MIN_WINDOW_HEIGHT: f32 = 400.0;
 const OVERLAY_ABOVE_STATUS_BAR: f32 = STATUS_BAR_HEIGHT + 4.0;
 const REGION_OVERLAY_LEFT: f32 = 150.0;
 const PALETTE_TOP: f32 = 80.0;
+const PALETTE_WIDTH: f32 = 560.0;
 const OVERLAY_EDGE_INSET: f32 = 8.0;
 const AUTO_REFRESH_TICK: Duration = Duration::from_secs(30);
 
@@ -708,9 +709,14 @@ impl MainWindow {
                     .top(px(PALETTE_TOP))
                     .left_0()
                     .right_0()
+                    .px(px(20.0))
                     .flex()
                     .justify_center()
-                    .child(overlay_panel("main.overlay.palette", view)),
+                    .child(
+                        overlay_panel("main.overlay.palette", view)
+                            .w_full()
+                            .max_w(px(PALETTE_WIDTH)),
+                    ),
             ),
             Overlay::RowMenu { position, .. } => (
                 "main.overlay.rowmenu",
