@@ -319,6 +319,7 @@ fn recent_panel(
     }
     panel.child(
         div()
+            .debug_selector(|| "search.syntax-hint".into())
             .px(px(SIDE_PADDING))
             .py(px(4.0))
             .text_color(palette.faint)
