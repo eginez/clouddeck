@@ -17,6 +17,7 @@ use gpui_component::Sizable;
 use crate::fleet_state::FleetState;
 use crate::icons::AppIcon;
 use crate::tokens::{FONT_SIZE, MONO_FONT, Palette, STATUS_FONT_SIZE};
+use crate::ui_record::{Recorded, forget_prefix, record};
 
 const SIDE_PADDING: f32 = 12.0;
 const GAP: f32 = 8.0;
@@ -77,6 +78,7 @@ impl InspectorPane {
 
 impl Render for InspectorPane {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        forget_prefix(cx, "inspector.");
         let palette = crate::tokens::palette(cx);
 
         let state = self.state.read(cx);
@@ -85,6 +87,27 @@ impl Render for InspectorPane {
         };
         let tags_show_all = state.tags_show_all;
         let sections = inspector_sections(&instance);
+        let summary = inspector_summary(&instance, SystemTime::now());
+
+        let title = inspector_title(&instance);
+        record(
+            cx,
+            "inspector.title",
+            Recorded {
+                text: Some(title.clone().unwrap_or_else(|| "unnamed".to_string())),
+                fg: Some(if title.is_some() { "text" } else { "faint" }),
+                ..Default::default()
+            },
+        );
+        record(
+            cx,
+            "inspector.summary",
+            Recorded {
+                text: Some(summary.clone()),
+                fg: Some("dim"),
+                ..Default::default()
+            },
+        );
 
         div()
             .flex()
@@ -93,7 +116,7 @@ impl Render for InspectorPane {
             .bg(palette.panel)
             .text_size(px(FONT_SIZE))
             .text_color(palette.text)
-            .child(header(&instance, &palette, cx))
+            .child(header(&instance, summary, &palette, cx))
             .child(
                 div()
                     .id("inspector-body")
@@ -123,6 +146,7 @@ impl Render for InspectorPane {
 
 fn header(
     instance: &EC2Instance,
+    summary: String,
     palette: &Palette,
     cx: &Context<InspectorPane>,
 ) -> impl IntoElement {
@@ -190,7 +214,7 @@ fn header(
             div()
                 .debug_selector(|| "inspector.summary".into())
                 .text_color(palette.dim)
-                .child(inspector_summary(instance, SystemTime::now())),
+                .child(summary),
         )
 }
 

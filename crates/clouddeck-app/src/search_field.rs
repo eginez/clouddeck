@@ -18,6 +18,7 @@ use gpui_component::{Sizable, Size};
 use crate::fleet_state::FleetState;
 use crate::icons::AppIcon;
 use crate::tokens::{FONT_SIZE, Palette, STATUS_FONT_SIZE};
+use crate::ui_record::{Recorded, forget_prefix, record};
 
 const SEARCH_WIDTH: f32 = 220.0;
 const SEARCH_HEIGHT: f32 = 28.0;
@@ -168,16 +169,20 @@ fn error_row(message: &str, palette: &Palette) -> impl IntoElement {
         .child(message.to_string())
 }
 
+fn suggestion_label(kind: SuggestionKind, palette: &Palette) -> (&'static str, Hsla) {
+    match kind {
+        SuggestionKind::Field => ("accent", palette.accent),
+        SuggestionKind::Value => ("text", palette.text),
+    }
+}
+
 fn suggestion_row(
     index: usize,
     item: &Suggestion,
     highlighted: bool,
     palette: &Palette,
 ) -> impl IntoElement {
-    let label_colour = match item.kind {
-        SuggestionKind::Field => palette.accent,
-        SuggestionKind::Value => palette.text,
-    };
+    let (_, label_colour) = suggestion_label(item.kind, palette);
     div()
         .debug_selector(move || format!("search.suggestion.{index}"))
         .flex()
@@ -326,6 +331,28 @@ fn recent_panel(
             .text_color(palette.faint)
             .child(SYNTAX_REMINDER),
     )
+}
+
+fn record_recent(cx: &mut App, recent: &[String]) {
+    for (index, query) in recent.iter().take(RECENT_SEARCHES_SHOWN).enumerate() {
+        record(
+            cx,
+            format!("search.recent.{index}"),
+            Recorded {
+                text: Some(query.clone()),
+                ..Default::default()
+            },
+        );
+    }
+    record(
+        cx,
+        "search.syntax-hint",
+        Recorded {
+            text: Some(SYNTAX_REMINDER.to_string()),
+            fg: Some("faint"),
+            ..Default::default()
+        },
+    );
 }
 
 pub fn search_key_bindings() -> Vec<KeyBinding> {
@@ -521,6 +548,7 @@ impl SearchField {
 
 impl Render for SearchField {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        forget_prefix(cx, "search.");
         let palette = crate::tokens::palette(cx);
         let input = self.input.read(cx);
         let focused = input.focus_handle(cx).is_focused(window);
@@ -534,6 +562,7 @@ impl Render for SearchField {
             .first()
             .map(|e| e.message.clone());
         let suggestions = suggestions_for(state);
+        let recent_searches = state.recent_searches.clone();
         let highlight = self
             .highlight
             .min(suggestions.items.len().saturating_sub(1));
@@ -635,6 +664,46 @@ impl Render for SearchField {
                 )
             });
 
+        if let Some(message) = &error {
+            record(
+                cx,
+                "search.error",
+                Recorded {
+                    text: Some(message.clone()),
+                    fg: Some("warntext"),
+                    ..Default::default()
+                },
+            );
+        }
+        if !focused {
+            record(
+                cx,
+                "search.hint",
+                Recorded {
+                    text: Some("⌘F".to_string()),
+                    ..Default::default()
+                },
+            );
+        }
+        if dropdown_open {
+            for (index, item) in suggestions.items.iter().enumerate() {
+                let (token, _) = suggestion_label(item.kind, &palette);
+                record(
+                    cx,
+                    format!("search.suggestion.{index}"),
+                    Recorded {
+                        text: Some(item.label.clone()),
+                        fg: Some(token),
+                        ..Default::default()
+                    },
+                );
+            }
+        }
+        let show_recent = focused && typed.is_empty();
+        if show_recent {
+            record_recent(cx, &recent_searches);
+        }
+
         let error_offset = if error.is_some() {
             ERROR_ROW_HEIGHT + ERROR_OFFSET
         } else {
@@ -648,14 +717,8 @@ impl Render for SearchField {
                 &palette,
             )
         });
-        let recent = (focused && typed.is_empty()).then(|| {
-            recent_panel(
-                &state.recent_searches,
-                SEARCH_HEIGHT + ERROR_OFFSET,
-                &palette,
-                cx,
-            )
-        });
+        let recent = show_recent
+            .then(|| recent_panel(&recent_searches, SEARCH_HEIGHT + ERROR_OFFSET, &palette, cx));
 
         div()
             .relative()
@@ -678,6 +741,8 @@ mod tests {
     use gpui::{Entity, TestAppContext, VisualTestContext};
 
     use super::*;
+    use crate::layout_check::states::{self, State};
+    use crate::ui_record::recorded;
     use crate::view_models::InstanceListViewModel;
 
     fn instance(id: &str, name: &str, state: &str) -> EC2Instance {
@@ -1063,6 +1128,18 @@ mod tests {
         assert_eq!(
             state.read_with(cx, |state, _| state.recent_searches.first().cloned()),
             Some("owner:esteban".to_string())
+        );
+    }
+
+    #[gpui::test]
+    /// The focused empty search records the syntax reminder its recent panel shows.
+    fn focused_empty_search_records_the_syntax_reminder(cx: &mut TestAppContext) {
+        let (_fleet, _main, cx) = states::build(State::SearchFocusedEmpty, 1280.0, 760.0, cx);
+
+        let reminder = cx.update(|_, app| recorded(app, "search.syntax-hint"));
+        assert_eq!(
+            reminder.and_then(|rec| rec.text),
+            Some(SYNTAX_REMINDER.to_string())
         );
     }
 }

@@ -11,6 +11,7 @@ use gpui::{
 
 use crate::icons::AppIcon;
 use crate::tokens::{FONT_SIZE, MONO_FONT, Palette, ROW_HEIGHT};
+use crate::ui_record::{Recorded, forget_prefix, record};
 
 const POPOVER_WIDTH: f32 = 380.0;
 const POPOVER_PADDING: f32 = 14.0;
@@ -100,6 +101,7 @@ fn button(
 
 impl Render for FailurePopover {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        forget_prefix(cx, "failure.");
         let palette = crate::tokens::palette(cx);
         let focus = match &self.focus {
             Some(focus) => focus.clone(),
@@ -113,8 +115,34 @@ impl Render for FailurePopover {
 
         let content: AnyElement = match self.failures.as_slice() {
             [] => return div().into_any_element(),
-            [only] => self.single_failure(only, &palette, cx).into_any_element(),
-            many => self.several_failures(many, &palette, cx).into_any_element(),
+            [only] => {
+                record(
+                    cx,
+                    "failure.title",
+                    title_record(failure_title(&only.region)),
+                );
+                record(
+                    cx,
+                    "failure.body",
+                    Recorded {
+                        text: Some(failure_body(
+                            only.stale_instances,
+                            &self.refreshed_at,
+                            self.other_regions,
+                        )),
+                        ..Default::default()
+                    },
+                );
+                self.single_failure(only, &palette, cx).into_any_element()
+            }
+            many => {
+                record(
+                    cx,
+                    "failure.title",
+                    title_record(several_failed_title(many.len())),
+                );
+                self.several_failures(many, &palette, cx).into_any_element()
+            }
         };
 
         div()
@@ -138,6 +166,14 @@ impl Render for FailurePopover {
             .shadow_lg()
             .child(content)
             .into_any_element()
+    }
+}
+
+fn title_record(text: String) -> Recorded {
+    Recorded {
+        text: Some(text),
+        fg: Some("warntext"),
+        ..Default::default()
     }
 }
 
@@ -331,6 +367,7 @@ mod tests {
     use std::rc::Rc;
 
     use super::*;
+    use crate::ui_record::recorded;
     use gpui::{Entity, TestAppContext, VisualTestContext};
     use gpui_component::Root;
 
@@ -518,5 +555,21 @@ mod tests {
         cx.simulate_keystrokes("escape");
 
         assert_eq!(*events.borrow(), vec![FailurePopoverEvent::Dismissed]);
+    }
+
+    #[gpui::test]
+    /// A single failure records its region title and the stale-instances body.
+    fn single_failure_records_its_title_and_body(cx: &mut TestAppContext) {
+        let (_popover, _events, cx) = open_popover(cx, vec![failure("eu-west-1", "boom")]);
+
+        let title = cx
+            .update(|_, app| recorded(app, "failure.title"))
+            .expect("title records");
+        assert_eq!(title.text, Some(failure_title("eu-west-1")));
+        assert_eq!(title.fg, Some("warntext"));
+        let body = cx
+            .update(|_, app| recorded(app, "failure.body"))
+            .expect("body records");
+        assert_eq!(body.text, Some(failure_body(4, "12:01", 3)));
     }
 }

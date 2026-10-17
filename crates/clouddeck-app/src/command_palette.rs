@@ -9,6 +9,7 @@ use gpui_component::input::{Enter, Escape, Input, InputEvent, InputState, MoveDo
 
 use crate::icons::AppIcon;
 use crate::tokens::{FONT_SIZE, Palette, ROW_HEIGHT, STATUS_FONT_SIZE, TOOLBAR_HEIGHT};
+use crate::ui_record::{Recorded, forget_prefix, record};
 
 const PANEL_WIDTH: f32 = 560.0;
 const PANEL_RADIUS: f32 = 10.0;
@@ -127,11 +128,28 @@ fn command_row(
 
 impl Render for CommandPalette {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        forget_prefix(cx, "palette.");
         let palette = crate::tokens::palette(cx);
         let platform = current_platform();
         let commands = self.visible(cx);
         let highlighted = self.highlighted;
         let context = self.context;
+        for (ix, id) in commands.iter().enumerate() {
+            let token = if id.is_enabled(&context) {
+                "text"
+            } else {
+                "faint"
+            };
+            record(
+                cx,
+                format!("palette.row.{ix}"),
+                Recorded {
+                    text: Some(id.title().to_string()),
+                    fg: Some(token),
+                    ..Default::default()
+                },
+            );
+        }
 
         let body = if commands.is_empty() {
             div()
@@ -240,6 +258,7 @@ mod tests {
     use std::rc::Rc;
 
     use super::*;
+    use crate::ui_record::recorded;
     use gpui::{TestAppContext, VisualTestContext};
     use gpui_component::Root;
 
@@ -386,5 +405,21 @@ mod tests {
         cx.simulate_keystrokes("escape");
 
         assert_eq!(*events.borrow(), vec![PaletteEvent::Dismissed]);
+    }
+
+    #[gpui::test]
+    /// Enabled rows record their title in the text token; disabled rows in the faint token.
+    fn rows_record_title_and_enabled_or_disabled_token(cx: &mut TestAppContext) {
+        let (_, _, cx) = open_palette(cx, "copy");
+
+        let enabled = cx
+            .update(|_, app| recorded(app, "palette.row.0"))
+            .expect("enabled row records");
+        assert_eq!(enabled.fg, Some("text"));
+        assert!(enabled.text.is_some());
+        let disabled = cx
+            .update(|_, app| recorded(app, "palette.row.2"))
+            .expect("disabled row records");
+        assert_eq!(disabled.fg, Some("faint"));
     }
 }
