@@ -4,7 +4,7 @@
 # Writes <outdir>/<State>-<W>x<H>.png (cropped to the window) and <outdir>/index.json:
 #   [{state, size, shot, reference, note}]. A state that fails is noted 'failed: <reason>'.
 # Builds nothing: expects target/debug/clouddeck or CLOUDDECK_BIN.
-# Env: CLOUDDECK_BIN, RR_DISPLAY (:97), RR_SCREEN (1600x1000x24), RR_WAIT (10).
+# Env: RR_CROP_DX (2: measured, the window sits 2px right of centre), CLOUDDECK_BIN, RR_DISPLAY (:97), RR_SCREEN (1600x1000x24), RR_WAIT (10).
 set -uo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 out=${1:-artifacts/render}
@@ -69,7 +69,7 @@ while read -r state size ref; do
     if ! DISPLAY=$disp import -window root "$full" 2>/dev/null; then
       note="failed: capture error"
     else
-      x=$(( (sw - w) / 2 )); y=$(( (sh - h) / 2 ))
+      x=$(( (sw - w) / 2 + ${RR_CROP_DX:-2} )); y=$(( (sh - h) / 2 ))
       convert "$full" -crop "${w}x${h}+${x}+${y}" +repage "$shot" 2>/dev/null || note="failed: crop error"
     fi
     rm -f "$full"
