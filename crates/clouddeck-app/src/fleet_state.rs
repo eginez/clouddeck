@@ -227,7 +227,8 @@ impl FleetState {
                 self.selected = None;
             }
         }
-        self.view_model.set_selected_instance_id(self.selected.clone());
+        self.view_model
+            .set_selected_instance_id(self.selected.clone());
     }
 }
 
@@ -292,10 +293,7 @@ mod tests {
         state
     }
 
-    fn wait_until(
-        cx: &mut TestAppContext,
-        mut condition: impl FnMut(&mut TestAppContext) -> bool,
-    ) {
+    fn wait_until(cx: &mut TestAppContext, mut condition: impl FnMut(&mut TestAppContext) -> bool) {
         for _ in 0..200 {
             cx.run_until_parked();
             if condition(cx) {
@@ -346,7 +344,12 @@ mod tests {
         });
         assert_eq!(
             visible_ids(&state, cx),
-            vec!["us-east-1:i-1", "us-east-1:i-2", "us-east-1:i-4", "us-east-1:i-3"]
+            vec![
+                "us-east-1:i-1",
+                "us-east-1:i-2",
+                "us-east-1:i-4",
+                "us-east-1:i-3"
+            ]
         );
     }
 
@@ -368,7 +371,12 @@ mod tests {
         assert_eq!(visible_ids(&state, cx), expected_ids);
         assert_eq!(
             visible_ids(&state, cx),
-            vec!["us-east-1:i-3", "us-east-1:i-4", "us-east-1:i-2", "us-east-1:i-1"]
+            vec![
+                "us-east-1:i-3",
+                "us-east-1:i-4",
+                "us-east-1:i-2",
+                "us-east-1:i-1"
+            ]
         );
     }
 
@@ -437,7 +445,9 @@ mod tests {
     fn flash_clears_after_1_8_seconds(cx: &mut TestAppContext) {
         let state = loaded_state(cx);
 
-        state.update(cx, |state, cx| state.set_flash("Copied i-1".to_string(), cx));
+        state.update(cx, |state, cx| {
+            state.set_flash("Copied i-1".to_string(), cx)
+        });
         cx.executor().advance_clock(Duration::from_millis(1_700));
         cx.run_until_parked();
         state.read_with(cx, |state, _| {
@@ -453,9 +463,13 @@ mod tests {
     fn a_newer_flash_is_not_cleared_by_an_older_timer(cx: &mut TestAppContext) {
         let state = loaded_state(cx);
 
-        state.update(cx, |state, cx| state.set_flash("Copied i-1".to_string(), cx));
+        state.update(cx, |state, cx| {
+            state.set_flash("Copied i-1".to_string(), cx)
+        });
         cx.executor().advance_clock(Duration::from_secs(1));
-        state.update(cx, |state, cx| state.set_flash("Copied i-2".to_string(), cx));
+        state.update(cx, |state, cx| {
+            state.set_flash("Copied i-2".to_string(), cx)
+        });
         cx.executor().advance_clock(Duration::from_millis(1_000));
         cx.run_until_parked();
         state.read_with(cx, |state, _| {

@@ -23,6 +23,7 @@ mod linux_titlebar;
 mod main_window;
 mod profile_picker_view;
 mod region_picker_view;
+mod render_state;
 mod row_context_menu;
 mod runtime;
 mod search_field;
@@ -56,12 +57,22 @@ fn main() {
             // Light until a MainWindow syncs the theme (main_window.rs apply_appearance).
             // The welcome window never does, so this default is what it renders with.
             gpui_component::Theme::change(gpui_component::ThemeMode::Light, None, cx);
-            let (demo, demo_scenario) = shell::launch_options();
+            let options = shell::launch_options();
             let saved = WorkspaceContext::load(&context_path());
-            if welcome_window::should_show_welcome(demo, saved.as_ref()) {
+            if options.state == Some(render_state::State::Welcome) {
+                welcome_window::open_welcome_window_sized(cx, options.size)
+                    .expect("welcome window opens");
+            } else if welcome_window::should_show_welcome(options.demo, saved.as_ref()) {
                 welcome_window::open_welcome_window(cx).expect("welcome window opens");
             } else {
-                shell::open_main_window(cx, demo, demo_scenario).expect("main window opens");
+                shell::open_main_window_with(
+                    cx,
+                    options.demo,
+                    options.scenario,
+                    options.size,
+                    options.state,
+                )
+                .expect("main window opens");
             }
             cx.on_action(|_: &Quit, cx| cx.quit());
             cx.bind_keys(shell::app_key_bindings());

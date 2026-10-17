@@ -391,10 +391,7 @@ mod tests {
 
         let expected = strings(&["us-east-1", "eu-west-1", "eu-central-1"]);
         assert_eq!(selected(&picker, cx), expected);
-        assert_eq!(
-            *events.borrow(),
-            vec![RegionPickerEvent::Changed(expected)]
-        );
+        assert_eq!(*events.borrow(), vec![RegionPickerEvent::Changed(expected)]);
     }
 
     #[gpui::test]
