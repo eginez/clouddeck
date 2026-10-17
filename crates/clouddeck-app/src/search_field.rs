@@ -5,7 +5,7 @@ use std::time::SystemTime;
 
 use clouddeck_core::{
     DEFAULT_RECENT_SEARCH_LIMIT, RECENT_SEARCHES_SHOWN, Suggestion, SuggestionKind, Suggestions,
-    TermKind, apply_suggestion, compile, known_tag_keys, push_recent, suggest,
+    TermKind, apply_suggestion, compile, known_tag_keys, layout_rules, push_recent, suggest,
 };
 use gpui::{
     AnyWindowHandle, App, ClickEvent, Context, Entity, Focusable, Font, Global, Hsla, IntoElement,
@@ -20,6 +20,8 @@ use crate::icons::AppIcon;
 use crate::tokens::{FONT_SIZE, Palette, STATUS_FONT_SIZE};
 
 const SEARCH_WIDTH: f32 = 220.0;
+const COLLAPSED_WIDTH: f32 = 30.0;
+const COLLAPSED_SIDE_PADDING: f32 = 6.0;
 const SEARCH_HEIGHT: f32 = 28.0;
 const SEARCH_RADIUS: f32 = 6.0;
 const SIDE_PADDING: f32 = 7.0;
@@ -146,7 +148,7 @@ fn error_row(message: &str, palette: &Palette) -> impl IntoElement {
         .debug_selector(|| "search.error".into())
         .absolute()
         .top(px(SEARCH_HEIGHT + ERROR_OFFSET))
-        .left_0()
+        .right_0()
         .w(px(SEARCH_WIDTH))
         .flex()
         .items_center()
@@ -541,8 +543,17 @@ impl Render for SearchField {
             focused && (!suggestions.items.is_empty() || suggestions.unknown_field.is_some());
 
         let inset = f32::from(Size::Medium.input_px());
-        let viewport =
-            SEARCH_WIDTH - 2.0 * BORDER_WIDTH - 2.0 * SIDE_PADDING - ICON_WIDTH - GAP - 2.0 * inset;
+        let viewport_size = window.viewport_size();
+        let collapsed = layout_rules(
+            f32::from(viewport_size.width),
+            f32::from(viewport_size.height),
+        )
+        .search_collapsed;
+        let (field_width, side_padding, gap) = if collapsed {
+            (COLLAPSED_WIDTH, COLLAPSED_SIDE_PADDING, 0.0)
+        } else {
+            (SEARCH_WIDTH, SIDE_PADDING, GAP)
+        };
         let font = window.text_style().font();
         let (shown, runs) = if typed.is_empty() {
             (
@@ -557,16 +568,26 @@ impl Render for SearchField {
             .text_system()
             .shape_line(shown.clone().into(), px(FONT_SIZE), &runs, None)
             .x_for_index(cursor);
-        let caret_at = f32::from(caret_x);
-        if typed.is_empty() {
-            self.scroll_x = 0.0;
-        } else if caret_at - RIGHT_MARGIN < self.scroll_x {
-            self.scroll_x = caret_at - RIGHT_MARGIN;
-        } else if caret_at + RIGHT_MARGIN > self.scroll_x + viewport {
-            self.scroll_x = caret_at + RIGHT_MARGIN - viewport;
-        }
-        self.scroll_x = self.scroll_x.max(0.0);
-        let shift = self.scroll_x;
+        let shift = if collapsed {
+            0.0
+        } else {
+            let viewport = SEARCH_WIDTH
+                - 2.0 * BORDER_WIDTH
+                - 2.0 * SIDE_PADDING
+                - ICON_WIDTH
+                - GAP
+                - 2.0 * inset;
+            let caret_at = f32::from(caret_x);
+            if typed.is_empty() {
+                self.scroll_x = 0.0;
+            } else if caret_at - RIGHT_MARGIN < self.scroll_x {
+                self.scroll_x = caret_at - RIGHT_MARGIN;
+            } else if caret_at + RIGHT_MARGIN > self.scroll_x + viewport {
+                self.scroll_x = caret_at + RIGHT_MARGIN - viewport;
+            }
+            self.scroll_x = self.scroll_x.max(0.0);
+            self.scroll_x
+        };
 
         let caret = div()
             .absolute()
@@ -598,10 +619,13 @@ impl Render for SearchField {
             .text_size(px(FONT_SIZE))
             .opacity(0.0);
         let text_box = div()
-            .flex_1()
             .min_w(px(0.0))
             .h_full()
             .relative()
+            .when(collapsed, |text_box| {
+                text_box.w(px(0.0)).flex_none().overflow_hidden()
+            })
+            .when(!collapsed, |text_box| text_box.flex_1())
             .child(overlay)
             .child(input_field);
 
@@ -614,19 +638,23 @@ impl Render for SearchField {
             .on_action(cx.listener(Self::submit_search))
             .flex()
             .items_center()
-            .gap(px(GAP))
-            .w(px(SEARCH_WIDTH))
+            .gap(px(gap))
+            .w(px(field_width))
             .h(px(SEARCH_HEIGHT))
-            .px(px(SIDE_PADDING))
+            .px(px(side_padding))
             .rounded(px(SEARCH_RADIUS))
             .bg(palette.surf)
             .border_1()
             .border_color(palette.line)
             .text_size(px(FONT_SIZE))
             .text_color(palette.faint)
-            .child(AppIcon::Search.icon().xsmall().text_color(palette.faint))
+            .child(
+                div()
+                    .debug_selector(|| "search.icon".into())
+                    .child(AppIcon::Search.icon().xsmall().text_color(palette.faint)),
+            )
             .child(text_box)
-            .when(!focused, |field| {
+            .when(!focused && !collapsed, |field| {
                 field.child(
                     div()
                         .debug_selector(|| "search.hint".into())
@@ -659,7 +687,7 @@ impl Render for SearchField {
 
         div()
             .relative()
-            .w(px(SEARCH_WIDTH))
+            .w(px(field_width))
             .child(field)
             .when_some(error, |outer, message| {
                 outer.child(error_row(&message, &palette))
@@ -678,6 +706,7 @@ mod tests {
     use gpui::{Entity, TestAppContext, VisualTestContext};
 
     use super::*;
+    use crate::layout_check::states::{self, State};
     use crate::view_models::InstanceListViewModel;
 
     fn instance(id: &str, name: &str, state: &str) -> EC2Instance {
@@ -1064,5 +1093,27 @@ mod tests {
             state.read_with(cx, |state, _| state.recent_searches.first().cloned()),
             Some("owner:esteban".to_string())
         );
+    }
+
+    #[gpui::test]
+    fn search_field_collapses_to_an_icon_below_600pt(cx: &mut TestAppContext) {
+        let (_fleet, _main, cx) = states::build(State::MainIdle, 520.0, 760.0, cx);
+
+        let field = cx
+            .debug_bounds("search.field")
+            .expect("search field renders");
+        assert!((f32::from(field.size.width) - COLLAPSED_WIDTH).abs() <= 0.5);
+        assert!(cx.debug_bounds("search.hint").is_none());
+    }
+
+    #[gpui::test]
+    fn search_field_keeps_its_width_and_hint_at_1280pt(cx: &mut TestAppContext) {
+        let (_fleet, _main, cx) = states::build(State::MainIdle, 1280.0, 760.0, cx);
+
+        let field = cx
+            .debug_bounds("search.field")
+            .expect("search field renders");
+        assert!((f32::from(field.size.width) - SEARCH_WIDTH).abs() <= 0.5);
+        assert!(cx.debug_bounds("search.hint").is_some());
     }
 }

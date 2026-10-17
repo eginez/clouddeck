@@ -64,7 +64,55 @@ pub(crate) fn rules() -> Vec<Rule> {
             window: (520.0, 760.0),
             check: Check::WidthBetween("search.field", 24.0, 40.0),
             why: "compact: search collapses to an icon",
-            known_bug: Some("search.field stays 220pt wide at 520pt window (194,7.5 220x28); mockup collapses it to a 24-40pt icon"),
+            known_bug: None,
+        },
+        // The collapsed field keeps its magnifier.
+        Rule {
+            id: "srch-520-icon-present",
+            state: State::MainIdle,
+            window: (520.0, 760.0),
+            check: Check::Present("search.icon"),
+            why: "compact: the magnifier stays visible",
+            known_bug: None,
+        },
+        // The magnifier sits inside the collapsed field.
+        Rule {
+            id: "srch-520-icon-inside",
+            state: State::MainIdle,
+            window: (520.0, 760.0),
+            check: Check::Inside {
+                inner: "search.icon",
+                outer: "search.field",
+            },
+            why: "compact: the magnifier sits inside the field",
+            known_bug: None,
+        },
+        // The collapsed field keeps the wide field's height.
+        Rule {
+            id: "srch-520-height",
+            state: State::MainIdle,
+            window: (520.0, 760.0),
+            check: Check::HeightBetween("search.field", 26.0, 30.0),
+            why: "compact: field keeps its 28pt height",
+            known_bug: None,
+        },
+        // Just below the breakpoint the field is still collapsed.
+        Rule {
+            id: "srch-599-collapsed",
+            state: State::MainIdle,
+            window: (599.0, 760.0),
+            check: Check::WidthBetween("search.field", 24.0, 40.0),
+            why: "599pt is still compact: search collapses to an icon",
+            known_bug: None,
+        },
+        // At the breakpoint the field is wide again.
+        Rule {
+            id: "srch-600-wide",
+            state: State::MainIdle,
+            window: (600.0, 760.0),
+            check: Check::WidthBetween("search.field", 200.0, 240.0),
+            why: "600pt is not compact: search is full width",
+            known_bug: None,
         },
         // The collapsed field is still visible.
         Rule {
