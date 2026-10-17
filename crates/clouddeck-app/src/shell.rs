@@ -492,6 +492,17 @@ impl AppShell {
         cx: &mut Context<Self>,
     ) -> Self {
         let loaded = Self::profiles(demo, demo_scenario);
+        Self::build_with_profiles(window, demo, demo_scenario, loaded, ui_state_path, cx)
+    }
+
+    fn build_with_profiles(
+        window: &mut Window,
+        demo: bool,
+        demo_scenario: DemoScenario,
+        loaded: Result<Vec<clouddeck_core::AwsProfile>, std::io::Error>,
+        ui_state_path: Option<PathBuf>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let message = loaded
             .as_ref()
             .err()
@@ -1440,7 +1451,14 @@ mod tests {
         let build_path = ui_state_path.clone();
         let (shell, cx) = add_rooted_shell(cx, move |window, cx| {
             if real_mode {
-                AppShell::build(window, false, DemoScenario::Happy, Some(build_path), cx)
+                AppShell::build_with_profiles(
+                    window,
+                    false,
+                    DemoScenario::Happy,
+                    Ok(Vec::new()),
+                    Some(build_path),
+                    cx,
+                )
             } else {
                 AppShell::build_with_scenario(window, true, DemoScenario::Empty, cx)
             }
