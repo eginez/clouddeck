@@ -500,6 +500,8 @@ fn copy_button(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::layout_check::states::{self, State};
+    use crate::ui_record::recorded;
     use crate::view_models::InstanceListViewModel;
     use clouddeck_core::{EC2InstanceTag, EC2SecurityGroup, MockComputeService};
     use gpui::{
@@ -798,5 +800,21 @@ mod tests {
         state.read_with(cx, |state, _| {
             assert_eq!(state.flash.as_deref(), Some("Opening in AWS Console…"));
         });
+    }
+
+    #[gpui::test]
+    /// Selecting prod-api-1 records its name as the inspector title.
+    fn selected_row_records_the_inspector_title(cx: &mut TestAppContext) {
+        let (fleet, _main, cx) = states::build(State::MainRowSelected, 1280.0, 760.0, cx);
+        let fleet = fleet.expect("main state has a fleet");
+        fleet.update(cx, |fleet, cx| {
+            fleet.select(Some("us-east-1:i-scenario-001".to_string()), cx)
+        });
+        cx.run_until_parked();
+
+        let title = cx
+            .update(|_, app| recorded(app, "inspector.title"))
+            .expect("inspector title records");
+        assert_eq!(title.text, Some("prod-api-1".to_string()));
     }
 }
