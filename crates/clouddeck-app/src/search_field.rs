@@ -10,7 +10,7 @@ use clouddeck_core::{
 use gpui::{
     AnyWindowHandle, App, ClickEvent, Context, Entity, Focusable, Font, Global, Hsla, IntoElement,
     KeyBinding, Render, SharedString, StyledText, TextRun, UnderlineStyle, WeakEntity, Window,
-    actions, div, prelude::*, px, rems,
+    actions, anchored, deferred, div, prelude::*, px, rems, Corner,
 };
 use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::{Sizable, Size};
@@ -229,12 +229,9 @@ fn suggestion_panel(
     highlight: usize,
     top: f32,
     palette: &Palette,
-) -> impl IntoElement {
+) -> gpui::Div {
     let mut panel = div()
         .debug_selector(|| "search.suggestions".into())
-        .absolute()
-        .top(px(top))
-        .right_0()
         .w(px(SUGGESTIONS_WIDTH))
         .flex()
         .flex_col()
@@ -259,7 +256,7 @@ fn suggestion_panel(
                 .child("↑↓ choose · Tab or ↵ accept · esc clear"),
         );
     }
-    panel
+    overlay_below(panel, top)
 }
 
 fn recent_row(
@@ -295,12 +292,9 @@ fn recent_panel(
     top: f32,
     palette: &Palette,
     cx: &Context<SearchField>,
-) -> impl IntoElement {
+) -> gpui::Div {
     let mut panel = div()
         .debug_selector(|| "search.recent".into())
-        .absolute()
-        .top(px(top))
-        .right_0()
         .w(px(RECENT_WIDTH))
         .flex()
         .flex_col()
@@ -322,14 +316,29 @@ fn recent_panel(
             panel = panel.child(recent_row(index, query, palette, cx));
         }
     }
-    panel.child(
-        div()
-            .debug_selector(|| "search.syntax-hint".into())
-            .px(px(SIDE_PADDING))
-            .py(px(4.0))
-            .text_color(palette.faint)
-            .child(SYNTAX_REMINDER),
+    overlay_below(
+        panel.child(
+            div()
+                .debug_selector(|| "search.syntax-hint".into())
+                .px(px(SIDE_PADDING))
+                .py(px(4.0))
+                .text_color(palette.faint)
+                .child(SYNTAX_REMINDER),
+        ),
+        top,
     )
+}
+
+/// Paint `panel` in the overlay layer (outside any ancestor clip), with its
+/// top-right corner `top` below the field's top-right corner.
+fn overlay_below(panel: gpui::Div, top: f32) -> gpui::Div {
+    div()
+        .absolute()
+        .top(px(top))
+        .right_0()
+        .w(px(0.0))
+        .h(px(0.0))
+        .child(deferred(anchored().anchor(Corner::TopRight).child(panel)))
 }
 
 pub fn search_key_bindings() -> Vec<KeyBinding> {
