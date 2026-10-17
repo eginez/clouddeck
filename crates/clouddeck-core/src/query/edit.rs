@@ -46,21 +46,21 @@ pub fn remove_field_value(
     set_field_value(query, field, &remaining.join(","), known_tag_keys)
 }
 
-/// The State and Type facet values selected by a query.
+/// The State and Type values a query actually selects.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct FacetSelection {
-    /// The selected state value as typed.
+    /// The values the query selects for state, as typed.
     pub state: Option<String>,
-    /// The selected instance type value as typed.
+    /// The values the query selects for instance type, as typed.
     pub instance_type: Option<String>,
 }
 
-/// Reads the State and Type facets back out of a query.
+/// Reads the values the State and Type facets select, intersected across repeated terms.
 pub fn facet_selection(query: &str, known_tag_keys: &[String]) -> FacetSelection {
     let terms = parse(query, known_tag_keys);
     FacetSelection {
-        state: last_facet_value(&terms, QueryField::State),
-        instance_type: last_facet_value(&terms, QueryField::Type),
+        state: effective_facet_value(&terms, QueryField::State),
+        instance_type: effective_facet_value(&terms, QueryField::Type),
     }
 }
 
@@ -84,20 +84,33 @@ fn all_positive_values(terms: &[Term], field: QueryField) -> Vec<String> {
         .collect()
 }
 
-fn last_facet_value(terms: &[Term], field: QueryField) -> Option<String> {
-    terms.iter().rev().find_map(|t| match &t.kind {
-        TermKind::Field {
-            field: f, value, ..
-        } if *f == field && !t.negated => {
-            let pieces: Vec<&str> = value
-                .split(',')
-                .map(str::trim)
-                .filter(|piece| !piece.is_empty())
-                .collect();
-            (!pieces.is_empty()).then(|| pieces.join(","))
-        }
-        _ => None,
-    })
+fn effective_facet_value(terms: &[Term], field: QueryField) -> Option<String> {
+    let per_term: Vec<Vec<&str>> = terms
+        .iter()
+        .filter(|t| is_positive_field(t, field))
+        .filter_map(|t| match &t.kind {
+            TermKind::Field { value, .. } => {
+                let pieces: Vec<&str> = value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|piece| !piece.is_empty())
+                    .collect();
+                (!pieces.is_empty()).then_some(pieces)
+            }
+            _ => None,
+        })
+        .collect();
+    let (last, others) = per_term.split_last()?;
+    let kept: Vec<&str> = last
+        .iter()
+        .copied()
+        .filter(|piece| {
+            others
+                .iter()
+                .all(|other| other.iter().any(|o| o.eq_ignore_ascii_case(piece)))
+        })
+        .collect();
+    (!kept.is_empty()).then(|| kept.join(","))
 }
 
 #[cfg(test)]
@@ -238,7 +251,32 @@ mod tests {
         );
         assert_eq!(
             facet_selection("state:running state:stopped", &k).state,
+            None
+        );
+        assert_eq!(
+            facet_selection("state:running,stopped state:stopped", &k).state,
             Some("stopped".into())
+        );
+        assert_eq!(facet_selection("type:a type:b", &k).instance_type, None);
+        assert_eq!(
+            facet_selection("type:a,b type:b", &k).instance_type,
+            Some("b".into())
+        );
+        assert_eq!(
+            facet_selection("type:b,a type:a,b", &k).instance_type,
+            Some("a,b".into())
+        );
+        assert_eq!(
+            facet_selection("type:A,b type:a", &k).instance_type,
+            Some("a".into())
+        );
+        assert_eq!(
+            facet_selection("type:a type:", &k).instance_type,
+            Some("a".into())
+        );
+        assert_eq!(
+            facet_selection("type:a -type:b", &k).instance_type,
+            Some("a".into())
         );
         assert_eq!(facet_selection("web", &k), FacetSelection::default());
         assert_eq!(
