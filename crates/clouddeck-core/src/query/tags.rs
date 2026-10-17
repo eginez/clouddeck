@@ -16,7 +16,7 @@ pub fn known_tag_keys(instances: &[EC2Instance]) -> Vec<String> {
             }
         }
     }
-    seen.sort_by(|a, b| a.to_ascii_lowercase().cmp(&b.to_ascii_lowercase()));
+    seen.sort_by_key(|key| key.to_ascii_lowercase());
     seen
 }
 

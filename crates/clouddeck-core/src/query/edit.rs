@@ -30,6 +30,22 @@ pub fn set_field_value(
         .to_string()
 }
 
+/// Removes one value from the query's `field:` term, keeping its other comma-separated values.
+pub fn remove_field_value(
+    query: &str,
+    field: QueryField,
+    value: &str,
+    known_tag_keys: &[String],
+) -> String {
+    let terms = parse(query, known_tag_keys);
+    let value = value.trim();
+    let remaining: Vec<String> = all_positive_values(&terms, field)
+        .into_iter()
+        .filter(|piece| !piece.eq_ignore_ascii_case(value))
+        .collect();
+    set_field_value(query, field, &remaining.join(","), known_tag_keys)
+}
+
 /// The State and Type facet values selected by a query.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct FacetSelection {
@@ -50,6 +66,22 @@ pub fn facet_selection(query: &str, known_tag_keys: &[String]) -> FacetSelection
 
 fn is_positive_field(term: &Term, field: QueryField) -> bool {
     !term.negated && matches!(&term.kind, TermKind::Field { field: f, .. } if *f == field)
+}
+
+fn all_positive_values(terms: &[Term], field: QueryField) -> Vec<String> {
+    terms
+        .iter()
+        .filter(|t| is_positive_field(t, field))
+        .flat_map(|t| match &t.kind {
+            TermKind::Field { value, .. } => value
+                .split(',')
+                .map(str::trim)
+                .filter(|p| !p.is_empty())
+                .map(str::to_string)
+                .collect(),
+            _ => Vec::new(),
+        })
+        .collect()
 }
 
 fn last_facet_value(terms: &[Term], field: QueryField) -> Option<String> {
@@ -137,6 +169,42 @@ mod tests {
         assert_eq!(
             set_field_value("state:running,stopped web", QueryField::State, "", &k),
             "web"
+        );
+    }
+
+    #[test]
+    fn remove_field_value_peels_one_value_off_the_term() {
+        let k = known();
+        assert_eq!(
+            remove_field_value("type:a,b", QueryField::Type, "a", &k),
+            "type:b"
+        );
+        assert_eq!(
+            remove_field_value("web type:a,b,c", QueryField::Type, "b", &k),
+            "web type:a,c"
+        );
+        assert_eq!(remove_field_value("type:a", QueryField::Type, "a", &k), "");
+        assert_eq!(
+            remove_field_value("web type:A,b", QueryField::Type, "a", &k),
+            "web type:b"
+        );
+        assert_eq!(
+            remove_field_value(
+                "state:running,stopped web",
+                QueryField::State,
+                "stopped",
+                &k
+            ),
+            "web state:running"
+        );
+        assert_eq!(
+            remove_field_value("-type:a type:a,b", QueryField::Type, "a", &k),
+            "-type:a type:b"
+        );
+        assert_eq!(remove_field_value("web", QueryField::Type, "a", &k), "web");
+        assert_eq!(
+            remove_field_value("type:a type:b", QueryField::Type, "b", &k),
+            "type:a"
         );
     }
 

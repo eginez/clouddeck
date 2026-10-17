@@ -220,7 +220,7 @@ fn map_instance(instance: &aws_sdk_ec2::types::Instance, region: &str) -> Option
             .map(|value| value.as_str().to_owned()),
         launch_time: instance
             .launch_time()
-            .and_then(|value| std::time::SystemTime::try_from(value.clone()).ok()),
+            .and_then(|value| std::time::SystemTime::try_from(*value).ok()),
         public_ip_address: instance.public_ip_address().map(str::to_owned),
         private_ip_address: instance.private_ip_address().map(str::to_owned),
         vpc_id: instance.vpc_id().map(str::to_owned),

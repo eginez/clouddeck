@@ -4,7 +4,8 @@ use std::time::SystemTime;
 
 use clouddeck_core::{
     EC2Instance, QueryField, RECENT_INSTANCES_SHOWN, facet_selection, known_tag_keys,
-    resolve_recent_instances, set_field_value, state_facet_counts, top_types, type_facet_counts,
+    remove_field_value, resolve_recent_instances, set_field_value, state_facet_counts, top_types,
+    type_facet_counts,
 };
 use gpui::{
     App, ClickEvent, Context, Entity, FontWeight, Hsla, IntoElement, Render, SharedString, Window,
@@ -49,8 +50,11 @@ impl Sidebar {
     ) {
         self.state.update(cx, |state, cx| {
             let known = known_tag_keys(state.view_model.instances());
-            let next = if active { "" } else { value };
-            let query = set_field_value(state.query(), field, next, &known);
+            let query = if active {
+                remove_field_value(state.query(), field, value, &known)
+            } else {
+                set_field_value(state.query(), field, value, &known)
+            };
             state.set_query(&query, cx);
         });
     }
@@ -144,7 +148,8 @@ impl Render for Sidebar {
 
         panel = panel.child(section_header("TYPE", &palette));
         for (name, count) in types {
-            let active = is_value(type_value, &name);
+            let active = type_value
+                .is_some_and(|value| value.split(',').any(|piece| is_value(Some(piece), &name)));
             panel = panel.child(facet_row(
                 FacetRow {
                     key: format!("sidebar.type.{name}"),
@@ -196,11 +201,13 @@ fn visible_types(
     let Some(active) = active else {
         return shown;
     };
-    if shown.iter().any(|(name, _)| is_value(Some(active), name)) {
-        return shown;
-    }
-    if let Some(entry) = counts.iter().find(|(name, _)| is_value(Some(active), name)) {
-        shown.push(entry.clone());
+    for value in active.split(',') {
+        if shown.iter().any(|(name, _)| is_value(Some(value), name)) {
+            continue;
+        }
+        if let Some(entry) = counts.iter().find(|(name, _)| is_value(Some(value), name)) {
+            shown.push(entry.clone());
+        }
     }
     shown
 }
@@ -547,6 +554,31 @@ mod tests {
     }
 
     #[gpui::test]
+    fn clicking_an_active_multi_value_type_removes_only_that_value(cx: &mut TestAppContext) {
+        let (state, _sidebar, cx) = rooted_sidebar(cx, |state| {
+            state.view_model.set_search_text("type:t3.micro,t3.small");
+        });
+
+        click(cx, "sidebar.type.t3.micro");
+        assert_eq!(query(&state, cx), "type:t3.small");
+
+        click(cx, "sidebar.type.t3.small");
+        assert_eq!(query(&state, cx), "");
+    }
+
+    #[gpui::test]
+    fn clicking_an_inactive_type_replaces_a_multi_value_term(cx: &mut TestAppContext) {
+        let (state, _sidebar, cx) = rooted_sidebar(cx, |state| {
+            state
+                .view_model
+                .set_search_text("web type:t3.micro,t3.small");
+        });
+
+        click(cx, "sidebar.type.m6i.large");
+        assert_eq!(query(&state, cx), "web type:m6i.large");
+    }
+
+    #[gpui::test]
     fn active_type_outside_the_top_five_stays_visible_and_clears(cx: &mut TestAppContext) {
         let (state, sidebar, cx) = rooted_sidebar(cx, |state| {
             state.view_model.set_search_text("type:T3.Small");
@@ -559,6 +591,18 @@ mod tests {
 
         click(cx, "sidebar.type.t3.small");
         assert_eq!(query(&state, cx), "");
+    }
+
+    #[gpui::test]
+    fn active_multi_value_type_outside_the_top_five_stays_visible(cx: &mut TestAppContext) {
+        let (_state, sidebar, cx) = rooted_sidebar(cx, |state| {
+            state.view_model.set_search_text("type:t3.micro,T3.Small");
+        });
+
+        assert!(!sidebar.read_with(cx, |sidebar, _| sidebar.show_all_types));
+        assert!(rendered(cx, "sidebar.type.t3.small"));
+        assert!(rendered(cx, "sidebar.type.t3.micro"));
+        assert_eq!(rendered_type_rows(cx), 6);
     }
 
     #[gpui::test]

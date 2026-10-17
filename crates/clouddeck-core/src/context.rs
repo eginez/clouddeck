@@ -164,8 +164,8 @@ pub fn parse_profile_auth(config: &str, credentials: &str) -> Vec<AwsProfileAuth
     names.extend(credential_sections.keys().map(|name| (name.clone(), ())));
 
     names
-        .into_iter()
-        .map(|(name, _)| {
+        .into_keys()
+        .map(|name| {
             let config_values = config_sections.get(&name).map(|s| &s.values);
             let credential_values = credential_sections.get(&name).map(|s| &s.values);
             let value = |key: &str| {
@@ -265,17 +265,18 @@ pub fn parse_profiles(config: &str, credentials: &str) -> Vec<AwsProfile> {
                 if let Some(name) = current {
                     profiles.entry(name.into()).or_default();
                 }
-            } else if let (Some(name), Some((key, value))) = (current, line.split_once('=')) {
-                if key.trim() == "region" && !value.trim().is_empty() {
-                    let value = value
-                        .split_once('#')
-                        .map_or(value, |(value, _)| value)
-                        .trim()
-                        .trim_matches('"')
-                        .trim_matches('\'');
-                    if !value.is_empty() {
-                        profiles.insert(name.into(), Some(value.into()));
-                    }
+            } else if let (Some(name), Some((key, value))) = (current, line.split_once('='))
+                && key.trim() == "region"
+                && !value.trim().is_empty()
+            {
+                let value = value
+                    .split_once('#')
+                    .map_or(value, |(value, _)| value)
+                    .trim()
+                    .trim_matches('"')
+                    .trim_matches('\'');
+                if !value.is_empty() {
+                    profiles.insert(name.into(), Some(value.into()));
                 }
             }
         }
