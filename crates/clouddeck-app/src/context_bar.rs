@@ -12,6 +12,7 @@ use gpui_component::{Sizable, tooltip::Tooltip};
 use crate::fleet_state::FleetState;
 use crate::icons::AppIcon;
 use crate::tokens::{Palette, STATUS_BAR_HEIGHT, STATUS_FONT_SIZE};
+use crate::ui_record::{Recorded, forget_prefix, record};
 
 const SIDE_PADDING: f32 = 12.0;
 const GAP: f32 = 10.0;
@@ -54,6 +55,7 @@ impl ContextBar {
 
 impl Render for ContextBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        forget_prefix(cx, "bar.");
         let palette = crate::tokens::palette(cx);
         let viewport = window.viewport_size();
         let rules = layout_rules(viewport.width.into(), viewport.height.into());
@@ -71,6 +73,14 @@ impl Render for ContextBar {
         let demo = state.demo;
         let inspector_open = state.inspector_open;
         let sidebar_open = state.sidebar_open;
+
+        record(cx, "bar.profile", text_in(profile.clone(), "text"));
+        record(cx, "bar.region", text_in(self.region_label.clone(), "text"));
+        if item.is_warning() {
+            record(cx, "bar.failure", text_in(item.text(), "warntext"));
+        } else {
+            record(cx, "bar.status", text_in(item.text(), "dim"));
+        }
 
         let mut left = div()
             .flex()
@@ -96,16 +106,20 @@ impl Render for ContextBar {
                 cx,
             ));
         if rules.show_instance_count {
-            let mut counts = div().flex().items_center().gap(px(6.0)).child(
-                div()
-                    .debug_selector(|| "bar.count".into())
-                    .child(instance_count_text(total)),
-            );
+            let count = instance_count_text(total);
+            record(cx, "bar.count", text_in(count.clone(), "dim"));
+            let mut counts = div()
+                .flex()
+                .items_center()
+                .gap(px(6.0))
+                .child(div().debug_selector(|| "bar.count".into()).child(count));
             if rules.show_shown_count {
+                let shown_text = format!("· {}", shown_count_text(shown));
+                record(cx, "bar.shown", text_in(shown_text.clone(), "dim"));
                 counts = counts.child(
                     div()
                         .debug_selector(|| "bar.shown".into())
-                        .child(format!("· {}", shown_count_text(shown))),
+                        .child(shown_text),
                 );
             }
             left = left.child(counts);
@@ -125,6 +139,11 @@ impl Render for ContextBar {
             );
         }
         if rules.show_updated_time && !self.last_success_text.is_empty() {
+            record(
+                cx,
+                "bar.updated",
+                text_in(self.last_success_text.clone(), "dim"),
+            );
             right = right.child(
                 div()
                     .debug_selector(|| "bar.updated".into())
@@ -175,6 +194,14 @@ impl Render for ContextBar {
             .text_color(palette.dim)
             .child(left)
             .child(right)
+    }
+}
+
+fn text_in(text: String, fg: &'static str) -> Recorded {
+    Recorded {
+        text: Some(text),
+        fg: Some(fg),
+        ..Default::default()
     }
 }
 
@@ -298,6 +325,9 @@ mod tests {
     };
     use gpui_component::Root;
     use std::{cell::RefCell, rc::Rc, time::Duration};
+
+    use crate::layout_check::states::{State, build};
+    use crate::ui_record::recorded;
 
     type Events = Rc<RefCell<Vec<ContextBarEvent>>>;
 
@@ -521,5 +551,30 @@ mod tests {
 
         assert_rendered(cx, &["bar.shown"]);
         assert_absent(cx, &["bar.updated"]);
+    }
+
+    #[gpui::test]
+    fn idle_main_window_records_the_status_text(cx: &mut TestAppContext) {
+        let (_fleet, _main, cx) = build(State::MainIdle, 1280.0, 760.0, cx);
+
+        let status = cx
+            .update(|_, app| recorded(app, "bar.status"))
+            .expect("status should be recorded");
+        assert_eq!(status.text.as_deref(), Some("Ready"));
+    }
+
+    #[gpui::test]
+    fn switching_from_failure_to_ready_forgets_the_failure_record(cx: &mut TestAppContext) {
+        let (bar, _, cx) = open_bar(cx, 1280.0, "", &["eu-central-1"]);
+        assert!(cx.update(|_, app| recorded(app, "bar.failure")).is_some());
+
+        bar.update(cx, |bar, cx| {
+            bar.failed_regions.clear();
+            cx.notify();
+        });
+        cx.run_until_parked();
+
+        assert_eq!(cx.update(|_, app| recorded(app, "bar.failure")), None);
+        assert!(cx.update(|_, app| recorded(app, "bar.status")).is_some());
     }
 }

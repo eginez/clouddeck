@@ -4,7 +4,7 @@ use clouddeck_core::{
     CellText, Column, EC2Instance, SortState, cell_text, is_stale_instance, visible_columns,
 };
 use gpui::{
-    ClickEvent, Context, Div, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
+    ClickEvent, Context, Div, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Hsla,
     IntoElement, KeyBinding, MouseButton, MouseDownEvent, ParentElement, Pixels, Point, Render,
     ScrollStrategy, SharedString, Stateful, Styled, UniformListScrollHandle, Window, actions, div,
     prelude::*, px, uniform_list,
@@ -14,6 +14,7 @@ use crate::{
     fleet_state::FleetState,
     icons::AppIcon,
     tokens::{FONT_SIZE, MONO_FONT, Palette, ROW_HEIGHT},
+    ui_record::{Recorded, forget_prefix, record},
 };
 
 actions!(instance_table, [SelectNext, SelectPrevious]);
@@ -84,6 +85,7 @@ impl Focusable for InstanceTable {
 
 impl Render for InstanceTable {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        forget_prefix(cx, "table.");
         let palette = crate::tokens::palette(cx);
         let columns = visible_columns(window.viewport_size().width.into());
         let entity = self.state.clone();
@@ -93,6 +95,18 @@ impl Render for InstanceTable {
         let stale = state.view_model.stale_regions().to_vec();
         let rows = state.visible_rows();
         let row_count = rows.len();
+
+        for (ix, column) in columns.iter().enumerate() {
+            record(
+                cx,
+                format!("table.header.{ix}"),
+                Recorded {
+                    text: Some(column.title().to_string()),
+                    fg: Some("dim"),
+                    ..Default::default()
+                },
+            );
+        }
 
         let header = div()
             .debug_selector(|| "table.header".into())
@@ -112,13 +126,13 @@ impl Render for InstanceTable {
 
         let row_entity = entity.clone();
         let table = cx.entity();
-        let body = uniform_list("table.rows", row_count, move |range, _window, _cx| {
+        let body = uniform_list("table.rows", row_count, move |range, _window, cx| {
             range
                 .map(|ix| {
                     let instance = &rows[ix];
                     let is_selected = selected.as_deref() == Some(instance.id().as_str());
                     let is_stale = is_stale_instance(instance, &stale);
-                    row(
+                    let (element, records) = row(
                         instance,
                         &columns,
                         is_selected,
@@ -126,7 +140,11 @@ impl Render for InstanceTable {
                         palette,
                         row_entity.clone(),
                         table.clone(),
-                    )
+                    );
+                    for (selector, rec) in records {
+                        record(cx, selector, rec);
+                    }
+                    element
                 })
                 .collect()
         })
@@ -207,7 +225,7 @@ fn row(
     palette: Palette,
     state: Entity<FleetState>,
     table: Entity<InstanceTable>,
-) -> Stateful<Div> {
+) -> (Stateful<Div>, Vec<(String, Recorded)>) {
     let key = instance.id();
     let row_key = format!("table.row.{key}");
     let menu_key = key.clone();
@@ -234,11 +252,32 @@ fn row(
     if selected {
         row = row.bg(palette.sel);
     }
-    row.children(
-        columns
-            .iter()
-            .map(|column| cell(instance, *column, &row_key, palette, stale)),
-    )
+    let (cells, records): (Vec<Div>, Vec<Option<(String, Recorded)>>) = columns
+        .iter()
+        .map(|column| cell(instance, *column, &row_key, palette, stale))
+        .unzip();
+    (row.children(cells), records.into_iter().flatten().collect())
+}
+
+/// Text colour token and value for one table cell; the State column mirrors `Palette::state_text`.
+fn cell_color(
+    palette: &Palette,
+    column: Column,
+    raw_state: &str,
+    stale: bool,
+    muted: bool,
+) -> (&'static str, Hsla) {
+    if stale || muted {
+        ("faint", palette.faint)
+    } else if column == Column::State {
+        match raw_state.to_ascii_lowercase().as_str() {
+            "running" => ("runtext", palette.runtext),
+            "pending" => ("warntext", palette.warntext),
+            _ => ("dim", palette.dim),
+        }
+    } else {
+        ("text", palette.text)
+    }
 }
 
 fn cell(
@@ -247,16 +286,27 @@ fn cell(
     row_key: &str,
     palette: Palette,
     stale: bool,
-) -> Div {
+) -> (Div, Option<(String, Recorded)>) {
     let CellText { text, muted } = cell_text(instance, column);
     let raw_state = instance.state.as_deref().unwrap_or_default();
-    let color = if stale || muted {
-        palette.faint
-    } else if column == Column::State {
-        palette.state_text(raw_state)
-    } else {
-        palette.text
-    };
+    let (fg, color) = cell_color(&palette, column, raw_state, stale, muted);
+    let record = match column {
+        Column::Name => Some((format!("{row_key}.name"), Some("ui"))),
+        Column::InstanceId => Some((format!("{row_key}.id"), Some("mono"))),
+        Column::State => Some((format!("{row_key}.state"), None)),
+        _ => None,
+    }
+    .map(|(selector, font)| {
+        (
+            selector,
+            Recorded {
+                text: Some(text.clone()),
+                fg: Some(fg),
+                font,
+                ..Default::default()
+            },
+        )
+    });
 
     let mut label = div()
         .min_w(px(0.))
@@ -285,11 +335,13 @@ fn cell(
         );
     }
     frame = frame.child(label);
-    match column {
+    let frame = match column {
         Column::Name => frame.debug_selector(|| format!("{row_key}.name")),
         Column::InstanceId => frame.debug_selector(|| format!("{row_key}.id")),
+        Column::State => frame.debug_selector(|| format!("{row_key}.state")),
         _ => frame,
-    }
+    };
+    (frame, record)
 }
 
 #[cfg(test)]
@@ -303,6 +355,9 @@ mod tests {
     };
     use gpui_component::Root;
     use std::time::Duration;
+
+    use crate::layout_check::states::{State, build};
+    use crate::ui_record::recorded;
 
     fn instance(id: &str, name: Option<&str>, state: &str) -> EC2Instance {
         EC2Instance {
@@ -599,5 +654,78 @@ mod tests {
         click(cx, selector);
 
         assert_eq!(selected_key(&state, cx), Some(second));
+    }
+
+    fn recorded_cell(cx: &mut VisualTestContext, key: &str) -> Recorded {
+        cx.update(|_, app| recorded(app, key))
+            .unwrap_or_else(|| panic!("{key} should be recorded"))
+    }
+
+    #[gpui::test]
+    fn main_window_records_header_and_first_row_cells(cx: &mut TestAppContext) {
+        let (fleet, _main, cx) = build(State::MainIdle, 1280.0, 760.0, cx);
+        let fleet = fleet.expect("fleet state has a fleet");
+        let id = fleet.read_with(cx, |fleet, _| {
+            fleet
+                .visible_rows()
+                .first()
+                .expect("fleet has a visible row")
+                .id()
+        });
+        let row = format!("table.row.{id}");
+
+        assert_eq!(
+            recorded_cell(cx, "table.header.0").text.as_deref(),
+            Some("Name")
+        );
+        assert_eq!(recorded_cell(cx, &format!("{row}.id")).font, Some("mono"));
+        assert!(recorded_cell(cx, &format!("{row}.state")).fg.is_some());
+    }
+
+    #[test]
+    fn state_cells_use_the_palette_state_text_colour() {
+        let palette = Palette::light();
+        for (state, token) in [
+            ("running", "runtext"),
+            ("pending", "warntext"),
+            ("stopped", "dim"),
+        ] {
+            assert_eq!(
+                cell_color(&palette, Column::State, state, false, false),
+                (token, palette.state_text(state))
+            );
+        }
+    }
+
+    #[test]
+    fn stale_cells_use_faint_and_plain_cells_use_text() {
+        let palette = Palette::light();
+        assert_eq!(
+            cell_color(&palette, Column::State, "running", true, false),
+            ("faint", palette.faint)
+        );
+        assert_eq!(
+            cell_color(&palette, Column::Name, "running", false, false),
+            ("text", palette.text)
+        );
+    }
+
+    #[gpui::test]
+    fn narrowing_forgets_the_header_records_of_dropped_columns(cx: &mut TestAppContext) {
+        let state = loaded_state(cx);
+        let cx = open_table(cx, state, 1280.0);
+        assert!(
+            cx.update(|_, app| recorded(app, "table.header.7"))
+                .is_some()
+        );
+
+        cx.simulate_resize(size(px(700.0), px(760.0)));
+        cx.run_until_parked();
+
+        assert_eq!(cx.update(|_, app| recorded(app, "table.header.4")), None);
+        assert!(
+            cx.update(|_, app| recorded(app, "table.header.3"))
+                .is_some()
+        );
     }
 }

@@ -31,6 +31,55 @@ pub(crate) fn scripts() -> Vec<Script> {
             known_bug: None,
         },
         Script {
+            id: "flow-search-compact-expand",
+            start: State::MainIdle,
+            window: (520.0, 760.0),
+            steps: vec![(
+                Step::Keys("cmd-f"),
+                vec![
+                    Expect::Layout(Check::WidthBetween("search.field", 180.0, 200.0)),
+                    Expect::Layout(Check::InWindow("search.field")),
+                ],
+            )],
+            why: "cmd-f expands the compact search field to 190pt",
+            known_bug: None,
+        },
+        Script {
+            id: "flow-search-compact-click",
+            start: State::MainIdle,
+            window: (520.0, 760.0),
+            steps: vec![(
+                Step::Click("search.icon"),
+                vec![Expect::Layout(Check::WidthBetween(
+                    "search.field",
+                    180.0,
+                    200.0,
+                ))],
+            )],
+            why: "clicking the compact magnifier expands the search field to 190pt",
+            known_bug: None,
+        },
+        Script {
+            id: "flow-search-compact-type",
+            start: State::MainIdle,
+            window: (520.0, 760.0),
+            steps: vec![
+                (
+                    Step::Keys("cmd-f"),
+                    vec![Expect::Layout(Check::Present("search.field"))],
+                ),
+                (
+                    Step::Type("st"),
+                    vec![
+                        Expect::Layout(Check::Present("search.suggestions")),
+                        Expect::Layout(Check::InWindow("search.suggestions")),
+                    ],
+                ),
+            ],
+            why: "suggestions stay on screen when the compact field is expanded",
+            known_bug: None,
+        },
+        Script {
             id: "flow-search-value",
             start: State::MainIdle,
             window: (1280.0, 760.0),
