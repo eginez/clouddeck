@@ -144,7 +144,8 @@ impl Render for Sidebar {
 
         panel = panel.child(section_header("TYPE", &palette));
         for (name, count) in types {
-            let active = is_value(type_value, &name);
+            let active = type_value
+                .is_some_and(|value| value.split(',').any(|piece| is_value(Some(piece), &name)));
             panel = panel.child(facet_row(
                 FacetRow {
                     key: format!("sidebar.type.{name}"),
@@ -196,11 +197,13 @@ fn visible_types(
     let Some(active) = active else {
         return shown;
     };
-    if shown.iter().any(|(name, _)| is_value(Some(active), name)) {
-        return shown;
-    }
-    if let Some(entry) = counts.iter().find(|(name, _)| is_value(Some(active), name)) {
-        shown.push(entry.clone());
+    for value in active.split(',') {
+        if shown.iter().any(|(name, _)| is_value(Some(value), name)) {
+            continue;
+        }
+        if let Some(entry) = counts.iter().find(|(name, _)| is_value(Some(value), name)) {
+            shown.push(entry.clone());
+        }
     }
     shown
 }
@@ -559,6 +562,18 @@ mod tests {
 
         click(cx, "sidebar.type.t3.small");
         assert_eq!(query(&state, cx), "");
+    }
+
+    #[gpui::test]
+    fn active_multi_value_type_outside_the_top_five_stays_visible(cx: &mut TestAppContext) {
+        let (_state, sidebar, cx) = rooted_sidebar(cx, |state| {
+            state.view_model.set_search_text("type:t3.micro,T3.Small");
+        });
+
+        assert!(!sidebar.read_with(cx, |sidebar, _| sidebar.show_all_types));
+        assert!(rendered(cx, "sidebar.type.t3.small"));
+        assert!(rendered(cx, "sidebar.type.t3.micro"));
+        assert_eq!(rendered_type_rows(cx), 6);
     }
 
     #[gpui::test]
