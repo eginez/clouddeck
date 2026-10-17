@@ -1,5 +1,6 @@
 //! Rewrites a query's field terms as text and reads back the selected State and Type facets.
 
+use super::matcher::glob;
 use super::term::{Term, TermKind, parse};
 use super::tokenize::QueryField;
 
@@ -100,17 +101,33 @@ fn effective_facet_value(terms: &[Term], field: QueryField) -> Option<String> {
             _ => None,
         })
         .collect();
-    let (last, others) = per_term.split_last()?;
-    let kept: Vec<&str> = last
-        .iter()
-        .copied()
-        .filter(|piece| {
-            others
+    if let [only] = per_term.as_slice() {
+        return Some(only.join(","));
+    }
+    let mut candidates: Vec<&str> = Vec::new();
+    for piece in per_term.iter().flatten().filter(|p| !p.contains('*')) {
+        if !candidates.iter().any(|c| c.eq_ignore_ascii_case(piece)) {
+            candidates.push(piece);
+        }
+    }
+    let kept: Vec<&str> = candidates
+        .into_iter()
+        .filter(|candidate| {
+            per_term
                 .iter()
-                .all(|other| other.iter().any(|o| o.eq_ignore_ascii_case(piece)))
+                .all(|term| term.iter().any(|pattern| covers(field, pattern, candidate)))
         })
         .collect();
     (!kept.is_empty()).then(|| kept.join(","))
+}
+
+/// Mirrors the matcher's rules for State and Type, so highlights agree with the filter.
+fn covers(field: QueryField, pattern: &str, value: &str) -> bool {
+    let (value, pattern) = (value.to_lowercase(), pattern.to_lowercase());
+    match field {
+        QueryField::Type if pattern.contains('*') => glob(&value, &pattern),
+        _ => value.starts_with(&pattern),
+    }
 }
 
 #[cfg(test)]
@@ -257,6 +274,10 @@ mod tests {
             facet_selection("state:running,stopped state:stopped", &k).state,
             Some("stopped".into())
         );
+        assert_eq!(
+            facet_selection("state:run state:running", &k).state,
+            Some("running".into())
+        );
         assert_eq!(facet_selection("type:a type:b", &k).instance_type, None);
         assert_eq!(
             facet_selection("type:a,b type:b", &k).instance_type,
@@ -264,11 +285,11 @@ mod tests {
         );
         assert_eq!(
             facet_selection("type:b,a type:a,b", &k).instance_type,
-            Some("a,b".into())
+            Some("b,a".into())
         );
         assert_eq!(
             facet_selection("type:A,b type:a", &k).instance_type,
-            Some("a".into())
+            Some("A".into())
         );
         assert_eq!(
             facet_selection("type:a type:", &k).instance_type,
@@ -277,6 +298,42 @@ mod tests {
         assert_eq!(
             facet_selection("type:a -type:b", &k).instance_type,
             Some("a".into())
+        );
+        assert_eq!(
+            facet_selection("type:t3 type:t3.micro", &k).instance_type,
+            Some("t3.micro".into())
+        );
+        assert_eq!(
+            facet_selection("type:t3.micro type:t3", &k).instance_type,
+            Some("t3.micro".into())
+        );
+        assert_eq!(
+            facet_selection("type:t3* type:t3.micro", &k).instance_type,
+            Some("t3.micro".into())
+        );
+        assert_eq!(
+            facet_selection("type:t3.micro,m5.large type:t3", &k).instance_type,
+            Some("t3.micro".into())
+        );
+        assert_eq!(
+            facet_selection("type:t3*", &k).instance_type,
+            Some("t3*".into())
+        );
+        assert_eq!(
+            facet_selection("type:a,b", &k).instance_type,
+            Some("a,b".into())
+        );
+        assert_eq!(
+            facet_selection("type:T3.Micro type:t3", &k).instance_type,
+            Some("T3.Micro".into())
+        );
+        assert_eq!(
+            facet_selection("-type:t3 type:t3.micro", &k).instance_type,
+            Some("t3.micro".into())
+        );
+        assert_eq!(
+            facet_selection("state: state:running", &k).state,
+            Some("running".into())
         );
         assert_eq!(facet_selection("web", &k), FacetSelection::default());
         assert_eq!(
