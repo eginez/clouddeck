@@ -308,6 +308,7 @@ impl Render for WelcomeWindow {
             );
 
         let search_row = div()
+            .debug_selector(|| "welcome.searchrow".into())
             .flex()
             .items_center()
             .gap(px(8.0))

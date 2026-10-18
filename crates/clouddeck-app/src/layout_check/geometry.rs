@@ -124,6 +124,45 @@ pub(crate) fn no_overlap(
     }
 }
 
+/// Passes when `a`'s right edge is at or left of `b`'s left edge, within `tol`.
+pub(crate) fn left_of(
+    a_name: &str,
+    a: Bounds<Pixels>,
+    b_name: &str,
+    b: Bounds<Pixels>,
+    tol: f32,
+) -> Result<(), String> {
+    if Edges::of(a).right <= Edges::of(b).left + tol {
+        Ok(())
+    } else {
+        Err(format!(
+            "{} is not left of {}, tolerance {tol}",
+            describe(a_name, a),
+            describe(b_name, b)
+        ))
+    }
+}
+
+/// Passes when the vertical centres of the two boxes match within `tol`.
+pub(crate) fn same_row(
+    a_name: &str,
+    a: Bounds<Pixels>,
+    b_name: &str,
+    b: Bounds<Pixels>,
+    tol: f32,
+) -> Result<(), String> {
+    let centre = |e: Edges| (e.top + e.bottom) / 2.0;
+    if (centre(Edges::of(a)) - centre(Edges::of(b))).abs() <= tol {
+        Ok(())
+    } else {
+        Err(format!(
+            "{} and {} are not on the same row, tolerance {tol}",
+            describe(a_name, a),
+            describe(b_name, b)
+        ))
+    }
+}
+
 /// Passes when the upper box's bottom edge is at or above the lower box's top edge, within `tol`.
 pub(crate) fn above(
     upper_name: &str,
@@ -506,6 +545,62 @@ mod tests {
         assert!(centered_x("a", b(450.0, 0.0, 100.0, 10.0), win(1000.0, 50.0), TOL).is_ok());
         let err = centered_x("a", b(400.0, 0.0, 100.0, 10.0), win(1000.0, 50.0), TOL).unwrap_err();
         names_each(&err, &["a"]);
+    }
+
+    #[test]
+    fn left_of_allows_touching_and_rejects_overlap() {
+        assert!(
+            left_of(
+                "a",
+                b(0.0, 0.0, 10.0, 10.0),
+                "b",
+                b(10.0, 0.0, 10.0, 10.0),
+                0.0
+            )
+            .is_ok()
+        );
+        let err = left_of(
+            "a",
+            b(0.0, 0.0, 10.0, 10.0),
+            "b",
+            b(5.0, 0.0, 10.0, 10.0),
+            0.0,
+        )
+        .unwrap_err();
+        names_each(&err, &["a", "b"]);
+        assert!(
+            left_of(
+                "a",
+                b(20.0, 0.0, 10.0, 10.0),
+                "b",
+                b(0.0, 0.0, 10.0, 10.0),
+                TOL
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn same_row_compares_vertical_centres() {
+        assert!(
+            same_row(
+                "a",
+                b(0.0, 4.0, 10.0, 32.0),
+                "b",
+                b(50.0, 0.0, 10.0, 40.0),
+                TOL
+            )
+            .is_ok()
+        );
+        let err = same_row(
+            "a",
+            b(0.0, 0.0, 10.0, 32.0),
+            "b",
+            b(50.0, 20.0, 10.0, 32.0),
+            TOL,
+        )
+        .unwrap_err();
+        names_each(&err, &["a", "b"]);
     }
 
     #[test]

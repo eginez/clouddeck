@@ -40,6 +40,10 @@ pub(crate) enum Check {
     LeftAligned(&'static str, &'static str),
     /// The two boxes share a right edge.
     RightAligned(&'static str, &'static str),
+    /// The first box lies left of the second without overlapping it.
+    LeftOf(&'static str, &'static str),
+    /// The two boxes share a vertical centre.
+    SameRow(&'static str, &'static str),
     /// The box's right edge is on the window's right edge.
     RightEdgeAtWindow(&'static str),
     /// The box's bottom edge is on the window's bottom edge.
@@ -104,6 +108,8 @@ pub(crate) fn evaluate(
         Check::RightAligned(a, b) => {
             geometry::right_aligned(a, get(lookup, a)?, b, get(lookup, b)?, TOL)
         }
+        Check::LeftOf(a, b) => geometry::left_of(a, get(lookup, a)?, b, get(lookup, b)?, 0.0),
+        Check::SameRow(a, b) => geometry::same_row(a, get(lookup, a)?, b, get(lookup, b)?, TOL),
         Check::RightEdgeAtWindow(sel) => {
             geometry::right_edge_at_window(sel, get(lookup, sel)?, window, TOL)
         }
