@@ -116,7 +116,7 @@ fn check(
         Expect::Layout(check) => {
             let cell = RefCell::new(&mut *cx);
             let lookup = |sel: &'static str| cell.borrow_mut().debug_bounds(sel);
-            evaluate(&check, &lookup, size(px(window.0), px(window.1)))
+            evaluate(&check, &lookup, &|_| None, size(px(window.0), px(window.1)))
         }
         Expect::Overlay(want) => {
             let main = main.ok_or_else(|| NO_MAIN_WINDOW.to_string())?;
