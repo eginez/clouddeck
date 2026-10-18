@@ -1,5 +1,6 @@
 //! Rewrites a query's field terms as text and reads back the selected State and Type facets.
 
+use super::matcher::glob;
 use super::term::{Term, TermKind, parse};
 use super::tokenize::QueryField;
 
@@ -46,21 +47,21 @@ pub fn remove_field_value(
     set_field_value(query, field, &remaining.join(","), known_tag_keys)
 }
 
-/// The State and Type facet values selected by a query.
+/// The State and Type values a query actually selects.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct FacetSelection {
-    /// The selected state value as typed.
+    /// The values the query selects for state, as typed.
     pub state: Option<String>,
-    /// The selected instance type value as typed.
+    /// The values the query selects for instance type, as typed.
     pub instance_type: Option<String>,
 }
 
-/// Reads the State and Type facets back out of a query.
+/// Reads the values the State and Type facets select, intersected across repeated terms.
 pub fn facet_selection(query: &str, known_tag_keys: &[String]) -> FacetSelection {
     let terms = parse(query, known_tag_keys);
     FacetSelection {
-        state: last_facet_value(&terms, QueryField::State),
-        instance_type: last_facet_value(&terms, QueryField::Type),
+        state: effective_facet_value(&terms, QueryField::State),
+        instance_type: effective_facet_value(&terms, QueryField::Type),
     }
 }
 
@@ -84,20 +85,49 @@ fn all_positive_values(terms: &[Term], field: QueryField) -> Vec<String> {
         .collect()
 }
 
-fn last_facet_value(terms: &[Term], field: QueryField) -> Option<String> {
-    terms.iter().rev().find_map(|t| match &t.kind {
-        TermKind::Field {
-            field: f, value, ..
-        } if *f == field && !t.negated => {
-            let pieces: Vec<&str> = value
-                .split(',')
-                .map(str::trim)
-                .filter(|piece| !piece.is_empty())
-                .collect();
-            (!pieces.is_empty()).then(|| pieces.join(","))
+fn effective_facet_value(terms: &[Term], field: QueryField) -> Option<String> {
+    let per_term: Vec<Vec<&str>> = terms
+        .iter()
+        .filter(|t| is_positive_field(t, field))
+        .filter_map(|t| match &t.kind {
+            TermKind::Field { value, .. } => {
+                let pieces: Vec<&str> = value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|piece| !piece.is_empty())
+                    .collect();
+                (!pieces.is_empty()).then_some(pieces)
+            }
+            _ => None,
+        })
+        .collect();
+    if let [only] = per_term.as_slice() {
+        return Some(only.join(","));
+    }
+    let mut candidates: Vec<&str> = Vec::new();
+    for piece in per_term.iter().flatten().filter(|p| !p.contains('*')) {
+        if !candidates.iter().any(|c| c.eq_ignore_ascii_case(piece)) {
+            candidates.push(piece);
         }
-        _ => None,
-    })
+    }
+    let kept: Vec<&str> = candidates
+        .into_iter()
+        .filter(|candidate| {
+            per_term
+                .iter()
+                .all(|term| term.iter().any(|pattern| covers(field, pattern, candidate)))
+        })
+        .collect();
+    (!kept.is_empty()).then(|| kept.join(","))
+}
+
+/// Mirrors the matcher's rules for State and Type, so highlights agree with the filter.
+fn covers(field: QueryField, pattern: &str, value: &str) -> bool {
+    let (value, pattern) = (value.to_lowercase(), pattern.to_lowercase());
+    match field {
+        QueryField::Type if pattern.contains('*') => glob(&value, &pattern),
+        _ => value.starts_with(&pattern),
+    }
 }
 
 #[cfg(test)]
@@ -238,7 +268,72 @@ mod tests {
         );
         assert_eq!(
             facet_selection("state:running state:stopped", &k).state,
+            None
+        );
+        assert_eq!(
+            facet_selection("state:running,stopped state:stopped", &k).state,
             Some("stopped".into())
+        );
+        assert_eq!(
+            facet_selection("state:run state:running", &k).state,
+            Some("running".into())
+        );
+        assert_eq!(facet_selection("type:a type:b", &k).instance_type, None);
+        assert_eq!(
+            facet_selection("type:a,b type:b", &k).instance_type,
+            Some("b".into())
+        );
+        assert_eq!(
+            facet_selection("type:b,a type:a,b", &k).instance_type,
+            Some("b,a".into())
+        );
+        assert_eq!(
+            facet_selection("type:A,b type:a", &k).instance_type,
+            Some("A".into())
+        );
+        assert_eq!(
+            facet_selection("type:a type:", &k).instance_type,
+            Some("a".into())
+        );
+        assert_eq!(
+            facet_selection("type:a -type:b", &k).instance_type,
+            Some("a".into())
+        );
+        assert_eq!(
+            facet_selection("type:t3 type:t3.micro", &k).instance_type,
+            Some("t3.micro".into())
+        );
+        assert_eq!(
+            facet_selection("type:t3.micro type:t3", &k).instance_type,
+            Some("t3.micro".into())
+        );
+        assert_eq!(
+            facet_selection("type:t3* type:t3.micro", &k).instance_type,
+            Some("t3.micro".into())
+        );
+        assert_eq!(
+            facet_selection("type:t3.micro,m5.large type:t3", &k).instance_type,
+            Some("t3.micro".into())
+        );
+        assert_eq!(
+            facet_selection("type:t3*", &k).instance_type,
+            Some("t3*".into())
+        );
+        assert_eq!(
+            facet_selection("type:a,b", &k).instance_type,
+            Some("a,b".into())
+        );
+        assert_eq!(
+            facet_selection("type:T3.Micro type:t3", &k).instance_type,
+            Some("T3.Micro".into())
+        );
+        assert_eq!(
+            facet_selection("-type:t3 type:t3.micro", &k).instance_type,
+            Some("t3.micro".into())
+        );
+        assert_eq!(
+            facet_selection("state: state:running", &k).state,
+            Some("running".into())
         );
         assert_eq!(facet_selection("web", &k), FacetSelection::default());
         assert_eq!(

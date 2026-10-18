@@ -8,12 +8,10 @@ use gpui::{
 use gpui_component::input::{Enter, Escape, Input, InputEvent, InputState, MoveDown, MoveUp};
 
 use crate::icons::AppIcon;
-use crate::tokens::{FONT_SIZE, Palette, ROW_HEIGHT, STATUS_FONT_SIZE, TOOLBAR_HEIGHT};
+use crate::tokens::{FONT_SIZE, Palette, ROW_HEIGHT, STATUS_FONT_SIZE};
 use crate::ui_record::{Recorded, forget_prefix, record};
 
-const PANEL_WIDTH: f32 = 560.0;
 const PANEL_RADIUS: f32 = 10.0;
-const PANEL_TOP: f32 = TOOLBAR_HEIGHT + 8.0;
 const INPUT_ROW_HEIGHT: f32 = 44.0;
 const FOOTER_HEIGHT: f32 = 24.0;
 const VISIBLE_ROWS: f32 = 10.0;
@@ -170,15 +168,7 @@ impl Render for CommandPalette {
                 .flex_col()
                 .py(px(4.0))
                 .children(commands.iter().enumerate().map(|(ix, &id)| {
-                    command_row(
-                        ix,
-                        id,
-                        ix == highlighted,
-                        &context,
-                        platform,
-                        &palette,
-                        cx,
-                    )
+                    command_row(ix, id, ix == highlighted, &context, platform, &palette, cx)
                 }))
                 .into_any_element()
         };
@@ -228,7 +218,7 @@ impl Render for CommandPalette {
                 cx.emit(PaletteEvent::Dismissed);
                 cx.stop_propagation();
             }))
-            .w(px(PANEL_WIDTH))
+            .w_full()
             .flex()
             .flex_col()
             .bg(palette.surf)
@@ -241,14 +231,7 @@ impl Render for CommandPalette {
             .child(body)
             .child(footer);
 
-        div()
-            .absolute()
-            .top(px(PANEL_TOP))
-            .left_0()
-            .w_full()
-            .flex()
-            .justify_center()
-            .child(panel)
+        panel
     }
 }
 

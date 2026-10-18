@@ -1,3 +1,4 @@
+use crate::render_state::{DEFAULT_ROW_MENU_ANCHOR, State, apply_render_state, fleet_loaded};
 use crate::{
     fleet_state::FleetState,
     main_window::{MainWindow, MainWindowEvent},
@@ -63,27 +64,85 @@ pub(crate) enum DemoScenario {
     Large,
 }
 
-pub(crate) fn launch_options() -> (bool, DemoScenario) {
+/// What the command line asked for.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct LaunchOptions {
+    pub demo: bool,
+    pub scenario: DemoScenario,
+    /// Content size of the main window, from `--size WxH`.
+    pub size: Option<(f32, f32)>,
+    /// State to open the main window in, from `--render-state <Name>`.
+    pub state: Option<State>,
+}
+
+/// Parses `WxH` (positive whole numbers) into a window content size.
+fn parse_size(text: &str) -> Option<(f32, f32)> {
+    let (width, height) = text.split_once('x')?;
+    let width: u16 = width.parse().ok().filter(|w| *w > 0)?;
+    let height: u16 = height.parse().ok().filter(|h| *h > 0)?;
+    Some((f32::from(width), f32::from(height)))
+}
+
+/// Parses launch arguments (without the program name). `--render-state` implies `--demo`
+/// and the scenario that state needs unless `--demo-scenario` is also given.
+pub(crate) fn parse_launch_options(
+    args: impl IntoIterator<Item = String>,
+) -> Result<LaunchOptions, String> {
     let mut demo = false;
-    let mut scenario = DemoScenario::Happy;
-    let mut args = std::env::args().skip(1);
+    let mut explicit_scenario = None;
+    let mut size = None;
+    let mut state = None;
+    let mut args = args.into_iter();
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--demo" => demo = true,
             "--demo-scenario" => {
-                scenario = match args.next().as_deref() {
+                explicit_scenario = Some(match args.next().as_deref() {
                     Some("empty") => DemoScenario::Empty,
                     Some("failure") => DemoScenario::Failure,
                     Some("partial") => DemoScenario::Partial,
                     Some("large") => DemoScenario::Large,
                     _ => DemoScenario::Happy,
-                };
+                });
+                demo = true;
+            }
+            "--size" => {
+                let value = args.next().unwrap_or_default();
+                size = Some(parse_size(&value).ok_or_else(|| {
+                    format!("invalid --size '{value}': expected WxH, e.g. 520x760")
+                })?);
+            }
+            "--render-state" => {
+                let value = args.next().unwrap_or_default();
+                state = Some(State::from_name(&value).ok_or_else(|| {
+                    format!(
+                        "unknown --render-state '{value}'; valid names: {}",
+                        State::names()
+                    )
+                })?);
                 demo = true;
             }
             _ => {}
         }
     }
-    (demo, scenario)
+    let scenario = explicit_scenario
+        .or_else(|| state.map(State::demo_scenario))
+        .unwrap_or(DemoScenario::Happy);
+    Ok(LaunchOptions {
+        demo,
+        scenario,
+        size,
+        state,
+    })
+}
+
+/// Launch options from the process arguments; exits with status 2 on a usage error.
+pub(crate) fn launch_options() -> LaunchOptions {
+    parse_launch_options(std::env::args().skip(1)).unwrap_or_else(|message| {
+        eprintln!("clouddeck: {message}");
+        eprintln!("usage: clouddeck [--demo] [--demo-scenario <name>] [--size WxH] [--render-state <Name>]");
+        std::process::exit(2)
+    })
 }
 
 fn scenario_for(kind: DemoScenario) -> EC2Scenario {
@@ -107,6 +166,57 @@ pub(crate) fn open_main_window(
     demo: bool,
     demo_scenario: DemoScenario,
 ) -> Option<WindowHandle<Root>> {
+    open_main_window_with(cx, demo, demo_scenario, None, None)
+}
+
+/// Opens the main window at `size` (content size) and, if given, drives it into `state`
+/// once the fleet has loaded, then forces a redraw so the first frame needs no input.
+pub(crate) fn open_main_window_with(
+    cx: &mut App,
+    demo: bool,
+    demo_scenario: DemoScenario,
+    size: Option<(f32, f32)>,
+    state: Option<State>,
+) -> Option<WindowHandle<Root>> {
+    let handle = open_window_sized(cx, demo, demo_scenario, size)?;
+    if let Some(state) = state {
+        apply_state_when_loaded(handle, state, cx);
+        let _ = handle.update(cx, |_, window, _| window.refresh());
+    }
+    Some(handle)
+}
+
+fn apply_state_when_loaded(handle: WindowHandle<Root>, state: State, cx: &mut App) {
+    let parts = handle
+        .update(cx, |root, _, cx| {
+            let shell = root.view().clone().downcast::<AppShell>().ok()?;
+            let shell = shell.read(cx);
+            Some((shell.fleet.clone(), shell.main_window.clone()))
+        })
+        .ok()
+        .flatten();
+    let Some((fleet, main)) = parts else { return };
+    let applied = std::rc::Rc::new(std::cell::Cell::new(false));
+    cx.observe(&fleet.clone(), move |observed, cx| {
+        if applied.get() || !fleet_loaded(observed.read(cx)) {
+            return;
+        }
+        applied.set(true);
+        let _ = handle.update(cx, |_, window, cx| {
+            apply_render_state(state, &observed, &main, DEFAULT_ROW_MENU_ANCHOR, window, cx);
+            main.update(cx, |_, cx| cx.notify());
+            window.refresh();
+        });
+    })
+    .detach();
+}
+
+fn open_window_sized(
+    cx: &mut App,
+    demo: bool,
+    demo_scenario: DemoScenario,
+    size_override: Option<(f32, f32)>,
+) -> Option<WindowHandle<Root>> {
     let restored = (!demo)
         .then(|| UiState::load(&clouddeck_core::ui_state_path()).window)
         .flatten()
@@ -121,8 +231,10 @@ pub(crate) fn open_main_window(
                 .iter()
                 .any(|display| display.bounds().intersects(bounds))
         });
-    let bounds =
-        restored.unwrap_or_else(|| Bounds::centered(None, size(px(1280.0), px(800.0)), cx));
+    let bounds = match size_override {
+        Some((width, height)) => Bounds::centered(None, size(px(width), px(height)), cx),
+        None => restored.unwrap_or_else(|| Bounds::centered(None, size(px(1280.0), px(800.0)), cx)),
+    };
     cx.open_window(crate::main_window::window_options(bounds), |window, cx| {
         let shell = cx.new(|cx| AppShell::build_with_scenario(window, demo, demo_scenario, cx));
         cx.new(|cx| gpui_component::Root::new(shell, window, cx))
@@ -380,6 +492,17 @@ impl AppShell {
         cx: &mut Context<Self>,
     ) -> Self {
         let loaded = Self::profiles(demo, demo_scenario);
+        Self::build_with_profiles(window, demo, demo_scenario, loaded, ui_state_path, cx)
+    }
+
+    fn build_with_profiles(
+        window: &mut Window,
+        demo: bool,
+        demo_scenario: DemoScenario,
+        loaded: Result<Vec<clouddeck_core::AwsProfile>, std::io::Error>,
+        ui_state_path: Option<PathBuf>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let message = loaded
             .as_ref()
             .err()
@@ -870,6 +993,53 @@ mod tests {
     use gpui::VisualTestContext;
     use gpui::{AppContext, TestAppContext};
 
+    fn parse(args: &[&str]) -> Result<LaunchOptions, String> {
+        parse_launch_options(args.iter().map(|arg| arg.to_string()))
+    }
+
+    #[test]
+    fn size_flag_parses_width_and_height() {
+        let options = parse(&["--size", "520x760"]).unwrap();
+        assert_eq!(options.size, Some((520.0, 760.0)));
+        assert!(!options.demo);
+    }
+
+    #[test]
+    fn invalid_sizes_are_rejected() {
+        for bad in ["520", "520x", "x760", "0x760", "axb", "520X760", "-1x5"] {
+            assert!(parse(&["--size", bad]).is_err(), "{bad}");
+        }
+        assert!(parse(&["--size"]).is_err());
+    }
+
+    #[test]
+    fn unknown_render_state_lists_the_valid_names() {
+        let error = parse(&["--render-state", "Nope"]).unwrap_err();
+        assert!(error.contains("Nope") && error.contains("OverlayPalette"));
+    }
+
+    #[test]
+    fn render_state_implies_demo_and_its_scenario() {
+        let options = parse(&["--render-state", "MainEmpty", "--size", "800x600"]).unwrap();
+        assert_eq!(options.state, Some(State::MainEmpty));
+        assert!(options.demo);
+        assert_eq!(options.scenario, DemoScenario::Empty);
+        assert_eq!(options.size, Some((800.0, 600.0)));
+    }
+
+    #[test]
+    fn explicit_demo_scenario_beats_the_state_scenario() {
+        let options = parse(&["--demo-scenario", "large", "--render-state", "MainEmpty"]).unwrap();
+        assert_eq!(options.scenario, DemoScenario::Large);
+    }
+
+    #[test]
+    fn every_state_name_round_trips() {
+        for state in State::ALL {
+            assert_eq!(State::from_name(state.name()), Some(state));
+        }
+    }
+
     // clouddeck-rs-mac-ui-fix-ellipsis: the Name and ID cells of the fleet
     // table are reported to render only an ellipsis ("...") in the running
     // app at 1280pt. The tests build the real AppShell (the live --demo
@@ -1281,7 +1451,14 @@ mod tests {
         let build_path = ui_state_path.clone();
         let (shell, cx) = add_rooted_shell(cx, move |window, cx| {
             if real_mode {
-                AppShell::build(window, false, DemoScenario::Happy, Some(build_path), cx)
+                AppShell::build_with_profiles(
+                    window,
+                    false,
+                    DemoScenario::Happy,
+                    Ok(Vec::new()),
+                    Some(build_path),
+                    cx,
+                )
             } else {
                 AppShell::build_with_scenario(window, true, DemoScenario::Empty, cx)
             }

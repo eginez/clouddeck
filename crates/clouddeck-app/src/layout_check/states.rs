@@ -8,49 +8,15 @@ use clouddeck_core::{
     ComputeService, DirectoryScenarioCatalog, EC2Instance, EC2InstanceTag, MockComputeService,
     ProfileInput, RegionScope, ScenarioService, TestScenarioKind,
 };
-use gpui::{
-    AppContext, Bounds, Entity, Modifiers, MouseButton, TestAppContext, VisualTestContext, point,
-    px, size,
-};
+use gpui::{AppContext, Bounds, Entity, TestAppContext, VisualTestContext, point, px, size};
 
 use crate::fleet_state::FleetState;
 use crate::main_window::{MainWindow, window_options};
+use crate::render_state::{DEFAULT_ROW_MENU_ANCHOR, apply_render_state};
 use crate::view_models::InstanceListViewModel;
 use crate::welcome_window::WelcomeWindow;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum State {
-    /// Fleet loaded with nothing selected.
-    MainIdle,
-    /// Fleet loaded with the first visible row selected.
-    MainRowSelected,
-    /// Fleet loaded with no instances.
-    MainEmpty,
-    /// Fleet load failed outright.
-    MainFailure,
-    /// Two regions where one fails.
-    MainPartial,
-    /// A fleet of 120 instances.
-    MainLarge,
-    /// Search field focused and empty, with recent searches listed.
-    SearchFocusedEmpty,
-    /// Search field focused with "st" typed, showing field suggestions.
-    SearchTypingSt,
-    /// Search field focused with an unknown field term typed, showing the error hint.
-    SearchError,
-    /// Profile picker opened with secondary-p over the idle main window.
-    OverlayProfile,
-    /// Region picker opened with secondary-shift-r over the idle main window.
-    OverlayRegion,
-    /// Command palette opened with secondary-shift-p over the idle main window.
-    OverlayPalette,
-    /// Failure popover opened by clicking the partial-failure bar.
-    OverlayFailure,
-    /// Row context menu opened by right-clicking the first row.
-    OverlayRowMenu,
-    /// First-run welcome window listing three profiles.
-    Welcome,
-}
+pub(crate) use crate::render_state::State;
 
 /// The fixture scenario catalog shipped with clouddeck-core.
 fn catalog() -> DirectoryScenarioCatalog {
@@ -164,33 +130,6 @@ fn open_welcome(width: f32, height: f32, cx: &mut TestAppContext) -> &mut Visual
     cx
 }
 
-/// Sends `keystrokes` to the window and runs until parked.
-fn press(cx: &mut VisualTestContext, keystrokes: &str) {
-    cx.simulate_keystrokes(keystrokes);
-    cx.run_until_parked();
-}
-
-/// Clicks the centre of the element with `selector`.
-fn click_center(cx: &mut VisualTestContext, selector: &'static str) {
-    let center = cx
-        .debug_bounds(selector)
-        .unwrap_or_else(|| panic!("{selector} should be rendered"))
-        .center();
-    cx.simulate_click(center, Modifiers::none());
-    cx.run_until_parked();
-}
-
-/// Right-clicks the centre of the element with `selector`.
-fn right_click_center(cx: &mut VisualTestContext, selector: &'static str) {
-    let center = cx
-        .debug_bounds(selector)
-        .unwrap_or_else(|| panic!("{selector} should be rendered"))
-        .center();
-    cx.simulate_mouse_down(center, MouseButton::Right, Modifiers::none());
-    cx.simulate_mouse_up(center, MouseButton::Right, Modifiers::none());
-    cx.run_until_parked();
-}
-
 /// Pumps the test dispatcher until `condition` holds, panicking after about a second.
 fn wait_until(cx: &mut TestAppContext, mut condition: impl FnMut(&mut TestAppContext) -> bool) {
     for _ in 0..200 {
@@ -201,14 +140,6 @@ fn wait_until(cx: &mut TestAppContext, mut condition: impl FnMut(&mut TestAppCon
         std::thread::sleep(Duration::from_millis(5));
     }
     panic!("condition was not satisfied within the timeout");
-}
-
-/// Focuses the search field with cmd-f, then types `text`.
-fn focus_search(cx: &mut VisualTestContext, text: &str) {
-    cx.simulate_keystrokes("cmd-f");
-    cx.run_until_parked();
-    cx.simulate_input(text);
-    cx.run_until_parked();
 }
 
 /// Builds `state` in a fresh window; the welcome state returns no fleet or main window.
@@ -237,31 +168,32 @@ pub(crate) fn build<'a>(
         })
     });
 
-    if state == State::SearchFocusedEmpty {
-        fleet.update(cx, |fleet, _| {
-            fleet.recent_searches = [
-                "state:stopped age:>30d",
-                "owner:esteban",
-                "has:public-ip type:t3.*",
-                "billing prod",
-            ]
-            .map(String::from)
-            .to_vec();
-        });
-    }
-
     let main_slot: Rc<RefCell<Option<Entity<MainWindow>>>> = Rc::new(RefCell::new(None));
     let bounds = Bounds::new(point(px(0.0), px(0.0)), size(px(width), px(height)));
     let slot_for_window = main_slot.clone();
     let fleet_for_window = fleet.clone();
+    // debug_bounds is never cleared between frames, so a focus change after the first
+    // frame would leave stale unfocused elements (the shortcut hint) behind. Focus
+    // states are therefore applied while the window is built, before it first draws.
+    let focus_before_first_frame = matches!(
+        state,
+        State::SearchFocusedEmpty | State::SearchTypingSt | State::SearchError
+    );
     let window = cx.update(|cx| {
         cx.open_window(window_options(bounds), move |window, cx| {
             gpui_component::init(cx);
             let scope = RegionScope::all(&regions);
-            let main = cx.new(|cx| MainWindow::new(fleet_for_window, regions, scope, window, cx));
-            if state == State::SearchFocusedEmpty {
-                let search = main.read(cx).search_field();
-                search.update(cx, |search, cx| search.focus(window, cx));
+            let main =
+                cx.new(|cx| MainWindow::new(fleet_for_window.clone(), regions, scope, window, cx));
+            if focus_before_first_frame {
+                apply_render_state(
+                    state,
+                    &fleet_for_window,
+                    &main,
+                    DEFAULT_ROW_MENU_ANCHOR,
+                    window,
+                    cx,
+                );
             }
             *slot_for_window.borrow_mut() = Some(main.clone());
             cx.new(|cx| gpui_component::Root::new(main, window, cx))
@@ -295,7 +227,7 @@ pub(crate) fn build<'a>(
     });
     cx.run_until_parked();
 
-    if state == State::MainRowSelected {
+    let row_menu_anchor = if state == State::OverlayRowMenu {
         let key = fleet.read_with(cx, |fleet, _| {
             fleet
                 .visible_rows()
@@ -303,31 +235,20 @@ pub(crate) fn build<'a>(
                 .expect("fleet has a visible row")
                 .id()
         });
-        fleet.update(cx, |fleet, cx| fleet.select(Some(key), cx));
-        cx.run_until_parked();
+        // debug_bounds only takes 'static selectors; the leak lasts for one test.
+        let selector: &'static str = Box::leak(format!("table.row.{key}").into_boxed_str());
+        cx.debug_bounds(selector)
+            .unwrap_or_else(|| panic!("{selector} should be rendered"))
+            .center()
+    } else {
+        DEFAULT_ROW_MENU_ANCHOR
+    };
+    if !focus_before_first_frame {
+        cx.update(|window, app| {
+            apply_render_state(state, &fleet, &main, row_menu_anchor, window, app)
+        });
     }
-
-    match state {
-        State::SearchTypingSt => focus_search(cx, "st"),
-        State::SearchError => focus_search(cx, "colour:x"),
-        State::OverlayProfile => press(cx, "secondary-p"),
-        State::OverlayRegion => press(cx, "secondary-shift-r"),
-        State::OverlayPalette => press(cx, "secondary-shift-p"),
-        State::OverlayFailure => click_center(cx, "bar.failure"),
-        State::OverlayRowMenu => {
-            let key = fleet.read_with(cx, |fleet, _| {
-                fleet
-                    .visible_rows()
-                    .first()
-                    .expect("fleet has a visible row")
-                    .id()
-            });
-            // debug_bounds only takes 'static selectors; the leak lasts for one test.
-            let selector: &'static str = Box::leak(format!("table.row.{key}").into_boxed_str());
-            right_click_center(cx, selector);
-        }
-        _ => {}
-    }
+    cx.run_until_parked();
 
     (Some(fleet), Some(main), cx)
 }
@@ -356,6 +277,39 @@ mod tests {
             assert!(
                 window_cx.debug_bounds("main.statusbar").is_some(),
                 "{state:?}: main.statusbar"
+            );
+        }
+    }
+
+    /// One key element per state that `apply_render_state` must produce.
+    #[gpui::test]
+    fn every_state_shows_its_key_element(cx: &mut TestAppContext) {
+        let key_elements: [(State, &str); 14] = [
+            (State::MainIdle, "main.root"),
+            (State::MainRowSelected, "main.inspector"),
+            (State::MainEmpty, "main.center-state"),
+            (State::MainFailure, "main.center-state"),
+            (State::MainPartial, "bar.failure"),
+            (State::MainLarge, "main.root"),
+            (State::SearchFocusedEmpty, "search.recent"),
+            (State::SearchTypingSt, "search.suggestions"),
+            (State::SearchError, "search.error"),
+            (State::OverlayProfile, "main.overlay.profile"),
+            (State::OverlayRegion, "main.overlay.region"),
+            (State::OverlayPalette, "main.overlay.palette"),
+            (State::OverlayFailure, "main.overlay.failure"),
+            (State::OverlayRowMenu, "main.overlay.rowmenu"),
+        ];
+        assert_eq!(
+            key_elements.len() + 1,
+            State::ALL.len(),
+            "Welcome has no main window"
+        );
+        for (state, selector) in key_elements {
+            let (_fleet, _main, window_cx) = build(state, 1280.0, 760.0, cx);
+            assert!(
+                window_cx.debug_bounds(selector).is_some(),
+                "{state:?}: {selector}"
             );
         }
     }
@@ -417,7 +371,10 @@ mod tests {
         let fleet = fleet.expect("fleet state has a fleet");
 
         assert!(cx.debug_bounds("search.suggestions").is_some());
-        assert_eq!(fleet.read_with(cx, |fleet, _| fleet.query().to_string()), "st");
+        assert_eq!(
+            fleet.read_with(cx, |fleet, _| fleet.query().to_string()),
+            "st"
+        );
     }
 
     #[gpui::test]

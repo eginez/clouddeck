@@ -44,6 +44,7 @@ const MIN_WINDOW_HEIGHT: f32 = 400.0;
 const OVERLAY_ABOVE_STATUS_BAR: f32 = STATUS_BAR_HEIGHT + 4.0;
 const REGION_OVERLAY_LEFT: f32 = 150.0;
 const PALETTE_TOP: f32 = 80.0;
+const PALETTE_WIDTH: f32 = 560.0;
 const OVERLAY_EDGE_INSET: f32 = 8.0;
 const AUTO_REFRESH_TICK: Duration = Duration::from_secs(30);
 
@@ -139,8 +140,7 @@ fn apply_appearance(theme: Theme, window: &mut Window, cx: &mut App) {
 }
 
 impl MainWindow {
-    /// The toolbar search field, for layout states that focus it before the first frame.
-    #[cfg(test)]
+    /// The toolbar search field, for focusing it in a named render state.
     pub(crate) fn search_field(&self) -> Entity<SearchField> {
         self.search.clone()
     }
@@ -365,7 +365,12 @@ impl MainWindow {
         }
     }
 
-    fn toggle_overlay(&mut self, overlay: Overlay, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn toggle_overlay(
+        &mut self,
+        overlay: Overlay,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.overlay.as_ref() == Some(&overlay) {
             self.close_overlay(window, cx);
         } else {
@@ -373,7 +378,12 @@ impl MainWindow {
         }
     }
 
-    fn open_overlay(&mut self, overlay: Overlay, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn open_overlay(
+        &mut self,
+        overlay: Overlay,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let (view, subscription): (AnyView, Subscription) = match &overlay {
             Overlay::Profile => {
                 let profiles = self.profiles.clone();
@@ -503,7 +513,7 @@ impl MainWindow {
         cx.notify();
     }
 
-    fn open_row_menu(
+    pub(crate) fn open_row_menu(
         &mut self,
         key: String,
         position: Point<Pixels>,
@@ -708,9 +718,14 @@ impl MainWindow {
                     .top(px(PALETTE_TOP))
                     .left_0()
                     .right_0()
+                    .px(px(20.0))
                     .flex()
                     .justify_center()
-                    .child(overlay_panel("main.overlay.palette", view)),
+                    .child(
+                        overlay_panel("main.overlay.palette", view)
+                            .w_full()
+                            .max_w(px(PALETTE_WIDTH)),
+                    ),
             ),
             Overlay::RowMenu { position, .. } => (
                 "main.overlay.rowmenu",

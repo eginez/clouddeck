@@ -107,10 +107,7 @@ impl WelcomeWindow {
     }
 
     fn visible_rows(&self, cx: &App) -> Vec<ProfileRow> {
-        filter_profile_rows(
-            &profile_rows(&self.profiles),
-            &self.filter.read(cx).value(),
-        )
+        filter_profile_rows(&profile_rows(&self.profiles), &self.filter.read(cx).value())
     }
 
     fn reload_profiles(&mut self, cx: &mut Context<Self>) {
@@ -264,9 +261,12 @@ impl Render for WelcomeWindow {
                 .min_h_0()
                 .flex()
                 .flex_col()
-                .children(visible.iter().enumerate().map(|(ix, row)| {
-                    profile_row(ix, row, ix == highlighted, &palette, cx)
-                }))
+                .children(
+                    visible
+                        .iter()
+                        .enumerate()
+                        .map(|(ix, row)| profile_row(ix, row, ix == highlighted, &palette, cx)),
+                )
                 .into_any_element()
         };
 
@@ -420,6 +420,14 @@ fn route(
 }
 
 pub fn open_welcome_window(cx: &mut App) -> Option<WindowHandle<Root>> {
+    open_welcome_window_sized(cx, None)
+}
+
+/// Opens the welcome window, at `size_override` (content size) when given.
+pub fn open_welcome_window_sized(
+    cx: &mut App,
+    size_override: Option<(f32, f32)>,
+) -> Option<WindowHandle<Root>> {
     let (profiles, message) = match load_profiles() {
         Ok(profiles) => (profile_inputs(profiles), None),
         Err(error) => (
@@ -427,7 +435,8 @@ pub fn open_welcome_window(cx: &mut App) -> Option<WindowHandle<Root>> {
             Some(format!("Could not read AWS profiles: {error}")),
         ),
     };
-    let bounds = Bounds::centered(None, size(px(WINDOW_WIDTH), px(WINDOW_HEIGHT)), cx);
+    let (width, height) = size_override.unwrap_or((WINDOW_WIDTH, WINDOW_HEIGHT));
+    let bounds = Bounds::centered(None, size(px(width), px(height)), cx);
     let handle = cx
         .open_window(
             WindowOptions {
@@ -660,9 +669,6 @@ mod tests {
                 region: "eu-west-1".into(),
             }
         );
-        assert_eq!(
-            context_for_profile(&inputs, "bare").region,
-            DEFAULT_REGION
-        );
+        assert_eq!(context_for_profile(&inputs, "bare").region, DEFAULT_REGION);
     }
 }

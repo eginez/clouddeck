@@ -3,9 +3,9 @@
 #[cfg(test)]
 use std::collections::HashMap;
 
+use gpui::App;
 #[cfg(test)]
 use gpui::Global;
-use gpui::App;
 
 /// What one tagged element rendered; `None` fields were not recorded.
 #[cfg_attr(not(test), allow(dead_code))]
@@ -28,7 +28,9 @@ impl Global for Recordings {}
 /// Stores what the element with `selector` rendered; re-recording replaces the entry.
 #[cfg(test)]
 pub fn record(cx: &mut App, selector: impl Into<String>, rec: Recorded) {
-    cx.default_global::<Recordings>().0.insert(selector.into(), rec);
+    cx.default_global::<Recordings>()
+        .0
+        .insert(selector.into(), rec);
 }
 
 /// Release builds keep no recordings, so this does nothing.
