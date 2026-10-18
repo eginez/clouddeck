@@ -330,5 +330,44 @@ pub(crate) fn rules() -> Vec<Rule> {
             why: "error hint visible when compact",
             known_bug: None,
         },
+        // An unknown field shows one message, not the error row plus a suggestion-panel row.
+        Rule {
+            id: "srch-err-single",
+            state: State::SearchError,
+            window: (1280.0, 760.0),
+            check: Check::Absent("search.unknown"),
+            why: "one unknown-field message: the error row only",
+            known_bug: None,
+        },
+        // The error hint's text is truncated inside the hint, not run past the window edge.
+        Rule {
+            id: "srch-err-text-in",
+            state: State::SearchError,
+            window: (1280.0, 760.0),
+            check: Check::Inside {
+                inner: "search.error.text",
+                outer: "search.error",
+            },
+            why: "error message text fits inside the error hint",
+            known_bug: None,
+        },
+        // The unknown-field state does not open the suggestion dropdown.
+        Rule {
+            id: "srch-err-nosugg",
+            state: State::SearchError,
+            window: (1280.0, 760.0),
+            check: Check::Absent("search.suggestions"),
+            why: "unknown field with no matching suggestions opens no dropdown",
+            known_bug: None,
+        },
+        // The error hint is anchored to the field's top-right corner.
+        Rule {
+            id: "srch-err-right",
+            state: State::SearchError,
+            window: (1280.0, 760.0),
+            check: Check::RightAligned("search.error", "search.field"),
+            why: "error hint right-aligned to the field",
+            known_bug: None,
+        },
     ]
 }

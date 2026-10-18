@@ -146,12 +146,9 @@ fn text_runs(
     runs
 }
 
-fn error_row(message: &str, palette: &Palette) -> impl IntoElement {
-    div()
+fn error_row(message: &str, palette: &Palette) -> gpui::Div {
+    let row = div()
         .debug_selector(|| "search.error".into())
-        .absolute()
-        .top(px(SEARCH_HEIGHT + ERROR_OFFSET))
-        .right_0()
         .w(px(SEARCH_WIDTH))
         .flex()
         .items_center()
@@ -168,9 +165,20 @@ fn error_row(message: &str, palette: &Palette) -> impl IntoElement {
             AppIcon::TriangleAlert
                 .icon()
                 .xsmall()
-                .text_color(palette.warntext),
+                .text_color(palette.warntext)
+                .flex_shrink_0(),
         )
-        .child(message.to_string())
+        .child(
+            div()
+                .debug_selector(|| "search.error.text".into())
+                .flex_1()
+                .min_w_0()
+                .overflow_hidden()
+                .text_ellipsis()
+                .whitespace_nowrap()
+                .child(message.to_string()),
+        );
+    overlay_below(row, SEARCH_HEIGHT + ERROR_OFFSET)
 }
 
 fn suggestion_label(kind: SuggestionKind, palette: &Palette) -> (&'static str, Hsla) {
@@ -209,26 +217,6 @@ fn suggestion_row(
         })
 }
 
-fn unknown_field_row(name: &str, palette: &Palette) -> impl IntoElement {
-    div()
-        .debug_selector(|| "search.unknown".into())
-        .flex()
-        .items_center()
-        .gap(px(GAP))
-        .px(px(SIDE_PADDING))
-        .py(px(4.0))
-        .text_color(palette.warntext)
-        .child(
-            AppIcon::TriangleAlert
-                .icon()
-                .xsmall()
-                .text_color(palette.warntext),
-        )
-        .child(format!(
-            "No field named “{name}”. It will be searched as text."
-        ))
-}
-
 fn suggestion_panel(
     suggestions: &Suggestions,
     highlight: usize,
@@ -246,9 +234,6 @@ fn suggestion_panel(
         .border_1()
         .border_color(palette.line)
         .text_size(px(STATUS_FONT_SIZE));
-    if let Some(name) = &suggestions.unknown_field {
-        panel = panel.child(unknown_field_row(name, palette));
-    }
     for (index, item) in suggestions.items.iter().enumerate() {
         panel = panel.child(suggestion_row(index, item, index == highlight, palette));
     }
@@ -579,8 +564,7 @@ impl Render for SearchField {
         let highlight = self
             .highlight
             .min(suggestions.items.len().saturating_sub(1));
-        let dropdown_open =
-            focused && (!suggestions.items.is_empty() || suggestions.unknown_field.is_some());
+        let dropdown_open = focused && !suggestions.items.is_empty();
 
         let inset = f32::from(Size::Medium.input_px());
         let viewport_size = window.viewport_size();
@@ -1093,13 +1077,14 @@ mod tests {
     }
 
     #[gpui::test]
-    fn unknown_field_shows_the_warning_row(cx: &mut TestAppContext) {
+    fn unknown_field_shows_one_message(cx: &mut TestAppContext) {
         let (_state, _search, cx) = rooted_search_with(cx, true, three_state_view_model());
 
-        cx.simulate_input("colour:r");
+        cx.simulate_input("colour:x");
         cx.run_until_parked();
 
-        assert!(cx.debug_bounds("search.unknown").is_some());
+        assert!(cx.debug_bounds("search.error").is_some());
+        assert!(cx.debug_bounds("search.unknown").is_none());
     }
 
     #[gpui::test]
