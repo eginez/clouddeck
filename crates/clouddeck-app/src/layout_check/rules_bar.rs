@@ -189,6 +189,14 @@ pub(crate) fn rules() -> Vec<Rule> {
             known_bug: None,
         },
         Rule {
+            id: "bar-loadfail-in",
+            state: State::MainFailure,
+            window: MAIN,
+            check: Check::InWindow("bar.status"),
+            why: "load-failure status survives in the window",
+            known_bug: None,
+        },
+        Rule {
             id: "bar-520-fail-in",
             state: State::MainPartial,
             window: COMPACT,

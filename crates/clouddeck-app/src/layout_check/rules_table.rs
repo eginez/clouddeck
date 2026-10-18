@@ -36,12 +36,49 @@ pub(crate) fn rules() -> Vec<Rule> {
             why: "Launched dropped below 1100",
             known_bug: None,
         },
+        // The pane is 750pt at 960 with the sidebar open; Public IP needs 835.
         Rule {
             id: "tbl-960-6",
             state: State::MainIdle,
             window: (960.0, 760.0),
-            check: Check::Present("table.header.6"),
-            why: "Public IP still shown at 960",
+            check: Check::Absent("table.header.6"),
+            why: "Public IP dropped at 960: pane is 750pt, 7 columns need 835",
+            known_bug: None,
+        },
+        Rule {
+            id: "tbl-960-5",
+            state: State::MainIdle,
+            window: (960.0, 760.0),
+            check: Check::Present("table.header.5"),
+            why: "Private IP still shown at 960",
+            known_bug: None,
+        },
+        Rule {
+            id: "tbl-960-fits",
+            state: State::MainIdle,
+            window: (960.0, 760.0),
+            check: Check::Inside {
+                inner: "table.header.5",
+                outer: "main.table",
+            },
+            why: "columns at 960 stay inside the table pane",
+            known_bug: None,
+        },
+        // With the inspector open the pane is 1280 - 210 - 340 = 730pt.
+        Rule {
+            id: "tbl-1280-sel-6",
+            state: State::MainRowSelected,
+            window: (1280.0, 760.0),
+            check: Check::Absent("table.header.6"),
+            why: "Public IP dropped at 1280 with the inspector open",
+            known_bug: None,
+        },
+        Rule {
+            id: "tbl-1280-sel-5",
+            state: State::MainRowSelected,
+            window: (1280.0, 760.0),
+            check: Check::Present("table.header.5"),
+            why: "Private IP still shown at 1280 with the inspector open",
             known_bug: None,
         },
         // 4 columns below 720 wide.

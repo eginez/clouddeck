@@ -36,6 +36,7 @@ pub struct ContextBar {
     pub failed_regions: Vec<String>,
     pub last_success_text: String,
     pub load_error_text: Option<String>,
+    pub load_failed: bool,
 }
 
 impl EventEmitter<ContextBarEvent> for ContextBar {}
@@ -49,6 +50,7 @@ impl ContextBar {
             failed_regions: Vec::new(),
             last_success_text: String::new(),
             load_error_text: None,
+            load_failed: false,
         }
     }
 }
@@ -68,6 +70,7 @@ impl Render for ContextBar {
             state.view_model.is_loading(),
             &state.profile,
             &self.failed_regions,
+            self.load_failed,
         );
         let profile = state.profile.clone();
         let demo = state.demo;
@@ -79,7 +82,8 @@ impl Render for ContextBar {
         if item.is_warning() {
             record(cx, "bar.failure", text_in(item.text(), "warntext"));
         } else {
-            record(cx, "bar.status", text_in(item.text(), "dim"));
+            let fg = if item.is_error() { "err" } else { "dim" };
+            record(cx, "bar.status", text_in(item.text(), fg));
         }
 
         let mut left = div()
@@ -310,6 +314,7 @@ fn status_element(item: &StatusItem, palette: &Palette, cx: &Context<ContextBar>
     } else {
         div()
             .debug_selector(|| "bar.status".into())
+            .when(item.is_error(), |status| status.text_color(palette.err))
             .child(item.text())
             .into_any_element()
     }

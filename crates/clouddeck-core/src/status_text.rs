@@ -68,16 +68,19 @@ pub enum StatusItem {
     RegionFailed { region: String },
     /// Two or more regions failed to load.
     RegionsFailed { count: usize },
+    /// The fleet could not be loaded and no instances are shown.
+    LoadFailed,
     /// A short confirmation after an action.
     Flash { text: String },
 }
 
-/// Picks the status item: flash, then loading, then region failures, then ready.
+/// Picks the status item: flash, then loading, then load failure, then region failures, then ready.
 pub fn status_item(
     flash: Option<&str>,
     loading: bool,
     profile: &str,
     failed_regions: &[String],
+    load_failed: bool,
 ) -> StatusItem {
     if let Some(text) = flash.filter(|text| !text.is_empty()) {
         return StatusItem::Flash {
@@ -88,6 +91,9 @@ pub fn status_item(
         return StatusItem::Loading {
             profile: profile.to_string(),
         };
+    }
+    if load_failed {
+        return StatusItem::LoadFailed;
     }
     match failed_regions {
         [] => StatusItem::Ready,
@@ -106,6 +112,7 @@ impl StatusItem {
             StatusItem::Loading { profile } => format!("Loading {profile}\u{2026}"),
             StatusItem::RegionFailed { region } => format!("{region} failed"),
             StatusItem::RegionsFailed { count } => format!("{count} regions failed"),
+            StatusItem::LoadFailed => "Couldn\u{2019}t load".to_string(),
             StatusItem::Flash { text } => text.clone(),
         }
     }
@@ -116,6 +123,11 @@ impl StatusItem {
             self,
             StatusItem::RegionFailed { .. } | StatusItem::RegionsFailed { .. }
         )
+    }
+
+    /// Whether the item is the red load-failure segment.
+    pub fn is_error(&self) -> bool {
+        matches!(self, StatusItem::LoadFailed)
     }
 }
 
@@ -247,29 +259,58 @@ mod tests {
     fn status_item_prefers_flash_then_loading_then_failures() {
         let a = regions(&["a"]);
         assert_eq!(
-            status_item(Some("Copied i-1"), true, "p", &a),
+            status_item(Some("Copied i-1"), true, "p", &a, false),
             StatusItem::Flash {
                 text: "Copied i-1".to_string()
             }
         );
-        assert_eq!(status_item(Some(""), false, "p", &[]), StatusItem::Ready);
         assert_eq!(
-            status_item(None, true, "prod-readonly", &a),
+            status_item(Some(""), false, "p", &[], false),
+            StatusItem::Ready
+        );
+        assert_eq!(
+            status_item(None, true, "prod-readonly", &a, false),
             StatusItem::Loading {
                 profile: "prod-readonly".to_string()
             }
         );
         assert_eq!(
-            status_item(None, false, "p", &regions(&["eu-central-1"])),
+            status_item(None, false, "p", &regions(&["eu-central-1"]), false),
             StatusItem::RegionFailed {
                 region: "eu-central-1".to_string()
             }
         );
         assert_eq!(
-            status_item(None, false, "p", &regions(&["a", "b", "c"])),
+            status_item(None, false, "p", &regions(&["a", "b", "c"]), false),
             StatusItem::RegionsFailed { count: 3 }
         );
-        assert_eq!(status_item(None, false, "p", &[]), StatusItem::Ready);
+        assert_eq!(status_item(None, false, "p", &[], false), StatusItem::Ready);
+    }
+
+    #[test]
+    fn load_failure_is_an_error_status_and_beats_region_failures() {
+        let failed = regions(&["a"]);
+        let item = status_item(None, false, "p", &[], true);
+        assert_eq!(item, StatusItem::LoadFailed);
+        assert_eq!(item.text(), "Couldn\u{2019}t load");
+        assert!(item.is_error());
+        assert!(!item.is_warning());
+        assert_eq!(
+            status_item(Some("Copied"), false, "p", &[], true),
+            StatusItem::Flash {
+                text: "Copied".to_string()
+            }
+        );
+        assert_eq!(
+            status_item(None, true, "p", &[], true),
+            StatusItem::Loading {
+                profile: "p".to_string()
+            }
+        );
+        assert_eq!(
+            status_item(None, false, "p", &failed, true),
+            StatusItem::LoadFailed
+        );
     }
 
     #[test]

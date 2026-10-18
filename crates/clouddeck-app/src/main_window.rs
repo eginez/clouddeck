@@ -794,12 +794,16 @@ impl MainWindow {
             )),
             _ => None,
         };
+        let load_failed = shown_error.is_some()
+            && fleet.view_model.instances().is_empty()
+            && !fleet.view_model.is_loading();
         self.last_load_error = shown_error;
         self.context_bar.update(cx, |bar, cx| {
             if bar.region_label == region_label
                 && bar.failed_regions == failed_regions
                 && bar.last_success_text == last_success_text
                 && bar.load_error_text == load_error_text
+                && bar.load_failed == load_failed
             {
                 return;
             }
@@ -807,6 +811,7 @@ impl MainWindow {
             bar.failed_regions = failed_regions;
             bar.last_success_text = last_success_text;
             bar.load_error_text = load_error_text;
+            bar.load_failed = load_failed;
             cx.notify();
         });
     }
