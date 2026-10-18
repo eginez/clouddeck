@@ -259,6 +259,7 @@ pub(crate) fn build<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui_record::recorded;
 
     const ALL: [State; 6] = [
         State::MainIdle,
@@ -358,6 +359,29 @@ mod tests {
         let (_fleet, _main, cx) = build(State::MainPartial, 1280.0, 760.0, cx);
 
         assert!(cx.debug_bounds("bar.failure").is_some());
+    }
+
+    #[gpui::test]
+    fn load_failure_shows_the_red_status_segment(cx: &mut TestAppContext) {
+        let (_fleet, _main, cx) = build(State::MainFailure, 1280.0, 760.0, cx);
+
+        let status = cx
+            .update(|_, app| recorded(app, "bar.status"))
+            .expect("bar.status is recorded");
+        assert_eq!(status.text.as_deref(), Some("Couldn\u{2019}t load"));
+        assert_eq!(status.fg, Some("err"));
+        assert!(cx.debug_bounds("bar.status").is_some());
+    }
+
+    #[gpui::test]
+    fn idle_status_is_neutral_ready(cx: &mut TestAppContext) {
+        let (_fleet, _main, cx) = build(State::MainIdle, 1280.0, 760.0, cx);
+
+        let status = cx
+            .update(|_, app| recorded(app, "bar.status"))
+            .expect("bar.status is recorded");
+        assert_eq!(status.text.as_deref(), Some("Ready"));
+        assert_eq!(status.fg, Some("dim"));
     }
 
     #[gpui::test]
