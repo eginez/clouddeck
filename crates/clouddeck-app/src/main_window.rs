@@ -11,10 +11,11 @@ use clouddeck_core::{
     should_refresh_on_focus, stale_count, updated_text,
 };
 use gpui::{
-    AnyElement, AnyView, App, Bounds, ClickEvent, ClipboardItem, Context, Div, Entity,
+    AnyElement, AnyView, App, Bounds, ClickEvent, ClipboardItem, Context, Corner, Div, Entity,
     EventEmitter, FocusHandle, Focusable, Global, IntoElement, KeyBinding, MouseDownEvent, Pixels,
     Point, Render, SharedString, Subscription, Task, TitlebarOptions, Window, WindowAppearance,
-    WindowBounds, WindowOptions, actions, div, hsla, point, prelude::*, px, relative, size,
+    WindowBounds, WindowOptions, actions, anchored, deferred, div, hsla, point, prelude::*, px,
+    relative, size,
 };
 
 use crate::app_menus;
@@ -729,10 +730,13 @@ impl MainWindow {
             ),
             Overlay::RowMenu { position, .. } => (
                 "main.overlay.rowmenu",
-                overlay_panel("main.overlay.rowmenu", view)
-                    .absolute()
-                    .left(position.x)
-                    .top(position.y),
+                div().absolute().top_0().left_0().child(deferred(
+                    anchored()
+                        .position(position)
+                        .anchor(Corner::TopLeft)
+                        .snap_to_window_with_margin(px(OVERLAY_EDGE_INSET))
+                        .child(overlay_panel("main.overlay.rowmenu", view)),
+                )),
             ),
             Overlay::Failure => (
                 "main.overlay.failure",
@@ -1627,6 +1631,26 @@ mod tests {
             fleet.read_with(cx, |fleet, _| fleet.selected.clone()),
             Some("us-east-1:i-2".to_string())
         );
+    }
+
+    #[gpui::test]
+    fn row_menu_opened_near_the_right_edge_stays_in_a_compact_window(cx: &mut TestAppContext) {
+        let (_fleet, main, cx) = rooted_main_window(cx, three_instances(), 520.0, 760.0);
+        main.update_in(cx, |main, window, cx| {
+            main.open_row_menu(
+                "us-east-1:i-2".to_string(),
+                point(px(500.0), px(100.0)),
+                window,
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        let bounds = cx
+            .debug_bounds("main.overlay.rowmenu")
+            .expect("row menu should render");
+        assert!(bounds.right() <= px(520.0));
+        assert!(bounds.left() >= px(0.0));
     }
 
     #[gpui::test]

@@ -180,5 +180,48 @@ pub(crate) fn rules() -> Vec<Rule> {
             why: "first item rendered",
             known_bug: None,
         },
+        Rule {
+            id: "ovl-rowmenu-520-in-window",
+            state: State::OverlayRowMenu,
+            window: (520.0, 760.0),
+            check: Check::InWindow("main.overlay.rowmenu"),
+            why: "context menu repositioned to fit a compact window",
+            known_bug: None,
+        },
+        Rule {
+            id: "ovl-rowmenu-520-w",
+            state: State::OverlayRowMenu,
+            window: (520.0, 760.0),
+            check: Check::WidthBetween("main.overlay.rowmenu", 180.0, 240.0),
+            why: "menu not squeezed when compact",
+            known_bug: None,
+        },
+        Rule {
+            id: "ovl-rowmenu-520-item4-in",
+            state: State::OverlayRowMenu,
+            window: (520.0, 760.0),
+            check: Check::Inside {
+                inner: "rowmenu.item.3",
+                outer: "main.overlay.rowmenu",
+            },
+            why: "Open in Console fully inside the menu when compact",
+            known_bug: None,
+        },
+        Rule {
+            id: "ovl-rowmenu-700-in-window",
+            state: State::OverlayRowMenu,
+            window: (700.0, 760.0),
+            check: Check::InWindow("main.overlay.rowmenu"),
+            why: "context menu fully visible when narrow",
+            known_bug: None,
+        },
+        Rule {
+            id: "ovl-rowmenu-520-nonzero",
+            state: State::OverlayRowMenu,
+            window: (520.0, 760.0),
+            check: Check::NonZero("rowmenu.item.0"),
+            why: "first item rendered when compact",
+            known_bug: None,
+        },
     ]
 }
