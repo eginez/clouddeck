@@ -941,6 +941,16 @@ mod tests {
     }
 
     #[gpui::test]
+    fn bad_age_shows_the_error_row(cx: &mut TestAppContext) {
+        let (_state, _search, cx) = rooted_search(cx, true);
+
+        cx.simulate_input("age:abc");
+        cx.run_until_parked();
+
+        assert!(cx.debug_bounds("search.error").is_some());
+    }
+
+    #[gpui::test]
     fn valid_query_hides_the_error_row(cx: &mut TestAppContext) {
         let (_state, _search, cx) = rooted_search(cx, true);
 
