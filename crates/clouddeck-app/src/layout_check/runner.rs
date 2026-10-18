@@ -7,6 +7,7 @@ use gpui::{TestAppContext, px, size};
 
 use super::rules::{Rule, all_rules, evaluate};
 use super::states::{self, State};
+use crate::ui_record;
 
 #[derive(Debug, PartialEq, Eq)]
 enum Outcome {
@@ -59,13 +60,16 @@ fn layout_rules_hold(cx: &mut TestAppContext) {
 
     let mut problems = Vec::new();
     for ((state, (w, h)), members) in groups {
+        cx.update(|app| ui_record::clear(app));
         let (_fleet, _main, vcx) = states::build(state, w, h, cx);
         let vcx = RefCell::new(vcx);
         let lookup = |sel: &'static str| vcx.borrow_mut().debug_bounds(sel);
+        let records =
+            |sel: &'static str| vcx.borrow_mut().update(|_, app| ui_record::recorded(app, sel));
         let window = size(px(w), px(h));
 
         for rule in members {
-            let result = evaluate(&rule.check, &lookup, window);
+            let result = evaluate(&rule.check, &lookup, &records, window);
             match classify(rule, &result) {
                 Outcome::Pass => {}
                 Outcome::Known => {

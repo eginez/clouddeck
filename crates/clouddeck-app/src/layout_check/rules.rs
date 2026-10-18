@@ -9,9 +9,11 @@ use super::rules_bar;
 use super::rules_main;
 use super::rules_overlays;
 use super::rules_search;
+use super::rules_style;
 use super::rules_table;
 use super::rules_welcome;
 use super::states::State;
+use crate::ui_record::Recorded;
 
 /// One geometric assertion over the debug-selector boxes of a named state.
 #[derive(Clone, Copy, Debug)]
@@ -56,6 +58,21 @@ pub(crate) enum Check {
     HeightBetween(&'static str, f32, f32),
     /// The box is horizontally centred in the window.
     CenteredX(&'static str),
+    /// The recorded text of the selector equals the given text.
+    TextIs {
+        target: &'static str,
+        text: &'static str,
+    },
+    /// The recorded text colour token of the selector equals the given token.
+    FgIs {
+        target: &'static str,
+        token: &'static str,
+    },
+    /// The recorded font of the selector equals the given font.
+    FontIs {
+        target: &'static str,
+        font: &'static str,
+    },
 }
 
 /// A layout assertion for one named state at one window size.
@@ -81,10 +98,18 @@ fn get(
     lookup(sel).ok_or_else(|| format!("{sel} was not rendered"))
 }
 
-/// Evaluates `check` against the boxes reported by `lookup`.
+fn recorded(
+    records: &dyn Fn(&'static str) -> Option<Recorded>,
+    sel: &'static str,
+) -> Result<Recorded, String> {
+    records(sel).ok_or_else(|| format!("{sel} recorded nothing"))
+}
+
+/// Evaluates `check` against the boxes reported by `lookup` and the render records reported by `records`.
 pub(crate) fn evaluate(
     check: &Check,
     lookup: &dyn Fn(&'static str) -> Option<Bounds<Pixels>>,
+    records: &dyn Fn(&'static str) -> Option<Recorded>,
     window: Size<Pixels>,
 ) -> Result<(), String> {
     match *check {
@@ -126,6 +151,18 @@ pub(crate) fn evaluate(
             geometry::height_between(sel, get(lookup, sel)?, min, max)
         }
         Check::CenteredX(sel) => geometry::centered_x(sel, get(lookup, sel)?, window, TOL),
+        Check::TextIs { target, text } => match recorded(records, target)?.text {
+            Some(actual) if actual == text => Ok(()),
+            actual => Err(format!("{target} text is {actual:?}, want {text:?}")),
+        },
+        Check::FgIs { target, token } => match recorded(records, target)?.fg {
+            Some(actual) if actual == token => Ok(()),
+            actual => Err(format!("{target} fg is {actual:?}, want {token:?}")),
+        },
+        Check::FontIs { target, font } => match recorded(records, target)?.font {
+            Some(actual) if actual == font => Ok(()),
+            actual => Err(format!("{target} font is {actual:?}, want {font:?}")),
+        },
     }
 }
 
@@ -138,6 +175,7 @@ pub(crate) fn all_rules() -> Vec<Rule> {
         rules_search::rules(),
         rules_overlays::rules(),
         rules_welcome::rules(),
+        rules_style::rules(),
     ]
     .into_iter()
     .flatten()
@@ -160,7 +198,77 @@ mod tests {
 
     fn check(boxes: &[(&'static str, Bounds<Pixels>)], check: Check) -> Result<(), String> {
         let map: HashMap<&'static str, Bounds<Pixels>> = boxes.iter().cloned().collect();
-        evaluate(&check, &|sel| map.get(sel).cloned(), win())
+        evaluate(&check, &|sel| map.get(sel).cloned(), &|_| None, win())
+    }
+
+    fn check_records(
+        records: &[(&'static str, Recorded)],
+        check: Check,
+    ) -> Result<(), String> {
+        let map: HashMap<&'static str, Recorded> = records.iter().cloned().collect();
+        evaluate(&check, &|_| None, &|sel| map.get(sel).cloned(), win())
+    }
+
+    fn text(text: &str) -> Recorded {
+        Recorded {
+            text: Some(text.to_string()),
+            ..Recorded::default()
+        }
+    }
+
+    #[test]
+    fn text_is_ok_and_err() {
+        let c = Check::TextIs {
+            target: "bar.status",
+            text: "Ready",
+        };
+        assert!(check_records(&[("bar.status", text("Ready"))], c).is_ok());
+        let err = check_records(&[("bar.status", text("Busy"))], c).unwrap_err();
+        assert!(err.contains("bar.status") && err.contains("Busy"), "{err}");
+        let err = check_records(&[], c).unwrap_err();
+        assert_eq!(err, "bar.status recorded nothing");
+    }
+
+    #[test]
+    fn fg_is_ok_and_err() {
+        let c = Check::FgIs {
+            target: "bar.failure",
+            token: "warntext",
+        };
+        let amber = Recorded {
+            fg: Some("warntext"),
+            ..Recorded::default()
+        };
+        let neutral = Recorded {
+            fg: Some("dim"),
+            ..Recorded::default()
+        };
+        assert!(check_records(&[("bar.failure", amber)], c).is_ok());
+        let err = check_records(&[("bar.failure", neutral)], c).unwrap_err();
+        assert!(err.contains("bar.failure") && err.contains("warntext"), "{err}");
+        let err = check_records(&[], c).unwrap_err();
+        assert_eq!(err, "bar.failure recorded nothing");
+    }
+
+    #[test]
+    fn font_is_ok_and_err() {
+        let c = Check::FontIs {
+            target: "table.row.us-east-1:i-1.id",
+            font: "mono",
+        };
+        let mono = Recorded {
+            font: Some("mono"),
+            ..Recorded::default()
+        };
+        let ui = Recorded {
+            font: Some("ui"),
+            ..Recorded::default()
+        };
+        assert!(check_records(&[("table.row.us-east-1:i-1.id", mono)], c).is_ok());
+        let err = check_records(&[("table.row.us-east-1:i-1.id", ui)], c).unwrap_err();
+        assert!(err.contains("mono"), "{err}");
+        let err = check_records(&[], c).unwrap_err();
+        assert_eq!(err, "table.row.us-east-1:i-1.id recorded nothing");
     }
 
     #[test]
