@@ -1,7 +1,8 @@
 //! Dense sortable instance table (design/images/01).
 
 use clouddeck_core::{
-    CellText, Column, EC2Instance, SortState, cell_text, is_stale_instance, visible_columns,
+    CellText, Column, EC2Instance, SortState, cell_text, is_stale_instance, layout_rules,
+    visible_columns_fit,
 };
 use gpui::{
     ClickEvent, Context, Div, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Hsla,
@@ -13,7 +14,7 @@ use gpui::{
 use crate::{
     fleet_state::FleetState,
     icons::AppIcon,
-    tokens::{FONT_SIZE, MONO_FONT, Palette, ROW_HEIGHT},
+    tokens::{FONT_SIZE, INSPECTOR_WIDTH, MONO_FONT, Palette, ROW_HEIGHT, SIDEBAR_WIDTH},
     ui_record::{Recorded, forget_prefix, record},
 };
 
@@ -87,9 +88,21 @@ impl Render for InstanceTable {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         forget_prefix(cx, "table.");
         let palette = crate::tokens::palette(cx);
-        let columns = visible_columns(window.viewport_size().width.into());
+        let viewport = window.viewport_size();
+        let window_width = f32::from(viewport.width);
+        let overlays = layout_rules(window_width, f32::from(viewport.height)).panes_are_overlays;
         let entity = self.state.clone();
         let state = self.state.read(cx);
+        let mut pane_width = window_width;
+        if !overlays {
+            if state.sidebar_open {
+                pane_width -= SIDEBAR_WIDTH;
+            }
+            if state.inspector_open && state.selected_instance().is_some() {
+                pane_width -= INSPECTOR_WIDTH;
+            }
+        }
+        let columns = visible_columns_fit(window_width, pane_width);
         let sort = state.sort;
         let selected = state.selected.clone();
         let stale = state.view_model.stale_regions().to_vec();
@@ -519,6 +532,15 @@ mod tests {
 
         assert!(cx.debug_bounds("table.header.3").is_some());
         assert!(cx.debug_bounds("table.header.4").is_none());
+    }
+
+    #[gpui::test]
+    fn sidebar_open_at_960_drops_public_ip_to_fit_the_pane(cx: &mut TestAppContext) {
+        let state = loaded_state(cx);
+        let cx = open_table(cx, state, 960.0);
+
+        assert!(cx.debug_bounds("table.header.5").is_some());
+        assert!(cx.debug_bounds("table.header.6").is_none());
     }
 
     #[gpui::test]

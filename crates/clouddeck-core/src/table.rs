@@ -120,6 +120,21 @@ pub fn visible_columns(window_width: f32) -> Vec<Column> {
         .collect()
 }
 
+/// Columns that fit the table pane, dropping from the right until their widths fit or three remain.
+pub fn visible_columns_fit(window_width: f32, pane_width: f32) -> Vec<Column> {
+    let mut columns = visible_columns(window_width);
+    while columns.len() > 3
+        && columns
+            .iter()
+            .map(|column| column.default_width())
+            .sum::<f32>()
+            > pane_width
+    {
+        columns.pop();
+    }
+    columns
+}
+
 /// Column the table is sorted by, and whether the order is ascending.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SortState {
@@ -360,6 +375,37 @@ mod tests {
                 Column::State,
                 Column::Type
             ]
+        );
+    }
+
+    #[test]
+    fn visible_columns_fit_drops_until_the_pane_fits() {
+        let count = |window: f32, pane: f32| visible_columns_fit(window, pane).len();
+        assert_eq!(count(1280.0, 1070.0), 8);
+        assert_eq!(count(1100.0, 889.0), 7);
+        assert_eq!(
+            visible_columns_fit(960.0, 750.0),
+            [
+                Column::Name,
+                Column::InstanceId,
+                Column::State,
+                Column::Type,
+                Column::Az,
+                Column::PrivateIp
+            ]
+        );
+        assert_eq!(
+            visible_columns_fit(1280.0, 730.0),
+            visible_columns_fit(960.0, 750.0)
+        );
+        assert_eq!(count(700.0, 700.0), 4);
+        assert_eq!(
+            visible_columns_fit(520.0, 520.0),
+            [Column::Name, Column::InstanceId, Column::State]
+        );
+        assert_eq!(
+            visible_columns_fit(1100.0, 100.0),
+            [Column::Name, Column::InstanceId, Column::State]
         );
     }
 

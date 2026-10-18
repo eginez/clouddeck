@@ -172,12 +172,15 @@ pub(crate) fn build<'a>(
     let bounds = Bounds::new(point(px(0.0), px(0.0)), size(px(width), px(height)));
     let slot_for_window = main_slot.clone();
     let fleet_for_window = fleet.clone();
-    // debug_bounds is never cleared between frames, so a focus change after the first
-    // frame would leave stale unfocused elements (the shortcut hint) behind. Focus
-    // states are therefore applied while the window is built, before it first draws.
-    let focus_before_first_frame = matches!(
+    // debug_bounds is never cleared between frames, so a change after the first frame
+    // (a focus change, or a selection that moves the table's columns) would leave stale
+    // elements behind. These states are therefore applied while the window is built.
+    let before_first_frame = matches!(
         state,
-        State::SearchFocusedEmpty | State::SearchTypingSt | State::SearchError
+        State::MainRowSelected
+            | State::SearchFocusedEmpty
+            | State::SearchTypingSt
+            | State::SearchError
     );
     let window = cx.update(|cx| {
         cx.open_window(window_options(bounds), move |window, cx| {
@@ -185,7 +188,7 @@ pub(crate) fn build<'a>(
             let scope = RegionScope::all(&regions);
             let main =
                 cx.new(|cx| MainWindow::new(fleet_for_window.clone(), regions, scope, window, cx));
-            if focus_before_first_frame {
+            if before_first_frame {
                 apply_render_state(
                     state,
                     &fleet_for_window,
@@ -243,7 +246,7 @@ pub(crate) fn build<'a>(
     } else {
         DEFAULT_ROW_MENU_ANCHOR
     };
-    if !focus_before_first_frame {
+    if !before_first_frame {
         cx.update(|window, app| {
             apply_render_state(state, &fleet, &main, row_menu_anchor, window, app)
         });
