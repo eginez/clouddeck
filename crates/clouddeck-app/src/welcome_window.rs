@@ -270,7 +270,26 @@ impl Render for WelcomeWindow {
                 .into_any_element()
         };
 
+        let add = div()
+            .id("welcome.add")
+            .debug_selector(|| "welcome.add".into())
+            .flex_none()
+            .flex()
+            .items_center()
+            .justify_center()
+            .w(px(24.0))
+            .h(px(32.0))
+            .rounded(px(BUTTON_RADIUS))
+            .text_color(palette.dim)
+            .hover(|button| button.bg(palette.hover))
+            .on_click(cx.listener(|_, _: &ClickEvent, _, cx| {
+                cx.emit(WelcomeEvent::ConnectToAws);
+            }))
+            .child(AppIcon::Plus.icon().text_color(palette.dim));
+
         let search = div()
+            .debug_selector(|| "welcome.searchbox".into())
+            .flex_1()
             .flex()
             .items_center()
             .gap(px(8.0))
@@ -288,6 +307,13 @@ impl Render for WelcomeWindow {
                     .child(Input::new(&self.filter).appearance(false)),
             );
 
+        let search_row = div()
+            .flex()
+            .items_center()
+            .gap(px(8.0))
+            .child(add)
+            .child(search);
+
         let footer = div()
             .text_size(px(SUBTITLE_FONT_SIZE))
             .text_color(palette.dim)
@@ -301,7 +327,7 @@ impl Render for WelcomeWindow {
             .h_full()
             .p(px(16.0))
             .gap(px(12.0))
-            .child(search)
+            .child(search_row)
             .child(body)
             .children(self.message.clone().map(|message| {
                 div()
@@ -621,6 +647,15 @@ mod tests {
         click(cx, "welcome.demo");
 
         assert_eq!(*events.borrow(), vec![WelcomeEvent::ExploreDemo]);
+    }
+
+    #[gpui::test]
+    fn clicking_the_add_button_opens_the_connect_flow(cx: &mut TestAppContext) {
+        let (_, events, cx) = open_welcome(cx, profiles(), "");
+
+        click(cx, "welcome.add");
+
+        assert_eq!(*events.borrow(), vec![WelcomeEvent::ConnectToAws]);
     }
 
     #[gpui::test]
