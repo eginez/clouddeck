@@ -17,6 +17,7 @@ use gpui_component::Sizable;
 use crate::fleet_state::FleetState;
 use crate::icons::AppIcon;
 use crate::tokens::{FONT_SIZE, MONO_FONT, Palette, STATUS_FONT_SIZE};
+use crate::ui_record::{Recorded, forget_prefix, record};
 
 const SIDE_PADDING: f32 = 12.0;
 const GAP: f32 = 8.0;
@@ -77,6 +78,7 @@ impl InspectorPane {
 
 impl Render for InspectorPane {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        forget_prefix(cx, "inspector.");
         let palette = crate::tokens::palette(cx);
 
         let state = self.state.read(cx);
@@ -85,6 +87,27 @@ impl Render for InspectorPane {
         };
         let tags_show_all = state.tags_show_all;
         let sections = inspector_sections(&instance);
+        let summary = inspector_summary(&instance, SystemTime::now());
+
+        let title = inspector_title(&instance);
+        record(
+            cx,
+            "inspector.title",
+            Recorded {
+                text: Some(title.clone().unwrap_or_else(|| "unnamed".to_string())),
+                fg: Some(if title.is_some() { "text" } else { "faint" }),
+                ..Default::default()
+            },
+        );
+        record(
+            cx,
+            "inspector.summary",
+            Recorded {
+                text: Some(summary.clone()),
+                fg: Some("dim"),
+                ..Default::default()
+            },
+        );
 
         div()
             .flex()
@@ -93,7 +116,7 @@ impl Render for InspectorPane {
             .bg(palette.panel)
             .text_size(px(FONT_SIZE))
             .text_color(palette.text)
-            .child(header(&instance, &palette, cx))
+            .child(header(&instance, summary, &palette, cx))
             .child(
                 div()
                     .id("inspector-body")
@@ -123,6 +146,7 @@ impl Render for InspectorPane {
 
 fn header(
     instance: &EC2Instance,
+    summary: String,
     palette: &Palette,
     cx: &Context<InspectorPane>,
 ) -> impl IntoElement {
@@ -190,7 +214,7 @@ fn header(
             div()
                 .debug_selector(|| "inspector.summary".into())
                 .text_color(palette.dim)
-                .child(inspector_summary(instance, SystemTime::now())),
+                .child(summary),
         )
 }
 
@@ -476,6 +500,8 @@ fn copy_button(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::layout_check::states::{self, State};
+    use crate::ui_record::recorded;
     use crate::view_models::InstanceListViewModel;
     use clouddeck_core::{EC2InstanceTag, EC2SecurityGroup, MockComputeService};
     use gpui::{
@@ -774,5 +800,21 @@ mod tests {
         state.read_with(cx, |state, _| {
             assert_eq!(state.flash.as_deref(), Some("Opening in AWS Console…"));
         });
+    }
+
+    #[gpui::test]
+    /// Selecting prod-api-1 records its name as the inspector title.
+    fn selected_row_records_the_inspector_title(cx: &mut TestAppContext) {
+        let (fleet, _main, cx) = states::build(State::MainRowSelected, 1280.0, 760.0, cx);
+        let fleet = fleet.expect("main state has a fleet");
+        fleet.update(cx, |fleet, cx| {
+            fleet.select(Some("us-east-1:i-scenario-001".to_string()), cx)
+        });
+        cx.run_until_parked();
+
+        let title = cx
+            .update(|_, app| recorded(app, "inspector.title"))
+            .expect("inspector title records");
+        assert_eq!(title.text, Some("prod-api-1".to_string()));
     }
 }

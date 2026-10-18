@@ -11,6 +11,7 @@ use gpui_component::Sizable;
 
 use crate::icons::AppIcon;
 use crate::tokens::{FONT_SIZE, MONO_FONT, Palette};
+use crate::ui_record::{Recorded, record};
 
 const CONTENT_MAX_WIDTH: f32 = 360.0;
 const LOADING_ICON_SIZE: f32 = 56.0;
@@ -53,6 +54,23 @@ impl Render for CenterStateView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let palette = crate::tokens::palette(cx);
         let (icon, icon_color) = state_icon(&self.state, &palette);
+        record(
+            cx,
+            "center.title",
+            Recorded {
+                text: Some(self.text.title.clone()),
+                fg: Some("text"),
+                ..Default::default()
+            },
+        );
+        record(
+            cx,
+            "center.body",
+            Recorded {
+                text: Some(self.text.body.clone()),
+                ..Default::default()
+            },
+        );
 
         let icon_element = if self.state == CenterState::Loading {
             icon.icon()
@@ -157,6 +175,8 @@ mod tests {
     use std::rc::Rc;
 
     use super::*;
+    use crate::layout_check::states::{self, State};
+    use crate::ui_record::recorded;
     use clouddeck_core::{CenterContext, center_text};
     use gpui::{Entity, TestAppContext, VisualTestContext};
     use gpui_component::Root;
@@ -263,5 +283,16 @@ mod tests {
             *events.borrow(),
             vec![CenterEvent::Action(CenterState::NoMatch)]
         );
+    }
+
+    #[gpui::test]
+    /// A failed fleet load records the centered failure title.
+    fn failed_load_records_the_centered_title(cx: &mut TestAppContext) {
+        let (_fleet, _main, cx) = states::build(State::MainFailure, 1280.0, 760.0, cx);
+
+        let title = cx
+            .update(|_, app| recorded(app, "center.title"))
+            .expect("center title records");
+        assert_eq!(title.text, Some("Couldn’t load instances".to_string()));
     }
 }
