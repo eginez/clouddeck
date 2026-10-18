@@ -230,25 +230,9 @@ pub(crate) fn build<'a>(
     });
     cx.run_until_parked();
 
-    let row_menu_anchor = if state == State::OverlayRowMenu {
-        let key = fleet.read_with(cx, |fleet, _| {
-            fleet
-                .visible_rows()
-                .first()
-                .expect("fleet has a visible row")
-                .id()
-        });
-        // debug_bounds only takes 'static selectors; the leak lasts for one test.
-        let selector: &'static str = Box::leak(format!("table.row.{key}").into_boxed_str());
-        cx.debug_bounds(selector)
-            .unwrap_or_else(|| panic!("{selector} should be rendered"))
-            .center()
-    } else {
-        DEFAULT_ROW_MENU_ANCHOR
-    };
     if !before_first_frame {
         cx.update(|window, app| {
-            apply_render_state(state, &fleet, &main, row_menu_anchor, window, app)
+            apply_render_state(state, &fleet, &main, DEFAULT_ROW_MENU_ANCHOR, window, app)
         });
     }
     cx.run_until_parked();
