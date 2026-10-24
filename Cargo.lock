@@ -1363,8 +1363,12 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "clouddeck-core",
+ "flate2",
  "gpui",
  "gpui-component",
+ "semver",
+ "tar",
+ "tempfile",
  "tokio",
 ]
 
