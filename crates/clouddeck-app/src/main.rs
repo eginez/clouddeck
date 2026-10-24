@@ -78,6 +78,7 @@ fn main() {
             }
             cx.on_action(|_: &Quit, cx| cx.quit());
             cx.bind_keys(shell::app_key_bindings());
+            updater::start(cx);
             cx.activate(true);
         });
 }

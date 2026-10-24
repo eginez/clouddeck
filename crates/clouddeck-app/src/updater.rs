@@ -222,6 +222,7 @@ pub fn start(cx: &mut App) -> Entity<Updater> {
             std::env::current_exe().unwrap_or_default(),
         )
     });
+    crate::update_window::register(cx, &updater);
     updater.update(cx, |updater, cx| updater.maybe_auto_check(true, cx));
 
     let hourly = updater.clone();
