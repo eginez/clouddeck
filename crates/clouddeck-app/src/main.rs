@@ -36,6 +36,8 @@ mod theme;
 mod tokens;
 mod toolbar;
 mod ui_record;
+mod update_window;
+mod updater;
 // `sidebar` (the port of the oracle's left-nav `SidebarView`) was removed:
 // the agreed layout (clouddeck-rs-wz2.3) drops the left sidebar in favor of
 // a full-width central table with a bottom context bar. `shell.rs` already
