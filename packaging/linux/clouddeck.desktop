@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=CloudDeck
+Comment=Browse your AWS EC2 fleet
+Exec=clouddeck
+Icon=clouddeck
+Categories=Development;Utility;
+Terminal=false
