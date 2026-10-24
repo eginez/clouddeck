@@ -1,0 +1,54 @@
+{
+ "prelude": "",
+ "shots": [
+  {
+   "name": "icon_16px",
+   "description": "16px export",
+   "setup": "await new Promise(r=>setTimeout(r,150));",
+   "clip": "#s16",
+   "scale": 1
+  },
+  {
+   "name": "icon_32px",
+   "description": "32px export",
+   "setup": "await new Promise(r=>setTimeout(r,150));",
+   "clip": "#s32",
+   "scale": 1
+  },
+  {
+   "name": "icon_64px",
+   "description": "64px export",
+   "setup": "await new Promise(r=>setTimeout(r,150));",
+   "clip": "#s64",
+   "scale": 1
+  },
+  {
+   "name": "icon_128px",
+   "description": "128px export",
+   "setup": "await new Promise(r=>setTimeout(r,150));",
+   "clip": "#s128",
+   "scale": 1
+  },
+  {
+   "name": "icon_256px",
+   "description": "256px export",
+   "setup": "await new Promise(r=>setTimeout(r,150));",
+   "clip": "#s256",
+   "scale": 1
+  },
+  {
+   "name": "icon_512px",
+   "description": "512px export",
+   "setup": "await new Promise(r=>setTimeout(r,150));",
+   "clip": "#s512",
+   "scale": 1
+  },
+  {
+   "name": "icon_1024px",
+   "description": "1024px export",
+   "setup": "await new Promise(r=>setTimeout(r,150));",
+   "clip": "#s1024",
+   "scale": 1
+  }
+ ]
+}

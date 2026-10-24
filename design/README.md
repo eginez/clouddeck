@@ -10,6 +10,7 @@ This folder is the visual source of truth for layout, copy, states and behaviour
 |---|---|---|
 | [`main-window.html`](main-window.html) | The interactive mockup. One self-contained page (HTML, CSS and JavaScript, no dependencies) with sample data: 20 instances across 4 regions. Open it in a browser and click through. | People. It needs JavaScript, so models should use the images instead. |
 | [`images/`](images/) | 54 PNG renders of the mockup, one per state or part, plus [`images/README.md`](images/README.md), which lists every image and what it shows. | Models and people. Start here if you cannot run the page. |
+| [`icon/`](icon/) | The app icon: master SVG, PNG exports, the macOS `AppIcon.icns`, a generator script and a size board. See [`icon/README.md`](icon/README.md). | People and the app bundle. |
 | [`shots.json`](shots.json) | The manifest the renderer reads: for each image, its name, description, the JavaScript that puts the mockup in that state, the element to capture, and the scale. | The renderer. Edit it to add or change an image. |
 | [`render.swift`](render.swift) | The renderer. A small Swift script that loads `main-window.html` in the WebKit built into macOS, applies each shot's setup, and writes the PNGs. No downloads or browser install. macOS only. | Whoever regenerates the images. |
 

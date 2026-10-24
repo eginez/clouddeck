@@ -6,7 +6,8 @@
 //
 // Each shot reloads the page, runs `prelude` + `setup` (plain JS, may use await),
 // then snapshots the element matched by `clip` at `scale`x. Re-run it after
-// changing main-window.html or shots.json.
+// changing main-window.html or shots.json. Set CLOUDDECK_TRANSPARENT=1 to keep a
+// transparent background (used by design/icon).
 import Cocoa
 import WebKit
 
@@ -31,6 +32,8 @@ final class Renderer: NSObject, WKNavigationDelegate {
     override init() {
         let frame = NSRect(x: 0, y: 0, width: 1380, height: 1700)
         web = WKWebView(frame: frame, configuration: WKWebViewConfiguration())
+        // CLOUDDECK_TRANSPARENT=1 keeps the page background transparent (app icon export).
+        if ProcessInfo.processInfo.environment["CLOUDDECK_TRANSPARENT"] == "1" { web.setValue(false, forKey: "drawsBackground") }
         window = NSWindow(contentRect: frame, styleMask: [.titled], backing: .buffered, defer: false)
         window.contentView = web
         window.isReleasedWhenClosed = false
