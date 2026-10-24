@@ -1,0 +1,12 @@
+{
+ "prelude": "",
+ "shots": [
+  {
+   "name": "icon-sizes",
+   "description": "Icon at each size, light and dark",
+   "setup": "await new Promise(r=>setTimeout(r,300));",
+   "clip": "#board",
+   "scale": 1.5
+  }
+ ]
+}
