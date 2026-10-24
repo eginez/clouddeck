@@ -73,6 +73,8 @@ pub(crate) struct LaunchOptions {
     pub size: Option<(f32, f32)>,
     /// State to open the main window in, from `--render-state <Name>`.
     pub state: Option<State>,
+    /// Print the version and exit, from --version or -V.
+    pub print_version: bool,
 }
 
 /// Parses `WxH` (positive whole numbers) into a window content size.
@@ -92,10 +94,12 @@ pub(crate) fn parse_launch_options(
     let mut explicit_scenario = None;
     let mut size = None;
     let mut state = None;
+    let mut print_version = false;
     let mut args = args.into_iter();
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--demo" => demo = true,
+            "--version" | "-V" => print_version = true,
             "--demo-scenario" => {
                 explicit_scenario = Some(match args.next().as_deref() {
                     Some("empty") => DemoScenario::Empty,
@@ -133,16 +137,25 @@ pub(crate) fn parse_launch_options(
         scenario,
         size,
         state,
+        print_version,
     })
 }
 
-/// Launch options from the process arguments; exits with status 2 on a usage error.
+const USAGE: &str = "usage: clouddeck [--demo] [--demo-scenario <name>] [--size WxH] [--render-state <Name>] [--version]";
+
+/// Launch options from the process arguments; exits with status 2 on a usage error
+/// and status 0 after printing the version.
 pub(crate) fn launch_options() -> LaunchOptions {
-    parse_launch_options(std::env::args().skip(1)).unwrap_or_else(|message| {
+    let options = parse_launch_options(std::env::args().skip(1)).unwrap_or_else(|message| {
         eprintln!("clouddeck: {message}");
-        eprintln!("usage: clouddeck [--demo] [--demo-scenario <name>] [--size WxH] [--render-state <Name>]");
+        eprintln!("{USAGE}");
         std::process::exit(2)
-    })
+    });
+    if options.print_version {
+        println!("clouddeck {}", env!("CARGO_PKG_VERSION"));
+        std::process::exit(0);
+    }
+    options
 }
 
 fn scenario_for(kind: DemoScenario) -> EC2Scenario {
@@ -1031,6 +1044,33 @@ mod tests {
     fn explicit_demo_scenario_beats_the_state_scenario() {
         let options = parse(&["--demo-scenario", "large", "--render-state", "MainEmpty"]).unwrap();
         assert_eq!(options.scenario, DemoScenario::Large);
+    }
+
+    #[test]
+    fn version_flag_sets_print_version() {
+        assert!(parse(&["--version"]).unwrap().print_version);
+    }
+
+    #[test]
+    fn short_version_flag_sets_print_version() {
+        assert!(parse(&["-V"]).unwrap().print_version);
+    }
+
+    #[test]
+    fn version_flag_combines_with_demo() {
+        let options = parse(&["--demo", "--version"]).unwrap();
+        assert!(options.print_version);
+        assert!(options.demo);
+    }
+
+    #[test]
+    fn no_flags_leave_print_version_off() {
+        assert!(!parse(&[]).unwrap().print_version);
+    }
+
+    #[test]
+    fn usage_line_lists_version_flag() {
+        assert!(USAGE.contains("--version"));
     }
 
     #[test]
