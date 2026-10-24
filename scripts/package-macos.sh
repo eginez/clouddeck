@@ -14,7 +14,7 @@ cargo --manifest-path "$root_dir/Cargo.toml" "${cargo_args[@]}"
 
 app_dir="$root_dir/dist/CloudDeck.app"
 binary="$root_dir/target/release/clouddeck"
-version="$(awk -F'"' '$2 == "version" { print $4; exit }' "$root_dir/crates/clouddeck-app/Cargo.toml")"
+version="$(awk -F'"' '/^version = / { print $2; exit }' "$root_dir/crates/clouddeck-app/Cargo.toml")"
 
 rm -rf "$app_dir"
 mkdir -p "$app_dir/Contents/MacOS"
