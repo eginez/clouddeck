@@ -51,8 +51,11 @@ fn keygen(args: &[String]) -> Result<String, (i32, String)> {
         }
         Err(e) => return Err((1, format!("cannot create {path}: {e}"))),
     };
-    file.write_all(secret.as_bytes())
-        .map_err(|e| (1, format!("cannot write {path}: {e}")))?;
+    if let Err(e) = file.write_all(secret.as_bytes()) {
+        drop(file);
+        let _ = fs::remove_file(&path);
+        return Err((1, format!("cannot write {path}: {e}")));
+    }
     Ok(format!("public key: {public}"))
 }
 
@@ -129,10 +132,20 @@ fn build(args: &[String], now: &str) -> Result<String, (i32, String)> {
     fs::create_dir_all(&out).map_err(|e| (1, format!("cannot create {out}: {e}")))?;
     let manifest_path = Path::new(&out).join("manifest.json");
     let signature_path = Path::new(&out).join("manifest.json.sig");
-    fs::write(&manifest_path, &bytes)
-        .map_err(|e| (1, format!("cannot write {}: {e}", manifest_path.display())))?;
-    fs::write(&signature_path, format!("{signature}\n"))
-        .map_err(|e| (1, format!("cannot write {}: {e}", signature_path.display())))?;
+    let manifest_tmp = Path::new(&out).join("manifest.json.tmp");
+    let signature_tmp = Path::new(&out).join("manifest.json.sig.tmp");
+    let staged = fs::write(&manifest_tmp, &bytes)
+        .and_then(|_| fs::write(&signature_tmp, format!("{signature}\n")));
+    if let Err(e) = staged {
+        remove_all(&[&manifest_tmp, &signature_tmp]);
+        return Err((1, format!("cannot write release files in {out}: {e}")));
+    }
+    let renamed = fs::rename(&manifest_tmp, &manifest_path)
+        .and_then(|_| fs::rename(&signature_tmp, &signature_path));
+    if let Err(e) = renamed {
+        remove_all(&[&manifest_tmp, &signature_tmp]);
+        return Err((1, format!("cannot install release files in {out}: {e}")));
+    }
     Ok(format!(
         "{}\n{}",
         manifest_path.display(),
@@ -140,8 +153,14 @@ fn build(args: &[String], now: &str) -> Result<String, (i32, String)> {
     ))
 }
 
+fn remove_all(paths: &[&Path]) {
+    for path in paths {
+        let _ = fs::remove_file(path);
+    }
+}
+
 fn flag_pairs(args: &[String], allowed: &[&str]) -> Result<Vec<(String, String)>, (i32, String)> {
-    let mut pairs = Vec::new();
+    let mut pairs: Vec<(String, String)> = Vec::new();
     let mut iter = args.iter();
     while let Some(name) = iter.next() {
         if !allowed.contains(&name.as_str()) {
@@ -150,6 +169,12 @@ fn flag_pairs(args: &[String], allowed: &[&str]) -> Result<Vec<(String, String)>
         let value = iter
             .next()
             .ok_or_else(|| (2, format!("{name} needs a value")))?;
+        if value.starts_with("--") {
+            return Err((2, format!("{name} needs a value, got {value}")));
+        }
+        if name != "--asset" && pairs.iter().any(|(seen, _)| seen == name) {
+            return Err((2, format!("duplicate {name}")));
+        }
         pairs.push((name.clone(), value.clone()));
     }
     Ok(pairs)
@@ -333,6 +358,59 @@ mod tests {
         let (key, _) = keygen_in(dir.path());
         let err = run(&build_args(dir.path(), &key, &[]), NOW).unwrap_err();
         assert_eq!(err.0, 2);
+    }
+
+    #[test]
+    fn build_rejects_flag_like_value() {
+        let dir = tempfile::tempdir().unwrap();
+        let (key, _) = keygen_in(dir.path());
+        let asset = write_asset(dir.path(), MAC_ASSET);
+        let spec = format!("macos-aarch64={}", asset.display());
+        let mut values = build_args(dir.path(), &key, &[spec]);
+        let index = values.iter().position(|value| value == "--out").unwrap() + 1;
+        values[index] = "--x".into();
+        let err = run(&values, NOW).unwrap_err();
+        assert_eq!(err, (2, "--out needs a value, got --x".to_string()));
+    }
+
+    #[test]
+    fn build_stage_failure_leaves_no_output() {
+        let dir = tempfile::tempdir().unwrap();
+        let (key, _) = keygen_in(dir.path());
+        let asset = write_asset(dir.path(), MAC_ASSET);
+        let spec = format!("macos-aarch64={}", asset.display());
+        let out = dir.path().join("out");
+        fs::create_dir_all(out.join("manifest.json.sig.tmp")).unwrap();
+        let (code, _) = run(&build_args(dir.path(), &key, &[spec]), NOW).unwrap_err();
+        assert_eq!(code, 1);
+        assert!(!out.join("manifest.json.tmp").exists());
+        assert!(!out.join("manifest.json").exists());
+    }
+
+    #[test]
+    fn build_rejects_duplicate_scalar_flag() {
+        let dir = tempfile::tempdir().unwrap();
+        let (key, _) = keygen_in(dir.path());
+        let asset = write_asset(dir.path(), MAC_ASSET);
+        let spec = format!("macos-aarch64={}", asset.display());
+        let mut values = build_args(dir.path(), &key, &[spec]);
+        values.extend(args(&["--version", "0.3.0"]));
+        let (code, message) = run(&values, NOW).unwrap_err();
+        assert_eq!(code, 2);
+        assert_eq!(message, "duplicate --version");
+    }
+
+    #[test]
+    fn build_leaves_no_staging_files_behind() {
+        let dir = tempfile::tempdir().unwrap();
+        let (key, _) = keygen_in(dir.path());
+        let asset = write_asset(dir.path(), MAC_ASSET);
+        let spec = format!("macos-aarch64={}", asset.display());
+        run(&build_args(dir.path(), &key, &[spec]), NOW).unwrap();
+
+        let out = dir.path().join("out");
+        assert!(!out.join("manifest.json.tmp").exists());
+        assert!(!out.join("manifest.json.sig.tmp").exists());
     }
 
     #[test]
