@@ -14,6 +14,7 @@ use crate::updater::{Updater, UpdaterEvent};
 
 const WINDOW_SIZE: (f32, f32) = (440.0, 220.0);
 const NOTES_MAX_HEIGHT: f32 = 108.0;
+const TITLEBAR_INSET: f32 = 36.0;
 
 struct RegisteredUpdater(Entity<Updater>);
 
@@ -161,7 +162,9 @@ impl Render for UpdateWindowView {
             .flex()
             .flex_col()
             .gap(px(12.))
-            .p(px(20.))
+            .px(px(20.))
+            .pt(px(TITLEBAR_INSET))
+            .pb(px(20.))
             .bg(palette.win)
             .text_color(palette.text)
             .text_size(px(13.))
@@ -393,6 +396,33 @@ mod tests {
 
         assert!(shown(&mut window, "update.error"));
         assert!(shown(&mut window, "update.ok"));
+    }
+
+    #[gpui::test]
+    fn failure_message_clears_the_titlebar_inset(cx: &mut TestAppContext) {
+        let fixture = Fixture::new();
+        let updater = fixture.updater(cx, None, ASSET);
+        check(cx, &updater);
+
+        let mut window = open(cx, &updater);
+
+        let error = window
+            .debug_bounds("update.error")
+            .expect("update.error should be rendered");
+        assert!(
+            f32::from(error.origin.y) >= TITLEBAR_INSET,
+            "error text top {:?} overlaps the traffic lights",
+            error.origin.y
+        );
+        let ok = window
+            .debug_bounds("update.ok")
+            .expect("update.ok should be rendered");
+        assert!(
+            f32::from(ok.origin.y + ok.size.height) <= WINDOW_SIZE.1,
+            "OK button bottom {:?} is past the window height {}",
+            ok.origin.y + ok.size.height,
+            WINDOW_SIZE.1
+        );
     }
 
     #[cfg(target_os = "linux")]
