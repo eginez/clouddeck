@@ -17,6 +17,7 @@
 
 use crate::{AwsCredentialKind, AwsSsoConfiguration, BoxError, CloudDeckError};
 use aws_config::BehaviorVersion;
+use aws_sdk_ssooidc::operation::create_token::CreateTokenError;
 use aws_types::region::Region;
 use sha1::{Digest, Sha1};
 use std::{
@@ -242,9 +243,13 @@ impl PendingSsoSignIn {
     /// the device code expires, or the poll ceiling is hit, then caches the
     /// resulting token where the AWS SDK's credential chain expects it.
     pub async fn wait_for_completion(&self) -> Result<(), BoxError> {
+        self.complete_into(&home_dir()).await
+    }
+
+    async fn complete_into(&self, home: &Path) -> Result<(), BoxError> {
         let token = self.poll_until_ready().await?;
-        cache_sso_token(
-            &self.identifier,
+        write_cache_token_at(
+            &sso_cache_path(&self.identifier, home),
             &self.start_url,
             &self.region,
             &self.client,
@@ -295,18 +300,6 @@ fn sso_cache_path(identifier: &str, home: &Path) -> PathBuf {
 fn format_rfc3339(time: SystemTime) -> String {
     let datetime: chrono::DateTime<chrono::Utc> = time.into();
     datetime.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
-}
-
-fn cache_sso_token(
-    identifier: &str,
-    start_url: &str,
-    region: &str,
-    client: &RegisteredClient,
-    token: &IssuedToken,
-) -> std::io::Result<PathBuf> {
-    let path = sso_cache_path(identifier, &home_dir());
-    write_cache_token_at(&path, start_url, region, client, token)?;
-    Ok(path)
 }
 
 /// Writes the cached-token JSON at an explicit path in the same shape the
@@ -484,8 +477,6 @@ impl SsoOidcProvider for SdkSsoOidcProvider {
         registered: &RegisteredClient,
         device_code: &str,
     ) -> Result<TokenPoll, BoxError> {
-        use aws_sdk_ssooidc::operation::create_token::CreateTokenError;
-
         let client = self.client().await;
         let result = client
             .create_token()
@@ -498,30 +489,7 @@ impl SsoOidcProvider for SdkSsoOidcProvider {
         let output = match result {
             Ok(output) => output,
             Err(error) => {
-                return match error.as_service_error() {
-                    Some(CreateTokenError::AuthorizationPendingException(_)) => {
-                        Ok(TokenPoll::Pending)
-                    }
-                    Some(CreateTokenError::SlowDownException(_)) => Ok(TokenPoll::SlowDown),
-                    Some(CreateTokenError::ExpiredTokenException(_)) => {
-                        Err(std::io::Error::other(
-                            "The browser sign-in code expired before it was approved. Choose Sign in again to get a new code.",
-                        )
-                        .into())
-                    }
-                    Some(CreateTokenError::AccessDeniedException(_)) => Err(std::io::Error::other(
-                        "Sign-in was denied in the browser. Choose Sign in again to retry.",
-                    )
-                    .into()),
-                    other => {
-                        let code = other.and_then(|e| e.meta().code());
-                        Err(oidc_error(
-                            "complete the AWS SSO browser sign-in",
-                            code,
-                            &error.to_string(),
-                        ))
-                    }
-                };
+                return create_token_failure(error.as_service_error(), &error.to_string());
             }
         };
         let access_token = output
@@ -536,6 +504,32 @@ impl SsoOidcProvider for SdkSsoOidcProvider {
             expires_in,
             refresh_token,
         }))
+    }
+}
+
+fn create_token_failure(
+    service_error: Option<&CreateTokenError>,
+    detail: &str,
+) -> Result<TokenPoll, BoxError> {
+    match service_error {
+        Some(CreateTokenError::AuthorizationPendingException(_)) => Ok(TokenPoll::Pending),
+        Some(CreateTokenError::SlowDownException(_)) => Ok(TokenPoll::SlowDown),
+        Some(CreateTokenError::ExpiredTokenException(_)) => Err(std::io::Error::other(
+            "The browser sign-in code expired before it was approved. Choose Sign in again to get a new code.",
+        )
+        .into()),
+        Some(CreateTokenError::AccessDeniedException(_)) => Err(std::io::Error::other(
+            "Sign-in was denied in the browser. Choose Sign in again to retry.",
+        )
+        .into()),
+        other => {
+            let code = other.and_then(|e| e.meta().code());
+            Err(oidc_error(
+                "complete the AWS SSO browser sign-in",
+                code,
+                detail,
+            ))
+        }
     }
 }
 
@@ -726,7 +720,27 @@ mod tests {
 
     struct FakeProvider {
         register_calls: Mutex<u32>,
+        interval: Duration,
         create_token_outcomes: Mutex<Vec<Result<TokenPoll, String>>>,
+    }
+
+    fn fake_provider(
+        interval: Duration,
+        outcomes: Vec<Result<TokenPoll, String>>,
+    ) -> Arc<FakeProvider> {
+        Arc::new(FakeProvider {
+            register_calls: Mutex::new(0),
+            interval,
+            create_token_outcomes: Mutex::new(outcomes),
+        })
+    }
+
+    fn issued_token() -> IssuedToken {
+        IssuedToken {
+            access_token: "access-token".into(),
+            expires_in: Duration::from_secs(3600),
+            refresh_token: Some("refresh-token".into()),
+        }
     }
 
     #[async_trait::async_trait]
@@ -756,7 +770,7 @@ mod tests {
                 },
                 DeviceAuthorizationDetails {
                     device_code: "fake-device-code".into(),
-                    interval: Duration::from_millis(1),
+                    interval: self.interval,
                     expires_in: Duration::from_secs(600),
                 },
             ))
@@ -777,46 +791,123 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn sign_in_polls_through_pending_and_slow_down_before_succeeding() {
-        let provider = Arc::new(FakeProvider {
-            register_calls: Mutex::new(0),
-            create_token_outcomes: Mutex::new(vec![
-                Ok(TokenPoll::Pending),
-                Ok(TokenPoll::SlowDown),
-                Ok(TokenPoll::Ready(IssuedToken {
-                    access_token: "access-token".into(),
-                    expires_in: Duration::from_secs(3600),
-                    refresh_token: Some("refresh-token".into()),
-                })),
-            ]),
-        });
-        let service = AwsSsoLoginService::with_provider(provider.clone());
+    async fn begin_pending(
+        provider: Arc<FakeProvider>,
+        session_name: Option<&str>,
+    ) -> PendingSsoSignIn {
+        let service = AwsSsoLoginService::with_provider(provider);
         let (authorization, pending) = service
-            .begin(&AwsCredentialKind::Sso(sso_config(Some("corp"))))
+            .begin(&AwsCredentialKind::Sso(sso_config(session_name)))
             .await
             .unwrap();
         assert_eq!(authorization.user_code, "ABCD-EFGH");
-        assert_eq!(*provider.register_calls.lock().unwrap(), 1);
-
-        let token = pending.poll_until_ready().await.unwrap();
-        assert_eq!(token.access_token, "access-token");
-        assert_eq!(token.refresh_token.as_deref(), Some("refresh-token"));
+        pending
     }
 
-    #[tokio::test]
-    async fn sign_in_reports_an_actionable_error_when_the_user_denies_access() {
-        let provider = Arc::new(FakeProvider {
-            register_calls: Mutex::new(0),
-            create_token_outcomes: Mutex::new(vec![Err("access denied by user".into())]),
-        });
-        let service = AwsSsoLoginService::with_provider(provider);
-        let (_, pending) = service
-            .begin(&AwsCredentialKind::Sso(sso_config(None)))
-            .await
-            .unwrap();
-        let error = pending.poll_until_ready().await.unwrap_err();
-        assert!(!error.to_string().is_empty());
+    #[tokio::test(start_paused = true)]
+    async fn sso_success_writes_token_cache_file_the_sdk_reads() {
+        let home = tempfile::tempdir().unwrap();
+        let provider = fake_provider(
+            Duration::from_secs(1),
+            vec![Ok(TokenPoll::Ready(issued_token()))],
+        );
+        let pending = begin_pending(provider.clone(), Some("corp")).await;
+
+        pending.complete_into(home.path()).await.unwrap();
+
+        assert_eq!(*provider.register_calls.lock().unwrap(), 1);
+        let cache_dir = home.path().join(".aws/sso/cache");
+        let entries: Vec<_> = std::fs::read_dir(&cache_dir).unwrap().collect();
+        assert_eq!(entries.len(), 1);
+        let path = sso_cache_path("corp", home.path());
+        let value: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(value["accessToken"], "access-token");
+        assert_eq!(value["refreshToken"], "refresh-token");
+        assert_eq!(value["clientId"], "fake-client-id");
+        assert_eq!(value["clientSecret"], "fake-client-secret");
+        assert_eq!(value["region"], "us-east-1");
+        assert_eq!(value["startUrl"], "https://example.awsapps.com/start");
+
+        let expires_at = chrono::DateTime::parse_from_rfc3339(value["expiresAt"].as_str().unwrap())
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let expected = chrono::Utc::now() + chrono::Duration::seconds(3600);
+        assert!((expires_at - expected).num_seconds().abs() < 60);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn sso_authorization_pending_is_retried_at_the_advertised_interval() {
+        let provider = fake_provider(
+            Duration::from_secs(2),
+            vec![Ok(TokenPoll::Pending), Ok(TokenPoll::Ready(issued_token()))],
+        );
+        let pending = begin_pending(provider, None).await;
+
+        let started = tokio::time::Instant::now();
+        let token = pending.poll_until_ready().await.unwrap();
+
+        assert_eq!(token.access_token, "access-token");
+        assert_eq!(started.elapsed(), Duration::from_secs(2));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn sso_slow_down_backs_off_by_five_seconds_per_request() {
+        let provider = fake_provider(
+            Duration::from_secs(1),
+            vec![
+                Ok(TokenPoll::SlowDown),
+                Ok(TokenPoll::SlowDown),
+                Ok(TokenPoll::Ready(issued_token())),
+            ],
+        );
+        let pending = begin_pending(provider, None).await;
+
+        let started = tokio::time::Instant::now();
+        pending.poll_until_ready().await.unwrap();
+
+        // 1s initial interval, then 6s after the first slow_down and 11s after the second.
+        assert_eq!(started.elapsed(), Duration::from_secs(17));
+    }
+
+    #[test]
+    fn sso_access_denied_surfaces_an_actionable_message() {
+        let denied = CreateTokenError::AccessDeniedException(
+            aws_sdk_ssooidc::types::error::AccessDeniedException::builder().build(),
+        );
+        let Err(error) = create_token_failure(Some(&denied), "unused") else {
+            panic!("access denied must not be treated as a poll result");
+        };
+        assert_eq!(
+            error.to_string(),
+            "Sign-in was denied in the browser. Choose Sign in again to retry."
+        );
+    }
+
+    #[test]
+    fn sso_expired_device_code_surfaces_an_actionable_message() {
+        let expired = CreateTokenError::ExpiredTokenException(
+            aws_sdk_ssooidc::types::error::ExpiredTokenException::builder().build(),
+        );
+        let Err(error) = create_token_failure(Some(&expired), "unused") else {
+            panic!("expired device code must not be treated as a poll result");
+        };
+        assert!(error.to_string().contains("expired before it was approved"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn sso_cache_write_failure_is_reported_and_leaves_no_token() {
+        let home = tempfile::tempdir().unwrap();
+        // A regular file where the cache directory must be created makes the write fail.
+        std::fs::write(home.path().join(".aws"), b"not a directory").unwrap();
+        let provider = fake_provider(
+            Duration::from_secs(1),
+            vec![Ok(TokenPoll::Ready(issued_token()))],
+        );
+        let pending = begin_pending(provider, Some("corp")).await;
+
+        assert!(pending.complete_into(home.path()).await.is_err());
+        assert!(home.path().join(".aws").is_file());
     }
 
     #[tokio::test]
