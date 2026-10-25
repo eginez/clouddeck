@@ -53,6 +53,17 @@ EOF
 cat >"$T/bin/ssh" <<'EOF'
 #!/bin/sh
 echo "ssh $*" >> "$FAKE_LOG/ssh.log"
+case "$2" in
+    *"git clone"*) ;;
+    *) exit 0 ;;
+esac
+if [ -n "${FAKE_SSH_HEAD:-}" ]; then
+    echo "$FAKE_SSH_HEAD"
+    exit 0
+fi
+url="$(printf '%s' "$2" | sed -n "s/.*git clone -q '\([^']*\)'.*/\1/p")"
+tag="$(printf '%s' "$2" | sed -n 's/.*git checkout -q v\([0-9.]*\).*/\1/p')"
+git --git-dir="$url" rev-parse "v$tag^{commit}"
 EOF
 cat >"$T/bin/scp" <<'EOF'
 #!/bin/sh
@@ -186,10 +197,21 @@ PKG_LINUX='' release_in "$R" 0.2.0 "$T/notes.md"; rc=$?
 check "fleet path full run exits 0" test "$rc" -eq 0
 check "fleet path checks out the pushed tag on fleet-vm" grep -q 'git checkout -q v0.2.0' "$FAKE_LOG/ssh.log"
 check "fleet path builds Linux with package-linux.sh" grep -q 'scripts/package-linux.sh' "$FAKE_LOG/ssh.log"
+check "fleet path wipes the reused release clone before cloning" grep -q 'rm -rf ~/src/release; git clone' "$FAKE_LOG/ssh.log"
+check "fleet path asserts the build commit equals the tag commit" grep -q 'git rev-parse HEAD)" = ' "$FAKE_LOG/ssh.log"
 check "fleet path copies the Linux tarball back from fleet-vm" \
     grep -q 'fleet-vm.example.invalid:~/src/release/dist/CloudDeck-0.2.0-linux-x86_64.tar.gz' "$FAKE_LOG/scp.log"
 check "fleet path publishes the five assets in order" bash -c "diff '$FAKE_LOG/gh-assets.log' <(printf '%s\n' \
     CloudDeck-0.2.0-macos-aarch64.tar.gz CloudDeck-0.2.0-macos-aarch64.dmg CloudDeck-0.2.0-linux-x86_64.tar.gz manifest.json manifest.json.sig) >/dev/null"
+
+R="$(fixture fleet-mismatch)"
+export FAKE_SSH_HEAD=0000000000000000000000000000000000000000
+PKG_LINUX='' release_in "$R" 0.2.0 "$T/notes.md"; rc=$?
+unset FAKE_SSH_HEAD
+check "fleet build of a different commit is refused" test "$rc" -ne 0
+check "fleet build of a different commit names the mismatch" grep -q "built commit '0000" "$T/out.log"
+check "fleet build of a different commit never copies a tarball back" test ! -s "$FAKE_LOG/scp.log"
+check "fleet build of a different commit never publishes" bash -c "! grep -q 'release create' '$FAKE_LOG/gh.log' 2>/dev/null"
 
 R="$(fixture failed-tests)"
 cat >"$T/bin/cargo-fail" <<'EOF'

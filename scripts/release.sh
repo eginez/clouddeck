@@ -101,17 +101,23 @@ package_macos() { # work dir
     (cd "$1" && "$RELEASE_PACKAGE_MACOS") || die "macOS packaging failed"
 }
 
-remote_build_command() { # version
+# Fresh clone every release: a reused checkout would let local edits reach the signed tarball.
+remote_build_command() { # version, tag commit
     local url
     url="$(git -C "$ROOT" remote get-url origin)"
-    printf '%s' "set -e; [ -d $REMOTE_RELEASE_DIR/.git ] || git clone -q '$url' $REMOTE_RELEASE_DIR; cd $REMOTE_RELEASE_DIR && git fetch -q --tags origin && git checkout -q v$1 && CARGO_TARGET_DIR=\$PWD/target CARGO_PROFILE_RELEASE_DEBUG=0 nice -n 10 scripts/package-linux.sh"
+    printf '%s' "set -e; rm -rf $REMOTE_RELEASE_DIR; git clone -q '$url' $REMOTE_RELEASE_DIR; cd $REMOTE_RELEASE_DIR && git checkout -q v$1 && [ \"\$(git rev-parse HEAD)\" = '$2' ] && CARGO_TARGET_DIR=\$PWD/target CARGO_PROFILE_RELEASE_DEBUG=0 nice -n 10 scripts/package-linux.sh && git rev-parse HEAD"
 }
 
 package_linux() { # work dir, version, linux tarball
     if [[ -n "${RELEASE_PACKAGE_LINUX:-}" ]]; then
         (cd "$1" && "$RELEASE_PACKAGE_LINUX") || die "Linux packaging failed"
     else
-        "$RELEASE_SSH" "$FLEET_HOST" "$(remote_build_command "$2")" || die "Linux packaging on $FLEET_HOST failed"
+        local tag_commit built
+        tag_commit="$(git -C "$1" rev-parse "v$2^{commit}")"
+        built="$("$RELEASE_SSH" "$FLEET_HOST" "$(remote_build_command "$2" "$tag_commit")" | tail -n1)" \
+            || die "Linux packaging on $FLEET_HOST failed"
+        [[ "$built" == "$tag_commit" ]] \
+            || die "$FLEET_HOST built commit '$built', expected v$2 at $tag_commit; refusing the tarball"
         "$RELEASE_SCP" "$FLEET_HOST:$REMOTE_RELEASE_DIR/dist/$(basename "$3")" "$1/dist/" || die "copying the Linux tarball failed"
     fi
     require_file "$3"
