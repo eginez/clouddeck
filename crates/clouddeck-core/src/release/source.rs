@@ -8,6 +8,8 @@ use serde::Deserialize;
 pub const RELEASE_OWNER: &str = "eginez";
 /// GitHub repository that publishes releases; see RELEASE_OWNER.
 pub const RELEASE_REPO: &str = "clouddeck-rs";
+/// The only host the GitHub token is ever sent to.
+const TOKEN_HOST: &str = "api.github.com";
 /// Shown when no GitHub token can be found for the private repository.
 pub const NO_TOKEN_MESSAGE: &str = "Updates need GitHub access while the repository is private: run gh auth login or set CLOUDDECK_UPDATE_TOKEN";
 
@@ -106,6 +108,7 @@ impl GithubSource {
         progress: &mut dyn FnMut(u64, u64),
     ) -> Result<Vec<u8>, String> {
         let url = asset_api_url(release_json, name)?;
+        ensure_token_host(&url)?;
         let response = self
             .agent
             .get(&url)
@@ -186,6 +189,22 @@ fn read_body(
     Ok(body)
 }
 
+fn ensure_token_host(asset_url: &str) -> Result<(), String> {
+    let parsed = url::Url::parse(asset_url)
+        .map_err(|error| format!("release asset url is invalid: {error}"))?;
+    if parsed.scheme() == "https"
+        && parsed.host_str() == Some(TOKEN_HOST)
+        && parsed.port().is_none()
+    {
+        Ok(())
+    } else {
+        Err(format!(
+            "refusing to send the update token to {}",
+            parsed.host_str().unwrap_or("an unknown host")
+        ))
+    }
+}
+
 fn http_error(error: ureq::Error) -> String {
     match error {
         ureq::Error::Status(code, _) => format!("GitHub request failed with HTTP {code}"),
@@ -260,6 +279,59 @@ mod tests {
             progress(3, 3);
             Ok(b"abc".to_vec())
         }
+    }
+
+    #[test]
+    fn token_host_accepts_https_github_api() {
+        assert!(
+            ensure_token_host("https://api.github.com/repos/eginez/clouddeck-rs/releases/assets/1")
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn token_host_rejects_foreign_host() {
+        let error = ensure_token_host("https://evil.example.com/asset").unwrap_err();
+        assert_eq!(
+            error,
+            "refusing to send the update token to evil.example.com"
+        );
+    }
+
+    #[test]
+    fn token_host_rejects_userinfo_trick() {
+        assert!(ensure_token_host("https://api.github.com@evil.example.com/asset").is_err());
+    }
+
+    #[test]
+    fn token_host_rejects_non_default_port() {
+        assert!(
+            ensure_token_host(
+                "https://api.github.com:8443/repos/eginez/clouddeck-rs/releases/assets/1"
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn token_host_rejects_plain_http() {
+        assert!(
+            ensure_token_host("http://api.github.com/repos/eginez/clouddeck-rs/releases/assets/1")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn asset_refuses_foreign_host_before_sending_token() {
+        let release = br#"{"tag_name":"v0.2.0","assets":[{"name":"manifest.json","url":"https://evil.example.com/asset"}]}"#;
+        let source = GithubSource::new("secret-token".to_string());
+        let error = source
+            .asset(release, "manifest.json", &mut |_, _| {})
+            .unwrap_err();
+        assert_eq!(
+            error,
+            "refusing to send the update token to evil.example.com"
+        );
     }
 
     #[test]
