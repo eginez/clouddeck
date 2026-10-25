@@ -13,6 +13,7 @@ use clouddeck_core::release::schedule::{UpdateState, should_auto_check, state_af
 use clouddeck_core::release::source::{FetchedRelease, UpdateSource, github_source_from_env};
 use clouddeck_core::release::target::{Target, current_target, current_version};
 use clouddeck_core::release::verify::{RELEASE_PUBLIC_KEY, check_asset, verify_manifest};
+use clouddeck_core::{Settings, settings_path};
 use gpui::{App, AppContext, Context, Entity, EventEmitter};
 use semver::Version;
 
@@ -213,6 +214,14 @@ pub fn start(cx: &mut App) -> Entity<Updater> {
         Ok(source) => Arc::new(source),
         Err(message) => Arc::new(UnavailableSource(message)),
     };
+    start_with_source(cx, source, settings_path())
+}
+
+fn start_with_source(
+    cx: &mut App,
+    source: Arc<dyn UpdateSource>,
+    settings_file: PathBuf,
+) -> Entity<Updater> {
     let updater = cx.new(|_| {
         Updater::new(
             source,
@@ -223,14 +232,18 @@ pub fn start(cx: &mut App) -> Entity<Updater> {
         )
     });
     crate::update_window::register(cx, &updater);
-    updater.update(cx, |updater, cx| updater.maybe_auto_check(true, cx));
+    updater.update(cx, |updater, cx| {
+        updater.maybe_auto_check(auto_check_enabled(&settings_file), cx)
+    });
 
     let hourly = updater.clone();
     cx.spawn(async move |cx| {
         loop {
             cx.background_executor().timer(HOURLY).await;
             if hourly
-                .update(cx, |updater, cx| updater.maybe_auto_check(true, cx))
+                .update(cx, |updater, cx| {
+                    updater.maybe_auto_check(auto_check_enabled(&settings_file), cx)
+                })
                 .is_err()
             {
                 break;
@@ -239,6 +252,10 @@ pub fn start(cx: &mut App) -> Entity<Updater> {
     })
     .detach();
     updater
+}
+
+fn auto_check_enabled(settings_file: &Path) -> bool {
+    Settings::load(settings_file).check_for_updates
 }
 
 struct UnavailableSource(String);
@@ -603,6 +620,21 @@ mod tests {
         let updater = scenario.updater(cx, source.clone(), Some(Target::LinuxX86_64));
 
         updater.update(cx, |updater, cx| updater.maybe_auto_check(false, cx));
+        cx.run_until_parked();
+
+        assert_eq!(source.latest_calls(), 0);
+    }
+
+    #[gpui::test]
+    fn start_with_setting_off_makes_no_automatic_check(cx: &mut TestAppContext) {
+        let scenario = Scenario::new();
+        let settings_file = scenario.exe.with_file_name("settings.json");
+        fs::write(&settings_file, br#"{"check_for_updates":false}"#).unwrap();
+        let source = FakeSource::offline();
+
+        cx.update(|cx| {
+            start_with_source(cx, source.clone(), settings_file);
+        });
         cx.run_until_parked();
 
         assert_eq!(source.latest_calls(), 0);

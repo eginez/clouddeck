@@ -22,6 +22,7 @@ use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::select::{Select, SelectEvent, SelectItem, SelectState};
 use gpui_component::{IndexPath, Root, Sizable};
 
+use crate::app_menus;
 use crate::icons::AppIcon;
 use crate::tokens::{Palette, palette};
 
@@ -149,6 +150,25 @@ fn button(id: &'static str, label: &'static str, palette: &Palette) -> Stateful<
         .child(label)
 }
 
+fn about_row(label: &'static str, value: impl IntoElement, palette: &Palette) -> AnyElement {
+    div()
+        .flex()
+        .items_center()
+        .gap(px(16.))
+        .py(px(9.))
+        .border_b_1()
+        .border_color(palette.line)
+        .child(
+            div()
+                .w(px(140.))
+                .text_size(px(12.))
+                .text_color(palette.dim)
+                .child(label),
+        )
+        .child(div().flex_1().min_w(px(0.)).text_size(px(13.)).child(value))
+        .into_any_element()
+}
+
 fn minutes_label(minutes: u32) -> String {
     if minutes == 1 {
         "1 minute".to_owned()
@@ -248,6 +268,7 @@ fn flag(settings: &Settings, id: SettingId) -> Option<bool> {
         SettingId::ShowUnnamedLabel => Some(settings.show_unnamed_label),
         SettingId::MatchTags => Some(settings.match_tags),
         SettingId::DemoMode => Some(settings.demo_mode),
+        SettingId::CheckForUpdates => Some(settings.check_for_updates),
         _ => None,
     }
 }
@@ -262,6 +283,7 @@ fn flag_mut(settings: &mut Settings, id: SettingId) -> Option<&mut bool> {
         SettingId::ShowUnnamedLabel => Some(&mut settings.show_unnamed_label),
         SettingId::MatchTags => Some(&mut settings.match_tags),
         SettingId::DemoMode => Some(&mut settings.demo_mode),
+        SettingId::CheckForUpdates => Some(&mut settings.check_for_updates),
         _ => None,
     }
 }
@@ -992,44 +1014,44 @@ impl SettingsWindow {
         sections
     }
 
-    fn about_section(&self, palette: &Palette) -> Vec<AnyElement> {
+    fn about_section(&self, palette: &Palette, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let platform = if cfg!(target_os = "macos") {
             "macOS · gpui"
         } else {
             "Linux · gpui"
         };
-        [
-            ("Version", env!("CARGO_PKG_VERSION").to_owned()),
-            (
-                "AWS CLI",
-                self.cli_version
-                    .clone()
-                    .unwrap_or_else(|| "unknown".to_owned()),
-            ),
-            ("Config file", self.settings.aws_config_file.clone()),
-            ("Data folder", "~/.config/clouddeck".to_owned()),
-            ("Platform", platform.to_owned()),
-        ]
-        .into_iter()
-        .map(|(label, value)| {
+        let version = div()
+            .debug_selector(|| "about.version".into())
+            .child(env!("CARGO_PKG_VERSION"));
+        let mut rows = vec![about_row("Version", version, palette)];
+        rows.extend(
+            [
+                (
+                    "AWS CLI",
+                    self.cli_version
+                        .clone()
+                        .unwrap_or_else(|| "unknown".to_owned()),
+                ),
+                ("Config file", self.settings.aws_config_file.clone()),
+                ("Data folder", "~/.config/clouddeck".to_owned()),
+                ("Platform", platform.to_owned()),
+            ]
+            .into_iter()
+            .map(|(label, value)| about_row(label, value, palette)),
+        );
+        rows.push(
             div()
-                .flex()
-                .items_center()
-                .gap(px(16.))
-                .py(px(9.))
-                .border_b_1()
-                .border_color(palette.line)
+                .pt(px(12.))
                 .child(
-                    div()
-                        .w(px(140.))
-                        .text_size(px(12.))
-                        .text_color(palette.dim)
-                        .child(label),
+                    button("about.check-updates", "Check for Updates…", palette)
+                        .debug_selector(|| "about.check-updates".into())
+                        .on_click(cx.listener(|_, _: &ClickEvent, _, cx| {
+                            cx.dispatch_action(&app_menus::CheckForUpdates);
+                        })),
                 )
-                .child(div().flex_1().min_w(px(0.)).text_size(px(13.)).child(value))
-                .into_any_element()
-        })
-        .collect()
+                .into_any_element(),
+        );
+        rows
     }
 }
 
@@ -1125,7 +1147,7 @@ impl Render for SettingsWindow {
         } else {
             match self.category {
                 "Keymap" => self.keymap_section(&palette),
-                "About" => self.about_section(&palette),
+                "About" => self.about_section(&palette, cx),
                 category => {
                     let mut sections: Vec<AnyElement> = groups_for(category)
                         .into_iter()
@@ -1581,6 +1603,16 @@ mod tests {
         assert!(cx.debug_bounds("settings.control.AwsCliPath").is_some());
         assert!(cx.debug_bounds("settings.cli-test").is_some());
         assert!(cx.debug_bounds("settings.control.AwsConfigFile").is_some());
+    }
+
+    #[gpui::test]
+    fn about_pane_shows_version_and_update_button(cx: &mut TestAppContext) {
+        let (_view, cx) = rooted(cx, Settings::default());
+
+        click(cx, "settings.cat.7");
+
+        assert!(cx.debug_bounds("about.version").is_some());
+        assert!(cx.debug_bounds("about.check-updates").is_some());
     }
 
     fn type_query(view: &Entity<SettingsWindow>, cx: &mut VisualTestContext, query: &'static str) {

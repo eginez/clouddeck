@@ -119,6 +119,8 @@ pub struct Settings {
     pub request_timeout_seconds: u32,
     /// Whether to use demo data instead of AWS.
     pub demo_mode: bool,
+    /// Whether CloudDeck checks for new releases automatically.
+    pub check_for_updates: bool,
     /// Diagnostic logging verbosity.
     pub log_level: LogLevel,
 }
@@ -147,6 +149,7 @@ impl Default for Settings {
             aws_config_file: "~/.aws/config".to_owned(),
             request_timeout_seconds: 30,
             demo_mode: false,
+            check_for_updates: true,
             log_level: LogLevel::ErrorsOnly,
         }
     }
@@ -264,6 +267,8 @@ pub enum SettingId {
     AwsConfigFile,
     /// Seconds before an AWS request times out.
     RequestTimeout,
+    /// Check for new releases automatically.
+    CheckForUpdates,
     /// Simulated fleet without AWS calls.
     DemoMode,
     /// Diagnostic logging verbosity.
@@ -272,7 +277,7 @@ pub enum SettingId {
 
 impl SettingId {
     /// Every setting in display order.
-    pub const ALL: [SettingId; 19] = [
+    pub const ALL: [SettingId; 20] = [
         Self::Theme,
         Self::Density,
         Self::ShowSidebarOnLaunch,
@@ -290,6 +295,7 @@ impl SettingId {
         Self::AwsCliPath,
         Self::AwsConfigFile,
         Self::RequestTimeout,
+        Self::CheckForUpdates,
         Self::DemoMode,
         Self::LogLevel,
     ];
@@ -310,7 +316,7 @@ impl SettingId {
             Self::DefaultSort | Self::ShowUnnamedLabel => "Table",
             Self::RecentSearchLimit | Self::MatchTags => "Search",
             Self::AwsCliPath | Self::AwsConfigFile | Self::RequestTimeout => "AWS & Privacy",
-            Self::DemoMode | Self::LogLevel => "Advanced",
+            Self::CheckForUpdates | Self::DemoMode | Self::LogLevel => "Advanced",
         }
     }
 
@@ -326,6 +332,7 @@ impl SettingId {
             Self::DefaultSort | Self::ShowUnnamedLabel => "Display",
             Self::RecentSearchLimit | Self::MatchTags => "Behaviour",
             Self::AwsCliPath | Self::AwsConfigFile | Self::RequestTimeout => "AWS CLI",
+            Self::CheckForUpdates => "Updates",
             Self::DemoMode | Self::LogLevel => "Developer",
         }
     }
@@ -350,6 +357,7 @@ impl SettingId {
             Self::AwsCliPath => "AWS CLI",
             Self::AwsConfigFile => "AWS config file",
             Self::RequestTimeout => "Request timeout",
+            Self::CheckForUpdates => "Check for updates automatically",
             Self::DemoMode => "Demo mode",
             Self::LogLevel => "Log level",
         }
@@ -381,6 +389,9 @@ impl SettingId {
             }
             Self::AwsConfigFile => "Where profiles are read from.",
             Self::RequestTimeout => "Per region, per request.",
+            Self::CheckForUpdates => {
+                "Checks on launch and about once an hour while CloudDeck runs."
+            }
             Self::DemoMode => "Simulated fleet, no AWS calls. A DEMO tag stays in the status bar.",
             Self::LogLevel => "Written to ~/.config/clouddeck/logs.",
         }
@@ -422,6 +433,7 @@ impl SettingId {
             Self::RequestTimeout => {
                 settings.request_timeout_seconds = defaults.request_timeout_seconds
             }
+            Self::CheckForUpdates => settings.check_for_updates = defaults.check_for_updates,
             Self::DemoMode => settings.demo_mode = defaults.demo_mode,
             Self::LogLevel => settings.log_level = defaults.log_level,
         }
@@ -593,7 +605,9 @@ mod tests {
         assert_eq!(settings.aws_config_file, "~/.aws/config");
         assert_eq!(settings.request_timeout_seconds, 30);
         assert!(!settings.demo_mode);
+        assert!(settings.check_for_updates);
         assert_eq!(settings.log_level, LogLevel::ErrorsOnly);
+        assert_eq!(SettingId::CheckForUpdates.category(), "Advanced");
     }
 
     #[test]
@@ -611,6 +625,7 @@ mod tests {
             density: Density::Comfortable,
             auto_refresh: false,
             refresh_interval_minutes: 10,
+            check_for_updates: false,
             aws_cli_path: Some("/opt/homebrew/bin/aws".into()),
             ..Settings::default()
         };
@@ -694,8 +709,8 @@ mod tests {
     }
 
     #[test]
-    fn catalog_has_nineteen_labels_in_display_order() {
-        assert_eq!(SettingId::ALL.len(), 19);
+    fn catalog_has_twenty_labels_in_display_order() {
+        assert_eq!(SettingId::ALL.len(), 20);
         let labels: Vec<&str> = SettingId::ALL.iter().map(|id| id.label()).collect();
         assert_eq!(
             labels,
@@ -717,6 +732,7 @@ mod tests {
                 "AWS CLI",
                 "AWS config file",
                 "Request timeout",
+                "Check for updates automatically",
                 "Demo mode",
                 "Log level",
             ]
