@@ -575,7 +575,7 @@ impl SettingsWindow {
         }
         let value = self.settings.aws_config_file.clone();
         self.config_input.update(cx, |input, cx| {
-            if input.value().to_string() != value {
+            if input.value() != value {
                 input.set_value(value, window, cx);
             }
         });
@@ -1006,7 +1006,7 @@ impl SettingsWindow {
         let mut sections: Vec<AnyElement> = results
             .groups
             .iter()
-            .map(|(category, ids)| self.group_section(*category, ids, palette, cx))
+            .map(|(category, ids)| self.group_section(category, ids, palette, cx))
             .collect();
         if !results.keymap_rows.is_empty() {
             sections.push(keymap_results(query, &results.keymap_rows, palette));
@@ -1704,8 +1704,10 @@ mod tests {
 
     #[test]
     fn custom_aws_cli_path_is_offered_and_selected() {
-        let mut settings = Settings::default();
-        settings.aws_cli_path = Some("/home/me/bin/aws".into());
+        let settings = Settings {
+            aws_cli_path: Some("/home/me/bin/aws".into()),
+            ..Default::default()
+        };
         let items = choices(SettingId::AwsCliPath, &settings);
         let selected = current(SettingId::AwsCliPath, &settings);
         assert!(
@@ -1718,8 +1720,10 @@ mod tests {
 
     #[test]
     fn preset_aws_cli_path_is_not_duplicated() {
-        let mut settings = Settings::default();
-        settings.aws_cli_path = Some("/usr/local/bin/aws".into());
+        let settings = Settings {
+            aws_cli_path: Some("/usr/local/bin/aws".into()),
+            ..Default::default()
+        };
         assert_eq!(choices(SettingId::AwsCliPath, &settings).len(), 3);
     }
 

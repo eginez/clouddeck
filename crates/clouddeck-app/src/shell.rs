@@ -1170,7 +1170,7 @@ mod tests {
     fn instance_row_name_and_id_cells_keep_readable_width_in_appshell_demo(
         cx: &mut TestAppContext,
     ) {
-        let (_view, cx) = add_rooted_shell(cx, |window, cx| AppShell::new_demo(window, cx));
+        let (_view, cx) = add_rooted_shell(cx, AppShell::new_demo);
         // The reported regression is at 1280pt window width.
         cx.simulate_resize(gpui::size(px(1280.0), px(800.0)));
         wait_for_row(cx, "table.row.us-east-1:i-scenario-001");
@@ -1183,7 +1183,7 @@ mod tests {
     fn instance_row_name_and_id_cells_keep_readable_width_in_appshell_large(
         cx: &mut TestAppContext,
     ) {
-        let (_view, cx) = add_rooted_shell(cx, |window, cx| AppShell::new_demo_large(window, cx));
+        let (_view, cx) = add_rooted_shell(cx, AppShell::new_demo_large);
         cx.simulate_resize(gpui::size(px(1280.0), px(800.0)));
         // 121 rows are in the model, but uniform_list only draws the visible
         // ones. Sorted by Name ascending, i-scenario-003 (bastion-east-1),
@@ -1198,7 +1198,7 @@ mod tests {
     #[gpui::test]
     fn a_superseded_context_load_does_not_overwrite_the_current_context(cx: &mut TestAppContext) {
         let gate = std::sync::Arc::new(tokio::sync::Notify::new());
-        let (shell, cx) = add_rooted_shell(cx, |window, cx| AppShell::new_demo(window, cx));
+        let (shell, cx) = add_rooted_shell(cx, AppShell::new_demo);
         wait_for_row(cx, "table.row.us-east-1:i-scenario-001");
 
         shell.update(cx, |shell, _| {
@@ -1241,7 +1241,7 @@ mod tests {
 
     #[gpui::test]
     fn mounts_without_a_display(cx: &mut TestAppContext) {
-        let (_view, cx) = add_rooted_shell(cx, |window, cx| AppShell::new_demo(window, cx));
+        let (_view, cx) = add_rooted_shell(cx, AppShell::new_demo);
 
         assert!(
             cx.debug_bounds("app-shell").is_some(),
@@ -1251,7 +1251,7 @@ mod tests {
 
     #[gpui::test]
     fn renders_main_window_regions(cx: &mut TestAppContext) {
-        let (_view, cx) = add_rooted_shell(cx, |window, cx| AppShell::new_demo(window, cx));
+        let (_view, cx) = add_rooted_shell(cx, AppShell::new_demo);
         wait_for_row(cx, "table.row.us-east-1:i-scenario-001");
 
         assert!(
@@ -1270,7 +1270,7 @@ mod tests {
 
     #[gpui::test]
     fn main_table_shows_the_seeded_sample_instances(cx: &mut TestAppContext) {
-        let (_view, cx) = add_rooted_shell(cx, |window, cx| AppShell::new_demo(window, cx));
+        let (_view, cx) = add_rooted_shell(cx, AppShell::new_demo);
         wait_for_row(cx, "table.row.us-east-1:i-scenario-001");
 
         assert!(
@@ -1348,7 +1348,7 @@ mod tests {
 
     #[gpui::test]
     fn main_center_and_status_bar_are_docked_in_the_window(cx: &mut TestAppContext) {
-        let (_view, cx) = add_rooted_shell(cx, |window, cx| AppShell::new_demo(window, cx));
+        let (_view, cx) = add_rooted_shell(cx, AppShell::new_demo);
         wait_for_row(cx, "table.row.us-east-1:i-scenario-001");
 
         let center = cx
@@ -1439,7 +1439,7 @@ mod tests {
     ) {
         use crate::account_window::AccountConnectionState;
 
-        let (shell, cx) = add_rooted_shell(cx, |window, cx| AppShell::new_demo(window, cx));
+        let (shell, cx) = add_rooted_shell(cx, AppShell::new_demo);
 
         // The trigger: nothing opens the account-connect window on its own
         // (per clouddeck-rs-w6s.18's design, existing profiles need minimal
@@ -1763,7 +1763,7 @@ mod tests {
 
     #[gpui::test]
     fn region_scope_limits_the_fleet_query(cx: &mut TestAppContext) {
-        let (shell, cx) = add_rooted_shell(cx, |window, cx| AppShell::new_demo_partial(window, cx));
+        let (shell, cx) = add_rooted_shell(cx, AppShell::new_demo_partial);
         wait_until_context_settled(cx, &shell);
 
         let main_window = shell.read_with(cx, |shell, _| shell.main_window.clone());
@@ -1789,7 +1789,7 @@ mod tests {
 
     #[gpui::test]
     fn connect_to_aws_event_opens_the_wizard(cx: &mut TestAppContext) {
-        let (shell, cx) = add_rooted_shell(cx, |window, cx| AppShell::new_demo(window, cx));
+        let (shell, cx) = add_rooted_shell(cx, AppShell::new_demo);
 
         emit_main_window_event(cx, &shell, MainWindowEvent::ConnectToAws);
 
@@ -1808,7 +1808,7 @@ mod tests {
     // intercept `demo_requested` itself and flip the shell's demo mode.
     #[gpui::test]
     fn wizard_demo_request_toggles_the_shell_demo_mode(cx: &mut TestAppContext) {
-        let (shell, cx) = add_rooted_shell(cx, |window, cx| AppShell::new_demo(window, cx));
+        let (shell, cx) = add_rooted_shell(cx, AppShell::new_demo);
 
         shell.update(cx, |shell, cx| shell.open_setup(cx));
 
@@ -1905,7 +1905,7 @@ mod tests {
     /// region.
     #[gpui::test]
     fn region_change_event_drives_shell_context_and_fleet_reload(cx: &mut TestAppContext) {
-        let (shell, cx) = add_rooted_shell(cx, |window, cx| AppShell::new_demo(window, cx));
+        let (shell, cx) = add_rooted_shell(cx, AppShell::new_demo);
         wait_for_row(cx, "table.row.us-east-1:i-scenario-001");
 
         emit_main_window_event(
@@ -1928,7 +1928,7 @@ mod tests {
     /// the fleet state is reset for the new context.
     #[gpui::test]
     fn region_change_event_clears_the_selected_instance(cx: &mut TestAppContext) {
-        let (shell, cx) = add_rooted_shell(cx, |window, cx| AppShell::new_demo(window, cx));
+        let (shell, cx) = add_rooted_shell(cx, AppShell::new_demo);
         wait_for_row(cx, "table.row.us-east-1:i-scenario-001");
 
         let row = cx
@@ -1970,7 +1970,7 @@ mod tests {
     /// empty state renders once the load completes.
     #[gpui::test]
     fn empty_demo_settles_with_no_instances_and_no_error(cx: &mut TestAppContext) {
-        let (shell, cx) = add_rooted_shell(cx, |window, cx| AppShell::new_demo_empty(window, cx));
+        let (shell, cx) = add_rooted_shell(cx, AppShell::new_demo_empty);
         wait_until(cx, "the empty load to settle", |cx| {
             shell.read_with(cx, |shell, cx| {
                 !shell.fleet.read(cx).view_model.is_loading()
@@ -1996,7 +1996,7 @@ mod tests {
     fn switch_profile_action_opens_and_escape_dismisses_without_changing_context(
         cx: &mut TestAppContext,
     ) {
-        let (shell, cx) = add_rooted_shell(cx, |window, cx| AppShell::new_demo(window, cx));
+        let (shell, cx) = add_rooted_shell(cx, AppShell::new_demo);
         wait_for_row(cx, "table.row.us-east-1:i-scenario-001");
 
         let context_before = shell.read_with(cx, |shell, _| shell.context.clone());
@@ -2026,7 +2026,7 @@ mod tests {
     /// reload the fleet for the new profile.
     #[gpui::test]
     fn pick_profile_event_drives_shell_context(cx: &mut TestAppContext) {
-        let (shell, cx) = add_rooted_shell(cx, |window, cx| AppShell::new_demo(window, cx));
+        let (shell, cx) = add_rooted_shell(cx, AppShell::new_demo);
         wait_for_row(cx, "table.row.us-east-1:i-scenario-001");
 
         emit_main_window_event(
@@ -2058,7 +2058,7 @@ mod tests {
     /// simulated load error on the fleet.
     #[gpui::test]
     fn region_change_on_failure_shell_settles_with_the_simulated_error(cx: &mut TestAppContext) {
-        let (shell, cx) = add_rooted_shell(cx, |window, cx| AppShell::new_demo_failure(window, cx));
+        let (shell, cx) = add_rooted_shell(cx, AppShell::new_demo_failure);
         wait_until(cx, "error to render after startup", |cx| {
             fleet_error(cx, &shell).is_some()
         });
@@ -2100,7 +2100,7 @@ mod tests {
     #[gpui::test]
     fn region_change_shows_loading_state_during_failure_load(cx: &mut TestAppContext) {
         let gate = std::sync::Arc::new(tokio::sync::Notify::new());
-        let (shell, cx) = add_rooted_shell(cx, |window, cx| AppShell::new_demo_failure(window, cx));
+        let (shell, cx) = add_rooted_shell(cx, AppShell::new_demo_failure);
         wait_until(cx, "error to render after startup", |cx| {
             fleet_error(cx, &shell).is_some()
         });
@@ -2179,7 +2179,7 @@ mod tests {
 
     #[gpui::test]
     fn applying_a_new_demo_context_updates_context_and_clears_old_rows(cx: &mut TestAppContext) {
-        let (shell, cx) = add_rooted_shell(cx, |window, cx| AppShell::new_demo(window, cx));
+        let (shell, cx) = add_rooted_shell(cx, AppShell::new_demo);
         wait_for_row(cx, "table.row.us-east-1:i-scenario-001");
 
         shell.update_in(cx, |shell, window, cx| {

@@ -100,7 +100,7 @@ fn button(
 }
 
 impl Render for FailurePopover {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         forget_prefix(cx, "failure.");
         let palette = crate::tokens::palette(cx);
         let focus = match &self.focus {

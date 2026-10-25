@@ -56,6 +56,7 @@ impl Toolbar {
     }
 
     /// The Filters button label for the current query.
+    #[cfg(test)]
     pub fn filters_label(&self, cx: &App) -> String {
         filters_text(self.filter_count(cx))
     }

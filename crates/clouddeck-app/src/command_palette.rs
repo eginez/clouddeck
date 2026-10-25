@@ -200,7 +200,7 @@ impl Render for CommandPalette {
             .text_color(palette.faint)
             .child("↑↓ navigate · ↵ run · esc close");
 
-        let panel = div()
+        div()
             .key_context("CommandPalette")
             .capture_action(cx.listener(|this, _: &MoveUp, _, cx| {
                 this.step_highlight(false, cx);
@@ -229,9 +229,7 @@ impl Render for CommandPalette {
             .overflow_hidden()
             .child(input_row)
             .child(body)
-            .child(footer);
-
-        panel
+            .child(footer)
     }
 }
 

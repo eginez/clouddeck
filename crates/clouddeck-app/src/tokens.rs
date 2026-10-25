@@ -99,6 +99,7 @@ impl Palette {
         }
     }
 
+    #[cfg(test)]
     pub fn state_text(&self, state: &str) -> Hsla {
         match state.to_ascii_lowercase().as_str() {
             "running" => self.runtext,

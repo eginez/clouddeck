@@ -183,10 +183,10 @@ mod tests {
         }
     }
 
-    fn open_menu<'a>(
-        cx: &'a mut TestAppContext,
+    fn open_menu(
+        cx: &mut TestAppContext,
         context: CommandContext,
-    ) -> (Entity<RowContextMenu>, Events, &'a mut VisualTestContext) {
+    ) -> (Entity<RowContextMenu>, Events, &mut VisualTestContext) {
         let slot = Rc::new(RefCell::new(None));
         let slot_for_window = slot.clone();
         let (_root, cx) = cx.add_window_view(move |window, cx| {

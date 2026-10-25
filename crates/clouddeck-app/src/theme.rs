@@ -33,10 +33,6 @@ impl SurgicalTheme {
     pub fn workspace_canvas() -> Hsla {
         rgb(0xf9f9fc).into()
     }
-    pub fn chrome_dark() -> Hsla {
-        rgb(0xd6dae7).into()
-    }
-
     // Text / outline colors.
     pub fn text_primary() -> Hsla {
         rgb(0x0a0d14).into()

@@ -1522,7 +1522,6 @@ mod tests {
         main.read_with(cx, |main, _| main.overlay_view.clone())
             .expect("an overlay should be open")
             .downcast::<T>()
-            .ok()
             .expect("open overlay should be the expected view")
     }
 

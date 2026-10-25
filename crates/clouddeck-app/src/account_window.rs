@@ -74,20 +74,15 @@ impl AccountConnectionError {
 
 /// The lifecycle of the connection check. `Connected` includes an AWS account
 /// identity; a profile name alone is never presented as an account identity.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum AccountConnectionState {
+    #[default]
     Idle,
     Connecting,
     AwaitingBrowserLogin,
     CheckingFleetAccess { account_id: String },
     Connected { account_id: String },
     Failed(AccountConnectionError),
-}
-
-impl Default for AccountConnectionState {
-    fn default() -> Self {
-        Self::Idle
-    }
 }
 
 impl AccountConnectionState {
@@ -398,7 +393,7 @@ fn dynamic_selector(id: String) -> Stateful<Div> {
     let debug_id = id.clone();
     div()
         .id(gpui::SharedString::from(id))
-        .debug_selector(move || debug_id.clone().into())
+        .debug_selector(move || debug_id.clone())
         .flex_shrink_0()
         .rounded(px(radius::STANDARD))
 }
