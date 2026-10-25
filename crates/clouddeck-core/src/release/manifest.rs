@@ -54,6 +54,20 @@ pub fn to_canonical_json(m: &Manifest) -> Vec<u8> {
     bytes
 }
 
+/// Rejects a manifest whose version does not match the tag of the release that served it.
+pub fn check_tag(m: &Manifest, tag: &str) -> Result<(), String> {
+    let manifest_version = m.version.strip_prefix('v').unwrap_or(&m.version);
+    let tag_version = tag.strip_prefix('v').unwrap_or(tag);
+    if manifest_version == tag_version {
+        Ok(())
+    } else {
+        Err(format!(
+            "manifest version {} does not match release tag {tag}",
+            m.version
+        ))
+    }
+}
+
 /// The update offered by a manifest to a given install, if any.
 pub fn update_for(m: &Manifest, current: &Version, target: Target) -> Option<AvailableUpdate> {
     if !is_newer(&m.version, current) {
@@ -169,6 +183,25 @@ mod tests {
     fn no_update_for_older_version() {
         let m = manifest("0.1.0", &[("macos-aarch64", asset("mac.tar.gz"))]);
         assert!(update_for(&m, &v("0.2.0"), Target::MacosAarch64).is_none());
+    }
+
+    #[test]
+    fn check_tag_accepts_matching_version_with_or_without_v() {
+        let m = manifest("0.2.1", &[]);
+        assert!(check_tag(&m, "v0.2.1").is_ok());
+        assert!(check_tag(&m, "0.2.1").is_ok());
+        let prefixed = manifest("v0.2.1", &[]);
+        assert!(check_tag(&prefixed, "v0.2.1").is_ok());
+    }
+
+    #[test]
+    fn check_tag_rejects_manifest_from_another_release() {
+        let older = manifest("0.1.0", &[]);
+        let error = check_tag(&older, "v0.2.1").unwrap_err();
+        assert_eq!(
+            error,
+            "manifest version 0.1.0 does not match release tag v0.2.1"
+        );
     }
 
     #[test]

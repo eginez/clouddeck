@@ -11,9 +11,10 @@ pub const RELEASE_REPO: &str = "clouddeck-rs";
 /// Shown when no GitHub token can be found for the private repository.
 pub const NO_TOKEN_MESSAGE: &str = "Updates need GitHub access while the repository is private: run gh auth login or set CLOUDDECK_UPDATE_TOKEN";
 
-/// Manifest bytes and their detached base64 ed25519 signature for the latest release.
+/// Manifest bytes, their detached base64 ed25519 signature, and the tag of the release they came from.
 #[derive(Debug)]
 pub struct FetchedRelease {
+    pub tag: String,
     pub manifest_bytes: Vec<u8>,
     pub signature_b64: String,
 }
@@ -35,6 +36,7 @@ pub fn latest_release_url(owner: &str, repo: &str) -> String {
 
 #[derive(Deserialize)]
 struct ReleaseJson {
+    tag_name: String,
     assets: Vec<ReleaseAsset>,
 }
 
@@ -42,6 +44,13 @@ struct ReleaseJson {
 struct ReleaseAsset {
     name: String,
     url: String,
+}
+
+/// Returns the tag name of a GitHub release JSON document.
+pub fn release_tag(release_json: &[u8]) -> Result<String, String> {
+    let release: ReleaseJson = serde_json::from_slice(release_json)
+        .map_err(|error| format!("invalid release JSON: {error}"))?;
+    Ok(release.tag_name)
 }
 
 /// Returns the API url of the named asset in a GitHub release JSON document.
@@ -126,6 +135,7 @@ impl GithubSource {
 impl UpdateSource for GithubSource {
     fn latest(&self) -> Result<FetchedRelease, String> {
         let release = self.release_json()?;
+        let tag = release_tag(&release)?;
         let manifest_bytes = self.asset(&release, "manifest.json", &mut |_, _| {})?;
         let signature = self.asset(&release, "manifest.json.sig", &mut |_, _| {})?;
         let signature_b64 = String::from_utf8(signature)
@@ -133,6 +143,7 @@ impl UpdateSource for GithubSource {
             .trim()
             .to_string();
         Ok(FetchedRelease {
+            tag,
             manifest_bytes,
             signature_b64,
         })
@@ -235,6 +246,7 @@ mod tests {
     impl UpdateSource for FakeSource {
         fn latest(&self) -> Result<FetchedRelease, String> {
             Ok(FetchedRelease {
+                tag: "v0.2.0".to_string(),
                 manifest_bytes: b"{}".to_vec(),
                 signature_b64: "c2ln".to_string(),
             })
@@ -264,6 +276,16 @@ mod tests {
             asset_api_url(RELEASE_JSON.as_bytes(), "manifest.json.sig").unwrap(),
             "https://api.github.com/repos/eginez/clouddeck-rs/releases/assets/2"
         );
+    }
+
+    #[test]
+    fn release_tag_returns_tag_name() {
+        assert_eq!(release_tag(RELEASE_JSON.as_bytes()).unwrap(), "v0.2.0");
+    }
+
+    #[test]
+    fn release_tag_requires_tag_name() {
+        assert!(release_tag(br#"{"assets":[]}"#).is_err());
     }
 
     #[test]

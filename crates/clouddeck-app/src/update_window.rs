@@ -244,16 +244,17 @@ mod tests {
     const ASSET: &[u8] = b"asset";
 
     struct FakeSource {
-        release: Option<(Vec<u8>, String)>,
+        release: Option<FetchedRelease>,
         asset: Vec<u8>,
     }
 
     impl UpdateSource for FakeSource {
         fn latest(&self) -> Result<FetchedRelease, String> {
             match &self.release {
-                Some((manifest_bytes, signature_b64)) => Ok(FetchedRelease {
-                    manifest_bytes: manifest_bytes.clone(),
-                    signature_b64: signature_b64.clone(),
+                Some(release) => Ok(FetchedRelease {
+                    tag: release.tag.clone(),
+                    manifest_bytes: release.manifest_bytes.clone(),
+                    signature_b64: release.signature_b64.clone(),
                 }),
                 None => Err("offline".to_string()),
             }
@@ -313,7 +314,7 @@ mod tests {
         }
     }
 
-    fn signed_manifest(secret: &str, version: &str, asset: &[u8]) -> (Vec<u8>, String) {
+    fn signed_manifest(secret: &str, version: &str, asset: &[u8]) -> FetchedRelease {
         let manifest = Manifest {
             version: version.to_string(),
             published_at: "2026-10-24T00:00:00Z".to_string(),
@@ -328,8 +329,12 @@ mod tests {
             )]),
         };
         let manifest_bytes = to_canonical_json(&manifest);
-        let signature = sign_bytes(&manifest_bytes, secret).unwrap();
-        (manifest_bytes, signature)
+        let signature_b64 = sign_bytes(&manifest_bytes, secret).unwrap();
+        FetchedRelease {
+            tag: format!("v{version}"),
+            manifest_bytes,
+            signature_b64,
+        }
     }
 
     fn check(cx: &mut TestAppContext, updater: &Entity<Updater>) {

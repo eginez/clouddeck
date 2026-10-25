@@ -8,7 +8,9 @@ use std::time::{Duration, SystemTime};
 use clouddeck_core::release::install::install_linux;
 #[cfg(target_os = "macos")]
 use clouddeck_core::release::install::{bundle_root_from_exe, install_macos};
-use clouddeck_core::release::manifest::{Asset, AvailableUpdate, parse_manifest, update_for};
+use clouddeck_core::release::manifest::{
+    Asset, AvailableUpdate, check_tag, parse_manifest, update_for,
+};
 use clouddeck_core::release::schedule::{UpdateState, should_auto_check, state_after_check};
 use clouddeck_core::release::source::{FetchedRelease, UpdateSource, github_source_from_env};
 use clouddeck_core::release::target::{Target, current_target, current_version};
@@ -283,6 +285,7 @@ fn fetch_update(
     let release = source.latest()?;
     verify_manifest(&release.manifest_bytes, &release.signature_b64, public_key)?;
     let manifest = parse_manifest(&release.manifest_bytes)?;
+    check_tag(&manifest, &release.tag)?;
     Ok(update_for(&manifest, current, target))
 }
 
@@ -340,6 +343,7 @@ mod tests {
     use gpui::TestAppContext;
 
     struct FakeSource {
+        tag: String,
         manifest_bytes: Vec<u8>,
         signature_b64: String,
         latest_err: Option<String>,
@@ -350,6 +354,7 @@ mod tests {
     impl FakeSource {
         fn serving(release: FetchedRelease, asset_bytes: Vec<u8>) -> Arc<Self> {
             Arc::new(Self {
+                tag: release.tag,
                 manifest_bytes: release.manifest_bytes,
                 signature_b64: release.signature_b64,
                 latest_err: None,
@@ -360,6 +365,7 @@ mod tests {
 
         fn offline() -> Arc<Self> {
             Arc::new(Self {
+                tag: String::new(),
                 manifest_bytes: Vec::new(),
                 signature_b64: String::new(),
                 latest_err: Some("offline".to_string()),
@@ -380,6 +386,7 @@ mod tests {
                 return Err(message.clone());
             }
             Ok(FetchedRelease {
+                tag: self.tag.clone(),
                 manifest_bytes: self.manifest_bytes.clone(),
                 signature_b64: self.signature_b64.clone(),
             })
@@ -427,6 +434,7 @@ mod tests {
         let manifest_bytes = to_canonical_json(&manifest);
         let signature_b64 = sign_bytes(&manifest_bytes, secret).unwrap();
         FetchedRelease {
+            tag: format!("v{version}"),
             manifest_bytes,
             signature_b64,
         }
@@ -497,6 +505,32 @@ mod tests {
             UpdateState::Available(update) => assert_eq!(update.version, "0.3.0"),
             other => panic!("expected Available, got {other:?}"),
         }
+    }
+
+    #[gpui::test]
+    fn manifest_from_older_release_fails(cx: &mut TestAppContext) {
+        let scenario = Scenario::new();
+        let asset = tar_gz_with_binary(b"new");
+        let release = scenario.release_with("0.2.5", &asset);
+        let source = Arc::new(FakeSource {
+            tag: "v0.3.0".to_string(),
+            manifest_bytes: release.manifest_bytes,
+            signature_b64: release.signature_b64,
+            latest_err: None,
+            asset_bytes: asset,
+            latest_calls: AtomicUsize::new(0),
+        });
+        let updater = scenario.updater(cx, source, Some(Target::LinuxX86_64));
+
+        updater.update(cx, |updater, cx| updater.check(cx));
+        cx.run_until_parked();
+
+        assert_eq!(
+            state_of(&updater, cx),
+            UpdateState::Failed {
+                message: "manifest version 0.2.5 does not match release tag v0.3.0".to_string()
+            }
+        );
     }
 
     #[gpui::test]
