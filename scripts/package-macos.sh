@@ -9,8 +9,7 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
     exit 1
 fi
 
-cargo_args=(build --locked --offline --release --bin clouddeck)
-cargo --manifest-path "$root_dir/Cargo.toml" "${cargo_args[@]}"
+cargo build --manifest-path "$root_dir/Cargo.toml" --locked --offline --release --bin clouddeck
 
 app_dir="$root_dir/dist/CloudDeck.app"
 binary="$root_dir/target/release/clouddeck"
