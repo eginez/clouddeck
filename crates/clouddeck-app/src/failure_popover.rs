@@ -1,8 +1,8 @@
 //! Region failure details popover (design/images/32, 70).
 
 use clouddeck_core::{
-    CloudDeckError, copy_errors_text, failure_body, failure_title, region_failure_reason,
-    several_failed_title,
+    CloudDeckError, copy_errors_text, failure_advice, failure_body, failure_title,
+    region_failure_reason, several_failed_title,
 };
 use gpui::{
     AnyElement, ClickEvent, ClipboardItem, Context, Div, ElementId, EventEmitter, FocusHandle,
@@ -125,8 +125,8 @@ impl Render for FailurePopover {
                     cx,
                     "failure.body",
                     Recorded {
-                        text: Some(failure_body(
-                            only.stale_instances,
+                        text: Some(single_failure_body(
+                            only,
                             &self.refreshed_at,
                             self.other_regions,
                         )),
@@ -167,6 +167,19 @@ impl Render for FailurePopover {
             .child(content)
             .into_any_element()
     }
+}
+
+fn single_failure_body(
+    failure: &RegionFailure,
+    refreshed_at: &str,
+    other_regions: usize,
+) -> String {
+    let body = failure_body(failure.stale_instances, refreshed_at, other_regions);
+    let advice = failure_advice(&failure.error);
+    if advice.cause == failure.message {
+        return body;
+    }
+    format!("{} {body}", advice.text())
 }
 
 fn title_record(text: String) -> Recorded {
@@ -229,8 +242,8 @@ impl FailurePopover {
                     .debug_selector(|| "failure.body".into())
                     .text_size(px(FONT_SIZE))
                     .text_color(palette.dim)
-                    .child(failure_body(
-                        failure.stale_instances,
+                    .child(single_failure_body(
+                        failure,
                         &self.refreshed_at,
                         self.other_regions,
                     )),
@@ -570,6 +583,40 @@ mod tests {
         let body = cx
             .update(|_, app| recorded(app, "failure.body"))
             .expect("body records");
+        assert_eq!(
+            body.text,
+            Some(format!(
+                "The selected profile or role is not allowed to make this request. Check the IAM permissions for that profile or role, then retry. {}",
+                failure_body(4, "12:01", 3)
+            ))
+        );
+    }
+
+    #[gpui::test]
+    fn unknown_failure_body_does_not_repeat_the_raw_message(cx: &mut TestAppContext) {
+        let mut unknown = failure("eu-west-1", "something weird");
+        unknown.error = CloudDeckError::Unknown("something weird".to_string());
+        let (_popover, _events, cx) = open_popover(cx, vec![unknown]);
+
+        let body = cx
+            .update(|_, app| recorded(app, "failure.body"))
+            .expect("body records");
         assert_eq!(body.text, Some(failure_body(4, "12:01", 3)));
+    }
+
+    #[gpui::test]
+    fn expired_sign_in_records_sign_in_advice(cx: &mut TestAppContext) {
+        let mut expired = failure("eu-west-1", "ExpiredToken");
+        expired.error = CloudDeckError::Auth;
+        let (_popover, _events, cx) = open_popover(cx, vec![expired]);
+
+        let body = cx
+            .update(|_, app| recorded(app, "failure.body"))
+            .expect("body records");
+        let text = body.text.expect("body text recorded");
+        assert!(text.starts_with(
+            "Your AWS sign-in has expired or is no longer valid. Sign in again, then retry. "
+        ));
+        assert!(text.ends_with(&failure_body(4, "12:01", 3)));
     }
 }

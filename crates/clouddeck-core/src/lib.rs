@@ -43,6 +43,8 @@ mod inspector;
 pub use inspector::*;
 mod status_text;
 pub use status_text::*;
+mod failure_advice;
+pub use failure_advice::*;
 mod commands;
 pub use commands::*;
 mod table;
