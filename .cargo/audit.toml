@@ -2,4 +2,6 @@
 ignore = [
     # RUSTSEC-2026-0184 git2 0.20.4 unsound BlameHunk Signature. Added 2026-10-25, bead clouddeck-rs-xjyf. Dev-only via gpui test-support -> gpui_util 0.2.2 (needs git2 ^0.20.1, no newer release). gpui_util only calls git2::Repository::init, so BlameHunk is unreachable. Remove when clouddeck-rs-fqg3 is done.
     "RUSTSEC-2026-0184",
+    # RUSTSEC-2026-0183 git2 0.20.4 unsound Remote::list. Added 2026-10-25, bead clouddeck-rs-q521. Dev-only via gpui test-support -> gpui_util 0.2.2 (needs git2 ^0.20.1, no newer release). gpui_util only calls git2::Repository::init, so Remote::list is unreachable. Remove when clouddeck-rs-tayk is done.
+    "RUSTSEC-2026-0183",
 ]
