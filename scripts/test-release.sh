@@ -57,6 +57,11 @@ case "$2" in
     *"git clone"*) ;;
     *) exit 0 ;;
 esac
+if command -v sha256sum >/dev/null 2>&1; then
+    echo "$(sha256sum "$FAKE_LOG/remote-tarball" | cut -d' ' -f1)"
+else
+    echo "$(shasum -a 256 "$FAKE_LOG/remote-tarball" | cut -d' ' -f1)"
+fi
 if [ -n "${FAKE_SSH_HEAD:-}" ]; then
     echo "$FAKE_SSH_HEAD"
     exit 0
@@ -68,8 +73,13 @@ EOF
 cat >"$T/bin/scp" <<'EOF'
 #!/bin/sh
 echo "scp $*" >> "$FAKE_LOG/scp.log"
-echo "remote tarball" > "$2/$(basename "$1")"
+if [ -n "${FAKE_SCP_TAMPER:-}" ]; then
+    echo "substituted tarball" > "$2/$(basename "$1")"
+else
+    cp "$FAKE_LOG/remote-tarball" "$2/$(basename "$1")"
+fi
 EOF
+echo "remote tarball" > "$FAKE_LOG/remote-tarball"
 cat >"$T/bin/pkg-macos" <<'EOF'
 #!/bin/sh
 set -eu
@@ -212,6 +222,15 @@ check "fleet build of a different commit is refused" test "$rc" -ne 0
 check "fleet build of a different commit names the mismatch" grep -q "built commit '0000" "$T/out.log"
 check "fleet build of a different commit never copies a tarball back" test ! -s "$FAKE_LOG/scp.log"
 check "fleet build of a different commit never publishes" bash -c "! grep -q 'release create' '$FAKE_LOG/gh.log' 2>/dev/null"
+
+R="$(fixture fleet-tampered-tarball)"
+export FAKE_SCP_TAMPER=1
+PKG_LINUX='' release_in "$R" 0.2.0 "$T/notes.md"; rc=$?
+unset FAKE_SCP_TAMPER
+check "tarball substituted in transit is refused" test "$rc" -ne 0
+check "substituted tarball names the sha256 mismatch" grep -q "does not match fleet-vm" "$T/out.log"
+check "substituted tarball is never signed" test ! -e "$R/dist/manifest.json"
+check "substituted tarball is never published" bash -c "! grep -q 'release create' '$FAKE_LOG/gh.log' 2>/dev/null"
 
 R="$(fixture failed-tests)"
 cat >"$T/bin/cargo-fail" <<'EOF'

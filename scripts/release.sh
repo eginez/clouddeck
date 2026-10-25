@@ -102,23 +102,29 @@ package_macos() { # work dir
 }
 
 # Fresh clone every release: a reused checkout would let local edits reach the signed tarball.
+# Prints the tarball sha256 then the build commit, so the local copy can be checked against what was built.
 remote_build_command() { # version, tag commit
     local url
     url="$(git -C "$ROOT" remote get-url origin)"
-    printf '%s' "set -e; rm -rf $REMOTE_RELEASE_DIR; git clone -q '$url' $REMOTE_RELEASE_DIR; cd $REMOTE_RELEASE_DIR && git checkout -q v$1 && [ \"\$(git rev-parse HEAD)\" = '$2' ] && CARGO_TARGET_DIR=\$PWD/target CARGO_PROFILE_RELEASE_DEBUG=0 nice -n 10 scripts/package-linux.sh && git rev-parse HEAD"
+    printf '%s' "set -e; rm -rf $REMOTE_RELEASE_DIR; git clone -q '$url' $REMOTE_RELEASE_DIR; cd $REMOTE_RELEASE_DIR && git checkout -q v$1 && [ \"\$(git rev-parse HEAD)\" = '$2' ] && CARGO_TARGET_DIR=\$PWD/target CARGO_PROFILE_RELEASE_DEBUG=0 nice -n 10 scripts/package-linux.sh && sha256sum dist/CloudDeck-$1-linux-x86_64.tar.gz | cut -d' ' -f1 && git rev-parse HEAD"
 }
 
 package_linux() { # work dir, version, linux tarball
     if [[ -n "${RELEASE_PACKAGE_LINUX:-}" ]]; then
         (cd "$1" && "$RELEASE_PACKAGE_LINUX") || die "Linux packaging failed"
     else
-        local tag_commit built
+        local tag_commit output built_sha built_commit local_sha
         tag_commit="$(git -C "$1" rev-parse "v$2^{commit}")"
-        built="$("$RELEASE_SSH" "$FLEET_HOST" "$(remote_build_command "$2" "$tag_commit")" | tail -n1)" \
+        output="$("$RELEASE_SSH" "$FLEET_HOST" "$(remote_build_command "$2" "$tag_commit")")" \
             || die "Linux packaging on $FLEET_HOST failed"
-        [[ "$built" == "$tag_commit" ]] \
-            || die "$FLEET_HOST built commit '$built', expected v$2 at $tag_commit; refusing the tarball"
+        built_commit="$(printf '%s\n' "$output" | tail -n1)"
+        built_sha="$(printf '%s\n' "$output" | tail -n2 | head -n1)"
+        [[ "$built_commit" == "$tag_commit" ]] \
+            || die "$FLEET_HOST built commit '$built_commit', expected v$2 at $tag_commit; refusing the tarball"
         "$RELEASE_SCP" "$FLEET_HOST:$REMOTE_RELEASE_DIR/dist/$(basename "$3")" "$1/dist/" || die "copying the Linux tarball failed"
+        local_sha="$(sha256_of "$3")"
+        [[ "$local_sha" == "$built_sha" ]] \
+            || die "Linux tarball sha256 $local_sha does not match $FLEET_HOST's $built_sha; refusing to sign it"
     fi
     require_file "$3"
 }
