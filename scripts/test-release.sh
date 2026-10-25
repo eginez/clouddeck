@@ -142,12 +142,13 @@ fixture() { # name; prints a work repo whose origin is a bare repo beside it
     echo "$base/repo"
 }
 
-release_in() { # repo args...; PKG_LINUX overrides the Linux packager (empty means the fleet path)
+release_in() { # repo args...; PKG_LINUX overrides the Linux packager (empty means the fleet path); BUILD_HOST overrides the build host
     local repo="$1"; shift
     rm -f "$FAKE_LOG"/*.log
     RELEASE_REPO_ROOT="$repo" RELEASE_CARGO="${CARGO_BIN-$T/bin/cargo}" RELEASE_GH="$T/bin/gh" \
         RELEASE_SSH="$T/bin/ssh" RELEASE_SCP="$T/bin/scp" RELEASE_PACKAGE_MACOS="$T/bin/pkg-macos" \
         RELEASE_PACKAGE_LINUX="${PKG_LINUX-$T/bin/pkg-linux}" RELEASE_KEY="${KEY_PATH-$T/key}" \
+        RELEASE_LINUX_HOST="${BUILD_HOST-linux-build.example.com}" \
         RELEASE_CI_ATTEMPTS="${CI_ATTEMPTS-1}" RELEASE_CI_INTERVAL=0 \
         RELEASE_SKIP_PLATFORM_CHECK=1 "$SRC/scripts/release.sh" "$@" >"$T/out.log" 2>&1 </dev/null
 }
@@ -246,7 +247,7 @@ check "gh release create targets tag v0.2.0" grep -q '^release create v0.2.0 ' "
 R="$(fixture fleet-path)"
 PKG_LINUX='' release_in "$R" 0.2.0 "$T/notes.md"; rc=$?
 check "fleet path full run exits 0" test "$rc" -eq 0
-check "fleet path checks out the pushed tag on fleet-vm" grep -q 'git checkout -q v0.2.0' "$FAKE_LOG/ssh.log"
+check "fleet path checks out the pushed tag on the build host" grep -q 'git checkout -q v0.2.0' "$FAKE_LOG/ssh.log"
 check "fleet path builds Linux with package-linux.sh" grep -q 'scripts/package-linux.sh' "$FAKE_LOG/ssh.log"
 check "fleet path wipes the reused release clone before cloning" grep -q 'rm -rf ~/src/release "$CARGO_HOME"; git clone' "$FAKE_LOG/ssh.log"
 check "fleet path clones without the user's git config or templates" grep -q 'GIT_CONFIG_GLOBAL=/dev/null.*git clone -q --template= ' "$FAKE_LOG/ssh.log"
@@ -267,10 +268,16 @@ if guard_in; then bad "ancestor guard fails under a home cargo config"; else ok 
 rm -f "$GUARD_HOME/.cargo/config.toml"
 check "ancestor guard passes once the home cargo config is gone" guard_in
 check "fleet path asserts the build commit equals the tag commit" grep -q 'git rev-parse HEAD)" = ' "$FAKE_LOG/ssh.log"
-check "fleet path copies the Linux tarball back from fleet-vm" \
-    grep -q 'fleet-vm.example.invalid:~/src/release/dist/CloudDeck-0.2.0-linux-x86_64.tar.gz' "$FAKE_LOG/scp.log"
+check "fleet path copies the Linux tarball back from the build host" \
+    grep -q 'linux-build.example.com:~/src/release/dist/CloudDeck-0.2.0-linux-x86_64.tar.gz' "$FAKE_LOG/scp.log"
 check "fleet path publishes the five assets in order" bash -c "diff '$FAKE_LOG/gh-assets.log' <(printf '%s\n' \
     CloudDeck-0.2.0-macos-aarch64.tar.gz CloudDeck-0.2.0-macos-aarch64.dmg CloudDeck-0.2.0-linux-x86_64.tar.gz manifest.json manifest.json.sig) >/dev/null"
+
+R="$(fixture fleet-no-host)"
+BUILD_HOST='' PKG_LINUX='' release_in "$R" 0.2.0 "$T/notes.md"; rc=$?
+check "fleet path without RELEASE_LINUX_HOST is refused" test "$rc" -ne 0
+check "fleet path without RELEASE_LINUX_HOST names the variable" grep -q 'RELEASE_LINUX_HOST' "$T/out.log"
+check "fleet path without RELEASE_LINUX_HOST never reaches ssh" test ! -s "$FAKE_LOG/ssh.log"
 
 R="$(fixture fleet-mismatch)"
 export FAKE_SSH_HEAD=0000000000000000000000000000000000000000
@@ -286,7 +293,7 @@ export FAKE_SCP_TAMPER=1
 PKG_LINUX='' release_in "$R" 0.2.0 "$T/notes.md"; rc=$?
 unset FAKE_SCP_TAMPER
 check "tarball substituted in transit is refused" test "$rc" -ne 0
-check "substituted tarball names the sha256 mismatch" grep -q "does not match fleet-vm" "$T/out.log"
+check "substituted tarball names the sha256 mismatch" grep -q "does not match linux-build.example.com" "$T/out.log"
 check "substituted tarball is never signed" test ! -e "$R/dist/manifest.json"
 check "substituted tarball is never published" bash -c "! grep -q 'release create' '$FAKE_LOG/gh.log' 2>/dev/null"
 

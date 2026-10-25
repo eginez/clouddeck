@@ -102,9 +102,9 @@ fn service_for(state: State) -> (Box<dyn ComputeService + Send + Sync>, Vec<Stri
 /// The three profiles the welcome state lists.
 fn welcome_profiles() -> Vec<ProfileInput> {
     [
-        ("prod-readonly", "111122223333", "us-east-1"),
-        ("staging-admin", "111122224444", "us-west-2"),
-        ("sandbox", "777788889999", "eu-west-1"),
+        ("prod-readonly", "222222222222", "us-east-1"),
+        ("staging-admin", "333333333333", "us-west-2"),
+        ("sandbox", "444444444444", "eu-west-1"),
     ]
     .map(|(name, account_id, region)| ProfileInput {
         name: name.to_string(),

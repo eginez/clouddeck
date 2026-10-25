@@ -271,17 +271,17 @@ mod tests {
         vec![
             ProfileInput {
                 name: "prod-readonly".into(),
-                account_id: Some("111122223333".into()),
+                account_id: Some("222222222222".into()),
                 region: Some("us-east-1".into()),
             },
             ProfileInput {
                 name: "staging-admin".into(),
-                account_id: Some("111122224444".into()),
+                account_id: Some("333333333333".into()),
                 region: Some("us-west-2".into()),
             },
             ProfileInput {
                 name: "sandbox".into(),
-                account_id: Some("777788889999".into()),
+                account_id: Some("444444444444".into()),
                 region: Some("eu-west-1".into()),
             },
         ]

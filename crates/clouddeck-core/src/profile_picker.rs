@@ -144,10 +144,10 @@ mod tests {
 
     fn sample_profiles() -> Vec<ProfileInput> {
         vec![
-            input("prod-readonly", Some("111122223333"), Some("us-east-1")),
-            input("staging-admin", Some("111122224444"), Some("us-west-2")),
-            input("sandbox", Some("777788889999"), Some("eu-west-1")),
-            input("data-platform", Some("101010101010"), None),
+            input("prod-readonly", Some("222222222222"), Some("us-east-1")),
+            input("staging-admin", Some("333333333333"), Some("us-west-2")),
+            input("sandbox", Some("444444444444"), Some("eu-west-1")),
+            input("data-platform", Some("111111111111"), None),
             input("security-audit", None, Some("eu-central-1")),
             input("legacy-2019", Some("12345"), None),
             input("x", None, None),
@@ -175,10 +175,10 @@ mod tests {
         assert_eq!(
             subtitles,
             [
-                "1111-2222-3333 · us-east-1",
-                "1111-2222-4444 · us-west-2",
-                "7777-8888-9999 · eu-west-1",
-                "1010-1010-1010",
+                "2222-2222-2222 · us-east-1",
+                "3333-3333-3333 · us-west-2",
+                "4444-4444-4444 · eu-west-1",
+                "1111-1111-1111",
                 "eu-central-1",
                 "12345",
                 "",
@@ -205,8 +205,12 @@ mod tests {
             ["prod-readonly"]
         );
         assert_eq!(
-            names(&filter_profile_rows(&rows, "1111")),
+            names(&filter_profile_rows(&rows, "US-")),
             ["prod-readonly", "staging-admin"]
+        );
+        assert_eq!(
+            names(&filter_profile_rows(&rows, "3333")),
+            ["staging-admin"]
         );
         assert_eq!(
             names(&filter_profile_rows(&rows, "EU-")),

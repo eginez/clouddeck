@@ -9,7 +9,7 @@ if [[ "$(uname -s)" != "Linux" || "$(uname -m)" != "x86_64" ]]; then
     exit 1
 fi
 
-# On fleet-vm, run with CARGO_PROFILE_RELEASE_DEBUG=0 and -j2 to keep the build within memory.
+# On the Linux build host, run with CARGO_PROFILE_RELEASE_DEBUG=0 and -j2 to keep the build within memory.
 cargo build --manifest-path "$root_dir/Cargo.toml" --locked --release -p clouddeck-app
 
 target_dir="${CARGO_TARGET_DIR:-$root_dir/target}"

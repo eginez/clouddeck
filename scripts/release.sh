@@ -14,7 +14,7 @@ RELEASE_SCP="${RELEASE_SCP:-scp}"
 RELEASE_GIT="${RELEASE_GIT:-git}"
 RELEASE_PACKAGE_MACOS="${RELEASE_PACKAGE_MACOS:-scripts/package-macos.sh}"
 RELEASE_KEY="${RELEASE_KEY:-$HOME/.config/clouddeck/release-signing.key}"
-FLEET_HOST="fleet-vm.example.invalid"
+LINUX_HOST="${RELEASE_LINUX_HOST:-}"
 # shellcheck disable=SC2088 # tilde expands on the fleet host, not here
 REMOTE_RELEASE_DIR='~/src/release'
 SEMVER_RE='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
@@ -92,7 +92,8 @@ preflight() { # version
     fi
     preflight_key_and_gh
     if [[ -z "${RELEASE_PACKAGE_LINUX:-}" ]]; then
-        "$RELEASE_SSH" "$FLEET_HOST" true >/dev/null 2>&1 || die "ssh $FLEET_HOST failed"
+        [[ -n "$LINUX_HOST" ]] || die "set RELEASE_LINUX_HOST to the Linux build host, or RELEASE_PACKAGE_LINUX to a local packager"
+        "$RELEASE_SSH" "$LINUX_HOST" true >/dev/null 2>&1 || die "ssh $LINUX_HOST failed"
     fi
 }
 
@@ -210,16 +211,16 @@ package_linux() { # work dir, version, linux tarball
     else
         local tag_commit output built_sha built_commit local_sha
         tag_commit="$(git -C "$1" rev-parse "v$2^{commit}")"
-        output="$("$RELEASE_SSH" "$FLEET_HOST" "$(remote_build_command "$2" "$tag_commit")")" \
-            || die "Linux packaging on $FLEET_HOST failed"
+        output="$("$RELEASE_SSH" "$LINUX_HOST" "$(remote_build_command "$2" "$tag_commit")")" \
+            || die "Linux packaging on $LINUX_HOST failed"
         built_commit="$(printf '%s\n' "$output" | tail -n1)"
         built_sha="$(printf '%s\n' "$output" | tail -n2 | head -n1)"
         [[ "$built_commit" == "$tag_commit" ]] \
-            || die "$FLEET_HOST built commit '$built_commit', expected v$2 at $tag_commit; refusing the tarball"
-        "$RELEASE_SCP" "$FLEET_HOST:$REMOTE_RELEASE_DIR/dist/$(basename "$3")" "$1/dist/" || die "copying the Linux tarball failed"
+            || die "$LINUX_HOST built commit '$built_commit', expected v$2 at $tag_commit; refusing the tarball"
+        "$RELEASE_SCP" "$LINUX_HOST:$REMOTE_RELEASE_DIR/dist/$(basename "$3")" "$1/dist/" || die "copying the Linux tarball failed"
         local_sha="$(sha256_of "$3")"
         [[ "$local_sha" == "$built_sha" ]] \
-            || die "Linux tarball sha256 $local_sha does not match $FLEET_HOST's $built_sha; refusing to sign it"
+            || die "Linux tarball sha256 $local_sha does not match $LINUX_HOST's $built_sha; refusing to sign it"
     fi
     require_file "$3"
 }
@@ -294,7 +295,7 @@ main() {
         build_manifest "$work" "$version" "$notes" "$mac_tar" "$linux_tar" "$dist"
         require_file "$manifest" "$signature"
     else
-        echo "dry-run: Linux packaging and manifest skipped; fleet-vm cannot fetch the throwaway commit"
+        echo "dry-run: Linux packaging and manifest skipped; the Linux build host cannot fetch the throwaway commit"
     fi
 
     echo "==> assets"
