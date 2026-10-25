@@ -269,17 +269,29 @@ mod tests {
     use std::sync::Mutex;
 
     struct Pages {
-        pages: Mutex<Vec<Result<Ec2Page, String>>>,
+        pages: Mutex<Vec<Result<Ec2Page, BoxError>>>,
+        requested_tokens: Mutex<Vec<Option<String>>>,
+    }
+
+    fn scripted_pages(pages: Vec<Result<Ec2Page, BoxError>>) -> Arc<Pages> {
+        Arc::new(Pages {
+            pages: Mutex::new(pages),
+            requested_tokens: Mutex::new(Vec::new()),
+        })
+    }
+
+    fn page(instances: Vec<EC2Instance>, next_token: Option<&str>) -> Ec2Page {
+        Ec2Page {
+            instances,
+            next_token: next_token.map(str::to_owned),
+        }
     }
 
     #[async_trait::async_trait]
     impl Ec2PageSource for Pages {
-        async fn next_page(&self, _next_token: Option<String>) -> Result<Ec2Page, BoxError> {
-            self.pages
-                .lock()
-                .unwrap()
-                .remove(0)
-                .map_err(|message| std::io::Error::other(message).into())
+        async fn next_page(&self, next_token: Option<String>) -> Result<Ec2Page, BoxError> {
+            self.requested_tokens.lock().unwrap().push(next_token);
+            self.pages.lock().unwrap().remove(0)
         }
     }
 
@@ -331,18 +343,10 @@ mod tests {
 
     #[tokio::test]
     async fn follows_continuation_tokens_and_applies_filters() {
-        let pages = Arc::new(Pages {
-            pages: Mutex::new(vec![
-                Ok(Ec2Page {
-                    instances: vec![instance("i-a", "api")],
-                    next_token: Some("page-2".into()),
-                }),
-                Ok(Ec2Page {
-                    instances: vec![instance("i-b", "worker")],
-                    next_token: None,
-                }),
-            ]),
-        });
+        let pages = scripted_pages(vec![
+            Ok(page(vec![instance("i-a", "api")], Some("page-2"))),
+            Ok(page(vec![instance("i-b", "worker")], None)),
+        ]);
         let service = AwsSdkComputeService::with_page_source("team", "us-east-1", pages);
         let result = service
             .list_instances(Some(ComputeInstanceFilters {
@@ -363,18 +367,10 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_repeated_continuation_tokens() {
-        let pages = Arc::new(Pages {
-            pages: Mutex::new(vec![
-                Ok(Ec2Page {
-                    instances: vec![],
-                    next_token: Some("same".into()),
-                }),
-                Ok(Ec2Page {
-                    instances: vec![],
-                    next_token: Some("same".into()),
-                }),
-            ]),
-        });
+        let pages = scripted_pages(vec![
+            Ok(page(vec![], Some("same"))),
+            Ok(page(vec![], Some("same"))),
+        ]);
         let service = AwsSdkComputeService::with_page_source("team", "us-east-1", pages);
         let error = service.list_instances(None).await.unwrap_err();
         assert!(error.to_string().contains("repeated continuation"));
@@ -382,12 +378,96 @@ mod tests {
 
     #[tokio::test]
     async fn preserves_page_source_failures_without_logging_credentials() {
-        let pages = Arc::new(Pages {
-            pages: Mutex::new(vec![Err("AccessDenied: not authorized".into())]),
-        });
+        let pages = scripted_pages(vec![Err("AccessDenied: not authorized".into())]);
         let service = AwsSdkComputeService::with_page_source("team", "us-east-1", pages);
         let error = service.list_instances(None).await.unwrap_err();
         assert!(error.to_string().contains("AccessDenied"));
         assert!(!error.to_string().contains("secret"));
+    }
+
+    #[tokio::test]
+    async fn three_pages_load_every_instance_and_request_each_token_in_order() {
+        let pages = scripted_pages(vec![
+            Ok(page(vec![instance("i-1", "a")], Some("page-2"))),
+            Ok(page(vec![instance("i-2", "b")], Some("page-3"))),
+            Ok(page(vec![instance("i-3", "c")], None)),
+        ]);
+        let service = AwsSdkComputeService::with_page_source("team", "us-east-1", pages.clone());
+
+        let result = service.list_instances(None).await.unwrap();
+
+        let ids: Vec<&str> = result
+            .instances
+            .iter()
+            .map(|i| i.instance_id.as_str())
+            .collect();
+        assert_eq!(ids, ["i-1", "i-2", "i-3"]);
+        assert!(result.partial_failures.is_empty());
+        assert_eq!(
+            *pages.requested_tokens.lock().unwrap(),
+            vec![None, Some("page-2".to_string()), Some("page-3".to_string())]
+        );
+    }
+
+    #[tokio::test]
+    async fn region_with_no_instances_yields_empty_result() {
+        let pages = scripted_pages(vec![Ok(page(vec![], None))]);
+        let service = AwsSdkComputeService::with_page_source("team", "eu-west-1", pages);
+
+        let result = service.list_instances(None).await.unwrap();
+
+        assert!(result.instances.is_empty());
+        assert!(result.partial_failures.is_empty());
+    }
+
+    #[tokio::test]
+    async fn failing_region_is_recorded_while_other_regions_keep_their_instances() {
+        let fleet = crate::FleetComputeService::new(
+            vec!["eu-west-1".into(), "us-west-2".into()],
+            |region: &str| -> Box<dyn ComputeService + Send + Sync> {
+                let pages = if region == "us-west-2" {
+                    scripted_pages(vec![Err(Box::new(CloudDeckError::Permission))])
+                } else {
+                    scripted_pages(vec![Ok(page(vec![instance("i-eu", "api")], None))])
+                };
+                Box::new(AwsSdkComputeService::with_page_source(
+                    "team", region, pages,
+                ))
+            },
+        );
+
+        let result = fleet.list_instances(None).await.unwrap();
+
+        assert_eq!(result.instances.len(), 1);
+        assert_eq!(result.instances[0].instance_id, "i-eu");
+        assert_eq!(result.instances[0].region.as_deref(), Some("eu-west-1"));
+        assert_eq!(result.partial_failures.len(), 1);
+        assert_eq!(result.partial_failures[0].region, "us-west-2");
+        assert_eq!(result.partial_failures[0].error, CloudDeckError::Permission);
+        assert_eq!(
+            result.partial_failures[0].message,
+            CloudDeckError::Permission.user_message()
+        );
+    }
+
+    #[tokio::test]
+    async fn throttling_mid_pagination_fails_the_region_with_typed_error() {
+        let pages = scripted_pages(vec![
+            Ok(page(vec![instance("i-1", "a")], Some("page-2"))),
+            Err(aws_request_error(
+                "EC2 DescribeInstances",
+                Some("RequestLimitExceeded"),
+                "",
+            )),
+        ]);
+        let service = AwsSdkComputeService::with_page_source("team", "us-east-1", pages.clone());
+
+        let error = service.list_instances(None).await.unwrap_err();
+
+        assert_eq!(
+            error.downcast_ref::<CloudDeckError>(),
+            Some(&CloudDeckError::Throttled)
+        );
+        assert_eq!(pages.requested_tokens.lock().unwrap().len(), 2);
     }
 }
