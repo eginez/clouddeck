@@ -101,12 +101,17 @@ package_macos() { # work dir
     (cd "$1" && "$RELEASE_PACKAGE_MACOS") || die "macOS packaging failed"
 }
 
+# Cargo also reads .cargo/config* from every ancestor of the build dir, so refuse to build under one.
+CARGO_ANCESTOR_CONFIG_GUARD='d="$(pwd -P)"; while :; do for f in "$d/.cargo/config.toml" "$d/.cargo/config"; do if [ -e "$f" ]; then echo "refusing to build: $f would configure cargo" >&2; exit 1; fi; done; [ "$d" = / ] && break; d="$(dirname "$d")"; done'
+
 # Fresh clone every release: a reused checkout would let local edits reach the signed tarball.
 # Prints the tarball sha256 then the build commit, so the local copy can be checked against what was built.
+# The fleet user's git and cargo config, hooks and wrappers must not reach the build; HOME stays
+# so SSH keys still reach GitHub.
 remote_build_command() { # version, tag commit
     local url
     url="$(git -C "$ROOT" remote get-url origin)"
-    printf '%s' "set -e; rm -rf $REMOTE_RELEASE_DIR; git clone -q '$url' $REMOTE_RELEASE_DIR; cd $REMOTE_RELEASE_DIR && git checkout -q v$1 && [ \"\$(git rev-parse HEAD)\" = '$2' ] && CARGO_TARGET_DIR=\$PWD/target CARGO_PROFILE_RELEASE_DEBUG=0 nice -n 10 scripts/package-linux.sh && sha256sum dist/CloudDeck-$1-linux-x86_64.tar.gz | cut -d' ' -f1 && git rev-parse HEAD"
+    printf '%s' "set -e; export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_COUNT=0 RUSTUP_HOME=\"\${RUSTUP_HOME:-\$HOME/.rustup}\" CARGO_HOME=\"\$HOME/src/release-cargo\"; unset GIT_TEMPLATE_DIR GIT_CONFIG_PARAMETERS GIT_SSH_COMMAND RUSTC RUSTDOC RUSTUP_TOOLCHAIN RUSTC_WRAPPER RUSTC_WORKSPACE_WRAPPER RUSTFLAGS RUSTDOCFLAGS CARGO_BUILD_RUSTC CARGO_BUILD_RUSTDOC CARGO_BUILD_RUSTC_WRAPPER CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER CARGO_BUILD_RUSTFLAGS CARGO_BUILD_RUSTDOCFLAGS CARGO_ENCODED_RUSTFLAGS CARGO_ENCODED_RUSTDOCFLAGS; unset \$(env | sed -n 's/^\\(CARGO_TARGET_[^=]*_\\(LINKER\\|RUNNER\\)\\)=.*/\\1/p'); rm -rf $REMOTE_RELEASE_DIR \"\$CARGO_HOME\"; git clone -q --template= '$url' $REMOTE_RELEASE_DIR; cd $REMOTE_RELEASE_DIR && git checkout -q v$1 && [ \"\$(git rev-parse HEAD)\" = '$2' ] && ($CARGO_ANCESTOR_CONFIG_GUARD) && CARGO_TARGET_DIR=\$PWD/target CARGO_PROFILE_RELEASE_DEBUG=0 nice -n 10 scripts/package-linux.sh && sha256sum dist/CloudDeck-$1-linux-x86_64.tar.gz | cut -d' ' -f1 && git rev-parse HEAD"
 }
 
 package_linux() { # work dir, version, linux tarball

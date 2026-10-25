@@ -66,7 +66,7 @@ if [ -n "${FAKE_SSH_HEAD:-}" ]; then
     echo "$FAKE_SSH_HEAD"
     exit 0
 fi
-url="$(printf '%s' "$2" | sed -n "s/.*git clone -q '\([^']*\)'.*/\1/p")"
+url="$(printf '%s' "$2" | sed -n "s/.*git clone -q --template= '\([^']*\)'.*/\1/p")"
 tag="$(printf '%s' "$2" | sed -n 's/.*git checkout -q v\([0-9.]*\).*/\1/p')"
 git --git-dir="$url" rev-parse "v$tag^{commit}"
 EOF
@@ -207,7 +207,24 @@ PKG_LINUX='' release_in "$R" 0.2.0 "$T/notes.md"; rc=$?
 check "fleet path full run exits 0" test "$rc" -eq 0
 check "fleet path checks out the pushed tag on fleet-vm" grep -q 'git checkout -q v0.2.0' "$FAKE_LOG/ssh.log"
 check "fleet path builds Linux with package-linux.sh" grep -q 'scripts/package-linux.sh' "$FAKE_LOG/ssh.log"
-check "fleet path wipes the reused release clone before cloning" grep -q 'rm -rf ~/src/release; git clone' "$FAKE_LOG/ssh.log"
+check "fleet path wipes the reused release clone before cloning" grep -q 'rm -rf ~/src/release "$CARGO_HOME"; git clone' "$FAKE_LOG/ssh.log"
+check "fleet path clones without the user's git config or templates" grep -q 'GIT_CONFIG_GLOBAL=/dev/null.*git clone -q --template= ' "$FAKE_LOG/ssh.log"
+check "fleet path builds with a clean cargo home" grep -q 'CARGO_HOME="$HOME/src/release-cargo"' "$FAKE_LOG/ssh.log"
+check "fleet path clears git config env overrides before cloning" \
+    grep -q 'GIT_CONFIG_COUNT=0.*unset GIT_TEMPLATE_DIR GIT_CONFIG_PARAMETERS.*git clone' "$FAKE_LOG/ssh.log"
+check "fleet path clears rustc wrapper and flag overrides before building" \
+    grep -q 'unset .*RUSTC_WRAPPER.*RUSTFLAGS.*CARGO_BUILD_RUSTC_WRAPPER.*CARGO_ENCODED_RUSTFLAGS.*LINKER' "$FAKE_LOG/ssh.log"
+check "fleet path refuses a build under ancestor cargo config" grep -q 'would configure cargo' "$FAKE_LOG/ssh.log"
+check "fleet path ancestor guard names .cargo/config.toml" grep -q '\$d/.cargo/config.toml' "$FAKE_LOG/ssh.log"
+
+GUARD="$(bash -c 'source "$1"; printf %s "$CARGO_ANCESTOR_CONFIG_GUARD"' _ "$SRC/scripts/release.sh")"
+GUARD_HOME="$T/guard-home"
+mkdir -p "$GUARD_HOME/src/release" "$GUARD_HOME/.cargo"
+echo '[build]' > "$GUARD_HOME/.cargo/config.toml"
+guard_in() { (cd "$GUARD_HOME/src/release" && sh -c "$GUARD") >/dev/null 2>&1; }
+if guard_in; then bad "ancestor guard fails under a home cargo config"; else ok "ancestor guard fails under a home cargo config"; fi
+rm -f "$GUARD_HOME/.cargo/config.toml"
+check "ancestor guard passes once the home cargo config is gone" guard_in
 check "fleet path asserts the build commit equals the tag commit" grep -q 'git rev-parse HEAD)" = ' "$FAKE_LOG/ssh.log"
 check "fleet path copies the Linux tarball back from fleet-vm" \
     grep -q 'fleet-vm.example.invalid:~/src/release/dist/CloudDeck-0.2.0-linux-x86_64.tar.gz' "$FAKE_LOG/scp.log"
