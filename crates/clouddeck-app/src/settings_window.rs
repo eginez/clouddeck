@@ -14,8 +14,8 @@ use clouddeck_core::{
 use gpui::{
     AnyElement, App, Bounds, ClickEvent, Context, Div, Entity, EventEmitter, Global,
     HighlightStyle, IntoElement, ParentElement, Render, SharedString, Stateful, Styled, StyledText,
-    Subscription, TitlebarOptions, Window, WindowBounds, WindowHandle, WindowOptions, div, point,
-    prelude::*, px, size, white,
+    Subscription, TitlebarOptions, Window, WindowBounds, WindowHandle, WindowOptions, div, img,
+    point, prelude::*, px, size, white,
 };
 use gpui_component::checkbox::Checkbox;
 use gpui_component::input::{Input, InputEvent, InputState};
@@ -1023,7 +1023,18 @@ impl SettingsWindow {
         let version = div()
             .debug_selector(|| "about.version".into())
             .child(env!("CARGO_PKG_VERSION"));
-        let mut rows = vec![about_row("Version", version, palette)];
+        let icon = img(crate::assets::APP_ICON_PATH)
+            .size(px(96.))
+            .debug_selector(|| "about.icon".into());
+        let mut rows = vec![
+            div()
+                .flex()
+                .justify_center()
+                .py(px(12.))
+                .child(icon)
+                .into_any_element(),
+            about_row("Version", version, palette),
+        ];
         rows.extend(
             [
                 (
@@ -1613,6 +1624,8 @@ mod tests {
 
         assert!(cx.debug_bounds("about.version").is_some());
         assert!(cx.debug_bounds("about.check-updates").is_some());
+        let icon = cx.debug_bounds("about.icon").expect("about icon rendered");
+        assert!(icon.size.width > px(0.) && icon.size.height > px(0.));
     }
 
     fn type_query(view: &Entity<SettingsWindow>, cx: &mut VisualTestContext, query: &'static str) {

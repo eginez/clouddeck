@@ -10,10 +10,10 @@ Extract the archive anywhere and run the app:
 
 Optional desktop integration (the launcher runs "clouddeck" from PATH):
 
-    mkdir -p ~/.local/bin ~/.local/share/applications ~/.local/share/icons/hicolor/1024x1024/apps
+    mkdir -p ~/.local/bin ~/.local/share/applications ~/.local/share/icons
     cp clouddeck ~/.local/bin/
     cp clouddeck.desktop ~/.local/share/applications/
-    cp clouddeck.png ~/.local/share/icons/hicolor/1024x1024/apps/
+    cp -r share/icons/hicolor ~/.local/share/icons/
 
 Runtime requirements
 --------------------

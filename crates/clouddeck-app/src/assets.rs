@@ -27,11 +27,14 @@ pub const ICON_PATHS: [&str; 22] = [
     "icons/user.svg",
 ];
 
+pub const APP_ICON_PATH: &str = "brand/clouddeck-icon-1024.png";
+
 pub struct Assets;
 
 impl AssetSource for Assets {
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
         let bytes: &'static [u8] = match path {
+            APP_ICON_PATH => &include_bytes!("../../../design/icon/clouddeck-icon-1024.png")[..],
             "icons/check.svg" => &include_bytes!("../assets/icons/check.svg")[..],
             "icons/chevron-down.svg" => &include_bytes!("../assets/icons/chevron-down.svg")[..],
             "icons/chevron-right.svg" => &include_bytes!("../assets/icons/chevron-right.svg")[..],
@@ -101,6 +104,12 @@ mod tests {
         let bytes = Assets.load("icons/search.svg").unwrap().unwrap();
         let text = std::str::from_utf8(&bytes).unwrap();
         assert!(text.contains(r#"<circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>"#));
+    }
+
+    #[test]
+    fn app_icon_loads_as_a_png() {
+        let bytes = Assets.load(APP_ICON_PATH).unwrap().unwrap();
+        assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n");
     }
 
     #[test]
