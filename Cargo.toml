@@ -2,6 +2,10 @@
 resolver = "2"
 members = ["crates/clouddeck-core", "crates/clouddeck-app"]
 
+[workspace.package]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/eginez/clouddeck-rs"
+
 # clouddeck-rs-sr7i.1: blade-graphics 0.7.1 hard-codes VK_COMPOSITE_ALPHA_OPAQUE,
 # which Lavapipe lacks (black window under Xvfb). Vendored copy falls back to
 # PRE_MULTIPLIED/INHERIT. No newer 0.7.x exists; 0.9 is not compatible with gpui 0.2.2.

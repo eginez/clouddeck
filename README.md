@@ -118,3 +118,23 @@ Core tests use vendored EC2 scenario fixtures and injected services, so they do
 not contact AWS. They cover malformed CLI JSON, profile parsing without secret
 retention, atomic context persistence, multi-term metadata search, filtering,
 load failure transitions, and concurrent fleet timeouts.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for how to build, test, and send changes.
+Report security issues as described in [SECURITY.md](SECURITY.md). Participation
+is governed by the [Code of Conduct](CODE_OF_CONDUCT.md).
+
+## License
+
+CloudDeck is licensed under either of
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or
+  <http://www.apache.org/licenses/LICENSE-2.0>)
+- MIT license ([LICENSE-MIT](LICENSE-MIT) or <http://opensource.org/licenses/MIT>)
+
+at your option.
+
+Unless you explicitly state otherwise, any contribution intentionally submitted
+for inclusion in CloudDeck by you, as defined in the Apache-2.0 license, shall be
+dual licensed as above, without any additional terms or conditions.
