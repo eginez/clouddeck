@@ -19,6 +19,7 @@ check() { # desc cmd...
 export GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=test@example.com
 export GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=test@example.com
 export FAKE_LOG="$T/log"
+export FAKE_GH_DRAFTS="$T/draft"
 mkdir -p "$T/bin" "$FAKE_LOG"
 
 cat >"$T/bin/cargo" <<'EOF'
@@ -48,6 +49,27 @@ if [ "$1" = release ] && [ "$2" = create ]; then
         esac
     done
     echo "https://example.test/releases/tag/$3"
+fi
+if [ "$1" = release ] && [ "$2" = upload ] && [ -n "${FAKE_GH_FAIL_UPLOAD:-}" ]; then
+    exit 1
+fi
+if [ "$1" = release ] && [ "$2" = edit ] && [ -n "${FAKE_GH_FAIL_EDIT:-}" ]; then
+    exit 1
+fi
+if [ "$1" = release ] && [ "$2" = view ]; then
+    case "$*" in
+        *isDraft*) echo "${FAKE_GH_DRAFT:-true}" ;;
+        *assets*) ls -1 "$FAKE_GH_DRAFTS" ;;
+    esac
+fi
+if [ "$1" = release ] && [ "$2" = download ]; then
+    dir=""
+    prev=""
+    for arg in "$@"; do
+        [ "$prev" = --dir ] && dir="$arg"
+        prev="$arg"
+    done
+    cp "$FAKE_GH_DRAFTS"/* "$dir"/
 fi
 EOF
 cat >"$T/bin/ssh" <<'EOF'
@@ -125,9 +147,28 @@ release_in() { # repo args...; PKG_LINUX overrides the Linux packager (empty mea
     rm -f "$FAKE_LOG"/*.log
     RELEASE_REPO_ROOT="$repo" RELEASE_CARGO="${CARGO_BIN-$T/bin/cargo}" RELEASE_GH="$T/bin/gh" \
         RELEASE_SSH="$T/bin/ssh" RELEASE_SCP="$T/bin/scp" RELEASE_PACKAGE_MACOS="$T/bin/pkg-macos" \
-        RELEASE_PACKAGE_LINUX="${PKG_LINUX-$T/bin/pkg-linux}" RELEASE_KEY="$T/key" \
-        RELEASE_SKIP_PLATFORM_CHECK=1 "$SRC/scripts/release.sh" "$@" >"$T/out.log" 2>&1
+        RELEASE_PACKAGE_LINUX="${PKG_LINUX-$T/bin/pkg-linux}" RELEASE_KEY="${KEY_PATH-$T/key}" \
+        RELEASE_CI_ATTEMPTS="${CI_ATTEMPTS-1}" RELEASE_CI_INTERVAL=0 \
+        RELEASE_SKIP_PLATFORM_CHECK=1 "$SRC/scripts/release.sh" "$@" >"$T/out.log" 2>&1 </dev/null
 }
+
+seed_draft() { # version; the draft release CI would have built, one file per asset
+    rm -rf "$FAKE_GH_DRAFTS"
+    mkdir -p "$FAKE_GH_DRAFTS"
+    echo "linux $1" > "$FAKE_GH_DRAFTS/CloudDeck-$1-linux-x86_64.tar.gz"
+    echo "mac dmg $1" > "$FAKE_GH_DRAFTS/CloudDeck-$1-macos-aarch64.dmg"
+    echo "mac tar $1" > "$FAKE_GH_DRAFTS/CloudDeck-$1-macos-aarch64.tar.gz"
+}
+
+ci_fixture() { # name; a repo whose origin has tag v0.2.0 at main and a seeded CI draft
+    local R
+    R="$(fixture "$1")"
+    git -C "$R" tag v0.2.0 && git -C "$R" push -q origin v0.2.0
+    seed_draft 0.2.0
+    echo "$R"
+}
+
+gh_line() { grep -n "$1" "$FAKE_LOG/gh.log" | head -n1 | cut -d: -f1; }
 
 # helper functions
 check "is_semver accepts 0.2.0" is_semver 0.2.0
@@ -260,6 +301,93 @@ CARGO_BIN="$T/bin/cargo-fail" release_in "$R" 0.2.0 "$T/notes.md"; rc=$?
 check "failed tests abort the release" test "$rc" -ne 0
 check "failed tests leave the checkout clean" test -z "$(git -C "$R" status --porcelain)"
 check "failed tests leave no tag on origin" test -z "$(git -C "$T/failed-tests/origin.git" tag -l v0.2.0)"
+
+# --from-ci: CI already built the draft; this side downloads, signs, then publishes
+no_publish() { ! grep -qE 'release (upload|edit)' "$FAKE_LOG/gh.log" 2>/dev/null; }
+upload_before_publish() {
+    local up ed
+    up="$(gh_line 'release upload')"
+    ed="$(gh_line 'release edit')"
+    [[ -n "$up" && -n "$ed" && "$up" -lt "$ed" ]]
+}
+
+R="$(ci_fixture ci-missing-asset)"
+rm "$FAKE_GH_DRAFTS/CloudDeck-0.2.0-linux-x86_64.tar.gz"
+release_in "$R" 0.2.0 "$T/notes.md" --from-ci --yes; rc=$?
+check "from-ci missing asset is refused" test "$rc" -ne 0
+check "from-ci missing asset names the draft mismatch" grep -q 'does not have exactly the CI assets' "$T/out.log"
+check "from-ci missing asset never downloads" bash -c "! grep -q 'release download' '$FAKE_LOG/gh.log' 2>/dev/null"
+check "from-ci missing asset never uploads or publishes" no_publish
+
+R="$(ci_fixture ci-extra-asset)"
+echo x > "$FAKE_GH_DRAFTS/CloudDeck-0.2.0-source.zip"
+release_in "$R" 0.2.0 "$T/notes.md" --from-ci --yes; rc=$?
+check "from-ci extra asset is refused" test "$rc" -ne 0
+check "from-ci extra asset never uploads or publishes" no_publish
+
+R="$(ci_fixture ci-published)"
+export FAKE_GH_DRAFT=false
+release_in "$R" 0.2.0 "$T/notes.md" --from-ci --yes; rc=$?
+unset FAKE_GH_DRAFT
+check "from-ci refuses an already published release" test "$rc" -ne 0
+check "from-ci already published says so" grep -q 'already published' "$T/out.log"
+check "from-ci already published never uploads or publishes" no_publish
+
+R="$(ci_fixture ci-dry-run)"
+release_in "$R" 0.2.0 "$T/notes.md" --from-ci --dry-run; rc=$?
+check "from-ci dry-run exits 0" test "$rc" -eq 0
+check "from-ci dry-run downloads the CI assets" grep -q '^release download v0.2.0' "$FAKE_LOG/gh.log"
+check "from-ci dry-run signs the manifest" test -s "$R/dist/manifest.json.sig"
+check "from-ci dry-run never uploads or publishes" no_publish
+
+R="$(ci_fixture ci-publish)"
+release_in "$R" 0.2.0 "$T/notes.md" --from-ci --yes; rc=$?
+check "from-ci real run exits 0" test "$rc" -eq 0
+check "from-ci real run uploads manifest and signature" grep -q 'release upload v0.2.0 .*manifest.json .*manifest.json.sig$' "$FAKE_LOG/gh.log"
+check "from-ci real run publishes the draft with the notes" grep -q 'release edit v0.2.0 --draft=false --notes-file' "$FAKE_LOG/gh.log"
+check "from-ci real run uploads before publishing" upload_before_publish
+
+R="$(ci_fixture ci-upload-fails)"
+export FAKE_GH_FAIL_UPLOAD=1
+release_in "$R" 0.2.0 "$T/notes.md" --from-ci --yes; rc=$?
+unset FAKE_GH_FAIL_UPLOAD
+check "from-ci failed manifest upload is refused" test "$rc" -ne 0
+check "from-ci failed manifest upload never publishes" bash -c "! grep -q 'release edit' '$FAKE_LOG/gh.log' 2>/dev/null"
+
+R="$(ci_fixture ci-edit-fails)"
+export FAKE_GH_FAIL_EDIT=1
+release_in "$R" 0.2.0 "$T/notes.md" --from-ci --yes; rc=$?
+unset FAKE_GH_FAIL_EDIT
+check "from-ci failed publish is refused" test "$rc" -ne 0
+check "from-ci failed publish reports it" grep -q 'publishing v0.2.0 failed' "$T/out.log"
+
+R="$(ci_fixture ci-no-confirm)"
+release_in "$R" 0.2.0 "$T/notes.md" --from-ci; rc=$?
+check "from-ci without --yes and no answer is refused" test "$rc" -ne 0
+check "from-ci without --yes and no answer says not publishing" grep -q 'not publishing' "$T/out.log"
+check "from-ci without --yes and no answer never uploads or publishes" no_publish
+
+R="$(ci_fixture ci-key-private)"
+KEY_PATH="$T/no-such-key" release_in "$R" 0.2.0 "$T/notes.md" --from-ci --yes; rc=$?
+check "from-ci missing signing key is refused" test "$rc" -ne 0
+check "missing signing key error does not print the key path" bash -c "! grep -qF '$T/no-such-key' '$T/out.log'"
+release_in "$R" 0.2.0 "$T/notes.md" --from-ci --yes
+check "from-ci run never prints the signing key path" bash -c "! grep -qF '$T/key' '$T/out.log'"
+
+R="$(ci_fixture ci-tag-not-latest)"
+release_in "$R" 0.2.1 "$T/notes.md" --from-ci --yes; rc=$?
+check "from-ci refuses a version with no tag" test "$rc" -ne 0
+check "from-ci missing tag names the latest tag" grep -q 'must be the latest tag' "$T/out.log"
+
+R="$(ci_fixture ci-tag-behind-main)"
+git -C "$R" commit -q --allow-empty -m later && git -C "$R" push -q origin main
+release_in "$R" 0.2.0 "$T/notes.md" --from-ci --yes; rc=$?
+check "from-ci refuses a tag behind origin/main" test "$rc" -ne 0
+check "from-ci tag behind main names the mismatch" grep -q 'not at origin/main' "$T/out.log"
+
+R="$(fixture local-yes)"
+release_in "$R" 0.2.0 "$T/notes.md" --yes; rc=$?
+check "--yes without --from-ci is refused" test "$rc" -ne 0
 
 echo "$PASS passed, $FAIL failed"
 [[ "$FAIL" -eq 0 ]]

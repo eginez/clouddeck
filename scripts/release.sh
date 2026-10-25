@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Cuts a CloudDeck release: test, bump, tag, build both platforms, sign the manifest, publish.
+# With --from-ci, CI has already built the draft release for the tag: download its assets, sign, publish.
 # Usage: scripts/release.sh <version> <notes-file> [--dry-run]
+#        scripts/release.sh <version> <notes-file> --from-ci [--dry-run] [--yes]
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -62,8 +64,8 @@ require_file() {
     done
 }
 
-preflight() {
-    local version="$1" branch latest
+preflight_repo() { # version
+    local version="$1" branch
     if [[ "${RELEASE_SKIP_PLATFORM_CHECK:-0}" != 1 ]]; then
         [[ "$(uname -s)" == Darwin && "$(uname -m)" == arm64 ]] || die "releases are cut on macOS arm64"
     fi
@@ -74,15 +76,103 @@ preflight() {
     git -C "$ROOT" fetch --quiet --tags origin || die "git fetch origin failed"
     [[ "$(git -C "$ROOT" rev-parse main)" == "$(git -C "$ROOT" rev-parse origin/main)" ]] \
         || die "local main differs from origin/main"
+}
+
+preflight_key_and_gh() {
+    [[ -f "$RELEASE_KEY" ]] || die "signing key not found; set RELEASE_KEY to its path"
+    "$RELEASE_GH" auth status >/dev/null 2>&1 || die "gh auth status failed"
+}
+
+preflight() { # version
+    local version="$1" latest
+    preflight_repo "$version"
     latest="$(latest_tag_version "$ROOT")"
     if [[ -n "$latest" ]] && ! version_gt "$version" "$latest"; then
         die "version $version is not greater than latest tag v$latest"
     fi
-    [[ -f "$RELEASE_KEY" ]] || die "signing key not found: $RELEASE_KEY"
-    "$RELEASE_GH" auth status >/dev/null 2>&1 || die "gh auth status failed"
+    preflight_key_and_gh
     if [[ -z "${RELEASE_PACKAGE_LINUX:-}" ]]; then
         "$RELEASE_SSH" "$FLEET_HOST" true >/dev/null 2>&1 || die "ssh $FLEET_HOST failed"
     fi
+}
+
+# Pushing the tag is what makes CI build the draft, so for --from-ci the tag must already exist.
+preflight_ci() { # version
+    local version="$1" latest tag_commit
+    preflight_repo "$version"
+    latest="$(latest_tag_version "$ROOT")"
+    [[ "$latest" == "$version" ]] \
+        || die "v$version must be the latest tag (latest is '${latest:-none}'); push the tag so CI builds the draft"
+    tag_commit="$(git -C "$ROOT" rev-parse -q --verify "v$version^{commit}")" || die "tag v$version not found"
+    [[ "$tag_commit" == "$(git -C "$ROOT" rev-parse origin/main)" ]] \
+        || die "tag v$version is not at origin/main; CI built a different commit"
+    preflight_key_and_gh
+}
+
+expected_ci_assets() { # version; the sorted asset names CI uploads to the draft
+    printf '%s\n' "CloudDeck-$1-linux-x86_64.tar.gz" "CloudDeck-$1-macos-aarch64.dmg" \
+        "CloudDeck-$1-macos-aarch64.tar.gz" | sort
+}
+
+wait_for_ci_draft() { # version
+    local tag="v$1" expected found="" is_draft attempt=1
+    local max="${RELEASE_CI_ATTEMPTS:-60}" interval="${RELEASE_CI_INTERVAL:-30}"
+    expected="$(expected_ci_assets "$1")"
+    while :; do
+        if is_draft="$("$RELEASE_GH" release view "$tag" --json isDraft --jq .isDraft 2>/dev/null)"; then
+            [[ "$is_draft" == true ]] || die "release $tag is already published; refusing to modify it"
+            found="$("$RELEASE_GH" release view "$tag" --json assets --jq '.assets[].name' 2>/dev/null | sort)" || found=""
+            if [[ "$found" == "$expected" ]]; then
+                return 0
+            fi
+        fi
+        (( attempt < max )) \
+            || die "draft $tag is missing or does not have exactly the CI assets (found: $(tr '\n' ' ' <<<"$found")expected: $(tr '\n' ' ' <<<"$expected"))"
+        attempt=$((attempt + 1))
+        echo "waiting for CI assets on draft $tag (attempt $attempt of $max)" >&2
+        sleep "$interval"
+    done
+}
+
+main_from_ci() { # version, notes, dry-run (0/1), yes (0/1)
+    local version="$1" notes="$2" dry_run="$3" yes="$4"
+    local tag="v$version" dist="$ROOT/dist"
+    local mac_tar="$dist/CloudDeck-$version-macos-aarch64.tar.gz"
+    local mac_dmg="$dist/CloudDeck-$version-macos-aarch64.dmg"
+    local linux_tar="$dist/CloudDeck-$version-linux-x86_64.tar.gz"
+    local manifest="$dist/manifest.json"
+    local signature="$dist/manifest.json.sig"
+
+    preflight_ci "$version"
+    wait_for_ci_draft "$version"
+
+    echo "==> downloading $tag assets into dist/"
+    mkdir -p "$dist"
+    "$RELEASE_GH" release download "$tag" --dir "$dist" --clobber || die "downloading $tag assets failed"
+    require_file "$mac_tar" "$mac_dmg" "$linux_tar"
+
+    echo "==> signing manifest"
+    build_manifest "$ROOT" "$version" "$notes" "$mac_tar" "$linux_tar" "$dist"
+    require_file "$manifest" "$signature"
+
+    echo "==> assets"
+    summary "$mac_tar" "$mac_dmg" "$linux_tar" "$manifest" "$signature"
+
+    if (( dry_run )); then
+        echo "dry-run: would upload manifest.json and manifest.json.sig to $tag and publish it; nothing uploaded or published"
+        return 0
+    fi
+    if (( ! yes )); then
+        local answer=""
+        read -r -p "Publish $tag with these assets? [y/N] " answer || true
+        [[ "$answer" == y || "$answer" == yes ]] || die "not publishing $tag"
+    fi
+
+    echo "==> uploading manifest and signature"
+    "$RELEASE_GH" release upload "$tag" "$manifest" "$signature" || die "uploading the manifest to $tag failed"
+    echo "==> publishing"
+    "$RELEASE_GH" release edit "$tag" --draft=false --notes-file "$notes" || die "publishing $tag failed"
+    echo "Published $tag"
 }
 
 prepare_release() { # work dir, version
@@ -142,17 +232,28 @@ build_manifest() { # work dir, version, notes, mac tarball, linux tarball, dist 
 }
 
 main() {
-    local dry_run=0 positional=() arg
+    local dry_run=0 from_ci=0 yes=0 positional=() arg
     for arg in "$@"; do
         case "$arg" in
             --dry-run) dry_run=1 ;;
+            --from-ci) from_ci=1 ;;
+            --yes) yes=1 ;;
             *) positional+=("$arg") ;;
         esac
     done
-    [[ ${#positional[@]} -eq 2 ]] || die "usage: scripts/release.sh <version> <notes-file> [--dry-run]"
+    [[ ${#positional[@]} -eq 2 ]] \
+        || die "usage: scripts/release.sh <version> <notes-file> [--dry-run] | --from-ci [--dry-run] [--yes]"
     local version="${positional[0]}" notes="${positional[1]}"
     [[ -f "$notes" ]] || die "notes file not found: $notes"
     notes="$(cd "$(dirname "$notes")" && pwd)/$(basename "$notes")"
+    if (( yes && ! from_ci )); then
+        die "--yes only applies with --from-ci"
+    fi
+
+    if (( from_ci )); then
+        main_from_ci "$version" "$notes" "$dry_run" "$yes"
+        return
+    fi
 
     preflight "$version"
 
