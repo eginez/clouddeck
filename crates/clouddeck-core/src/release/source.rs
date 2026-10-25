@@ -21,13 +21,17 @@ pub struct FetchedRelease {
     pub signature_b64: String,
 }
 
+/// Upper bound for release JSON, manifest and signature responses.
+const SMALL_BODY_LIMIT: u64 = 64 * 1024;
+
 pub trait UpdateSource: Send + Sync {
     /// Fetches the latest release manifest and its signature.
     fn latest(&self) -> Result<FetchedRelease, String>;
-    /// Downloads the named release asset, reporting (received, total) bytes.
+    /// Downloads the named release asset, failing if it exceeds `max_bytes`, and reports (received, total) bytes.
     fn download(
         &self,
         asset_name: &str,
+        max_bytes: u64,
         progress: &mut dyn FnMut(u64, u64),
     ) -> Result<Vec<u8>, String>;
 }
@@ -98,13 +102,14 @@ impl GithubSource {
             .set("User-Agent", "clouddeck")
             .call()
             .map_err(latest_release_error)?;
-        read_body(response, &mut |_, _| {})
+        read_body(response, SMALL_BODY_LIMIT, &mut |_, _| {})
     }
 
     fn asset(
         &self,
         release_json: &[u8],
         name: &str,
+        max_bytes: u64,
         progress: &mut dyn FnMut(u64, u64),
     ) -> Result<Vec<u8>, String> {
         let url = asset_api_url(release_json, name)?;
@@ -131,7 +136,7 @@ impl GithubSource {
         } else {
             response
         };
-        read_body(response, progress)
+        read_body(response, max_bytes, progress)
     }
 }
 
@@ -139,8 +144,14 @@ impl UpdateSource for GithubSource {
     fn latest(&self) -> Result<FetchedRelease, String> {
         let release = self.release_json()?;
         let tag = release_tag(&release)?;
-        let manifest_bytes = self.asset(&release, "manifest.json", &mut |_, _| {})?;
-        let signature = self.asset(&release, "manifest.json.sig", &mut |_, _| {})?;
+        let manifest_bytes =
+            self.asset(&release, "manifest.json", SMALL_BODY_LIMIT, &mut |_, _| {})?;
+        let signature = self.asset(
+            &release,
+            "manifest.json.sig",
+            SMALL_BODY_LIMIT,
+            &mut |_, _| {},
+        )?;
         let signature_b64 = String::from_utf8(signature)
             .map_err(|error| format!("manifest.json.sig is not text: {error}"))?
             .trim()
@@ -155,15 +166,17 @@ impl UpdateSource for GithubSource {
     fn download(
         &self,
         asset_name: &str,
+        max_bytes: u64,
         progress: &mut dyn FnMut(u64, u64),
     ) -> Result<Vec<u8>, String> {
         let release = self.release_json()?;
-        self.asset(&release, asset_name, progress)
+        self.asset(&release, asset_name, max_bytes, progress)
     }
 }
 
 fn read_body(
     response: ureq::Response,
+    max_bytes: u64,
     progress: &mut dyn FnMut(u64, u64),
 ) -> Result<Vec<u8>, String> {
     if response.status() != 200 {
@@ -173,6 +186,10 @@ fn read_body(
         .header("Content-Length")
         .and_then(|value| value.parse::<u64>().ok())
         .unwrap_or(0);
+    let too_large = || format!("response is larger than the expected {max_bytes} bytes");
+    if total > max_bytes {
+        return Err(too_large());
+    }
     let mut reader = response.into_reader();
     let mut body = Vec::new();
     let mut chunk = vec![0u8; 64 * 1024];
@@ -182,6 +199,9 @@ fn read_body(
             .map_err(|error| format!("download interrupted: {error}"))?;
         if read == 0 {
             break;
+        }
+        if body.len() as u64 + read as u64 > max_bytes {
+            return Err(too_large());
         }
         body.extend_from_slice(&chunk[..read]);
         progress(body.len() as u64, total);
@@ -274,6 +294,7 @@ mod tests {
         fn download(
             &self,
             _asset_name: &str,
+            _max_bytes: u64,
             progress: &mut dyn FnMut(u64, u64),
         ) -> Result<Vec<u8>, String> {
             progress(3, 3);
@@ -326,7 +347,7 @@ mod tests {
         let release = br#"{"tag_name":"v0.2.0","assets":[{"name":"manifest.json","url":"https://evil.example.com/asset"}]}"#;
         let source = GithubSource::new("secret-token".to_string());
         let error = source
-            .asset(release, "manifest.json", &mut |_, _| {})
+            .asset(release, "manifest.json", SMALL_BODY_LIMIT, &mut |_, _| {})
             .unwrap_err();
         assert_eq!(
             error,
@@ -428,6 +449,25 @@ mod tests {
         assert_eq!(latest_release_status_message(500), None);
     }
 
+    fn response(body: &str) -> ureq::Response {
+        ureq::Response::new(200, "OK", body).unwrap()
+    }
+
+    #[test]
+    fn read_body_accepts_body_within_limit() {
+        let body = read_body(response("abcdef"), 6, &mut |_, _| {}).unwrap();
+        assert_eq!(body, b"abcdef".to_vec());
+    }
+
+    #[test]
+    fn read_body_rejects_body_over_limit() {
+        let error = read_body(response("abcdefg"), 6, &mut |_, _| {}).unwrap_err();
+        assert!(
+            error.contains("larger than the expected 6 bytes"),
+            "{error}"
+        );
+    }
+
     #[test]
     fn fake_source_serves_fixed_bytes() {
         let source: &dyn UpdateSource = &FakeSource;
@@ -437,7 +477,7 @@ mod tests {
 
         let mut seen = Vec::new();
         let mut progress = |received: u64, total: u64| seen.push((received, total));
-        let bytes = source.download("manifest.json", &mut progress).unwrap();
+        let bytes = source.download("manifest.json", 3, &mut progress).unwrap();
         assert_eq!(bytes, b"abc".to_vec());
         assert_eq!(seen, vec![(3, 3)]);
     }

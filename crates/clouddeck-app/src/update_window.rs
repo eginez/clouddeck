@@ -263,6 +263,7 @@ mod tests {
         fn download(
             &self,
             _asset_name: &str,
+            _max_bytes: u64,
             progress: &mut dyn FnMut(u64, u64),
         ) -> Result<Vec<u8>, String> {
             let total = self.asset.len() as u64;

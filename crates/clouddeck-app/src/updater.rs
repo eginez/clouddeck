@@ -270,6 +270,7 @@ impl UpdateSource for UnavailableSource {
     fn download(
         &self,
         _asset_name: &str,
+        _max_bytes: u64,
         _progress: &mut dyn FnMut(u64, u64),
     ) -> Result<Vec<u8>, String> {
         Err(self.0.clone())
@@ -294,7 +295,9 @@ fn fetch_verified(
     asset: &Asset,
     on_bytes: &dyn Fn(u64),
 ) -> Result<Vec<u8>, String> {
-    let bytes = source.download(&asset.name, &mut |received, _| on_bytes(received))?;
+    let bytes = source.download(&asset.name, asset.size, &mut |received, _| {
+        on_bytes(received)
+    })?;
     check_asset(&bytes, &asset.sha256, asset.size)?;
     Ok(bytes)
 }
@@ -395,6 +398,7 @@ mod tests {
         fn download(
             &self,
             _asset_name: &str,
+            _max_bytes: u64,
             progress: &mut dyn FnMut(u64, u64),
         ) -> Result<Vec<u8>, String> {
             let total = self.asset_bytes.len() as u64;
