@@ -9,7 +9,6 @@ pub enum AppIcon {
     Globe,
     Search,
     ChevronDown,
-    ChevronRight,
     ChevronUp,
     Copy,
     ExternalLink,
@@ -28,14 +27,14 @@ pub enum AppIcon {
 }
 
 impl AppIcon {
-    pub const ALL: [AppIcon; 22] = [
+    #[cfg(test)]
+    pub const ALL: [AppIcon; 21] = [
         AppIcon::PanelLeft,
         AppIcon::PanelRight,
         AppIcon::User,
         AppIcon::Globe,
         AppIcon::Search,
         AppIcon::ChevronDown,
-        AppIcon::ChevronRight,
         AppIcon::ChevronUp,
         AppIcon::Copy,
         AppIcon::ExternalLink,
@@ -61,7 +60,6 @@ impl AppIcon {
             Self::Globe => "icons/globe.svg",
             Self::Search => "icons/search.svg",
             Self::ChevronDown => "icons/chevron-down.svg",
-            Self::ChevronRight => "icons/chevron-right.svg",
             Self::ChevronUp => "icons/chevron-up.svg",
             Self::Copy => "icons/copy.svg",
             Self::ExternalLink => "icons/external-link.svg",
@@ -88,7 +86,6 @@ impl AppIcon {
             Self::Globe => Icon::new(IconName::Globe),
             Self::Search => Icon::new(IconName::Search),
             Self::ChevronDown => Icon::new(IconName::ChevronDown),
-            Self::ChevronRight => Icon::new(IconName::ChevronRight),
             Self::ChevronUp => Icon::new(IconName::ChevronUp),
             Self::Copy => Icon::new(IconName::Copy),
             Self::ExternalLink => Icon::new(IconName::ExternalLink),
@@ -109,15 +106,15 @@ mod tests {
     use gpui_component::IconNamed;
 
     #[test]
-    fn all_lists_22_distinct_icons_with_known_paths() {
-        assert_eq!(AppIcon::ALL.len(), 22);
+    fn all_lists_21_distinct_icons_with_known_paths() {
+        assert_eq!(AppIcon::ALL.len(), 21);
         let mut paths: Vec<&str> = AppIcon::ALL.iter().map(|icon| icon.path()).collect();
         for path in &paths {
             assert!(ICON_PATHS.contains(path), "{path} is not bundled");
         }
         paths.sort();
         paths.dedup();
-        assert_eq!(paths.len(), 22);
+        assert_eq!(paths.len(), 21);
     }
 
     #[test]
@@ -129,7 +126,6 @@ mod tests {
             (AppIcon::Globe, IconName::Globe),
             (AppIcon::Search, IconName::Search),
             (AppIcon::ChevronDown, IconName::ChevronDown),
-            (AppIcon::ChevronRight, IconName::ChevronRight),
             (AppIcon::ChevronUp, IconName::ChevronUp),
             (AppIcon::Copy, IconName::Copy),
             (AppIcon::ExternalLink, IconName::ExternalLink),
