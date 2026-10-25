@@ -9,6 +9,8 @@ use super::rules::{Rule, all_rules, evaluate};
 use super::states::{self, State};
 use crate::ui_record;
 
+type RuleGroup<'r> = ((State, (f32, f32)), Vec<&'r Rule>);
+
 #[derive(Debug, PartialEq, Eq)]
 enum Outcome {
     Pass,
@@ -49,7 +51,7 @@ fn layout_rules_hold(cx: &mut TestAppContext) {
     let rules = all_rules();
     assert_unique_ids(&rules);
 
-    let mut groups: Vec<((State, (f32, f32)), Vec<&Rule>)> = Vec::new();
+    let mut groups: Vec<RuleGroup<'_>> = Vec::new();
     for rule in &rules {
         let key = (rule.state, rule.window);
         match groups.iter_mut().find(|(group, _)| *group == key) {
@@ -60,7 +62,7 @@ fn layout_rules_hold(cx: &mut TestAppContext) {
 
     let mut problems = Vec::new();
     for ((state, (w, h)), members) in groups {
-        cx.update(|app| ui_record::clear(app));
+        cx.update(ui_record::clear);
         let (_fleet, _main, vcx) = states::build(state, w, h, cx);
         let vcx = RefCell::new(vcx);
         let lookup = |sel: &'static str| vcx.borrow_mut().debug_bounds(sel);

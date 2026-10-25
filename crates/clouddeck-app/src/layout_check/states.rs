@@ -143,15 +143,15 @@ fn wait_until(cx: &mut TestAppContext, mut condition: impl FnMut(&mut TestAppCon
 }
 
 /// Builds `state` in a fresh window; the welcome state returns no fleet or main window.
-pub(crate) fn build<'a>(
+pub(crate) fn build(
     state: State,
     width: f32,
     height: f32,
-    cx: &'a mut TestAppContext,
+    cx: &mut TestAppContext,
 ) -> (
     Option<Entity<FleetState>>,
     Option<Entity<MainWindow>>,
-    &'a mut VisualTestContext,
+    &mut VisualTestContext,
 ) {
     if state == State::Welcome {
         return (None, None, open_welcome(width, height, cx));

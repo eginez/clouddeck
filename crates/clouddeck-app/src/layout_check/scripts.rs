@@ -71,9 +71,9 @@ pub(crate) fn run_script(script: &Script, cx: &mut TestAppContext) -> Result<(),
         if let Step::Resize(w, h) = *step {
             (width, height) = (w, h);
         }
-        perform(*step, vcx).map_err(&fail)?;
+        perform(*step, vcx).map_err(fail)?;
         for expect in expects {
-            check(expect, vcx, main.as_ref(), fleet.as_ref(), (width, height)).map_err(&fail)?;
+            check(expect, vcx, main.as_ref(), fleet.as_ref(), (width, height)).map_err(fail)?;
         }
     }
     Ok(())
