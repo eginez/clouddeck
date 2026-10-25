@@ -15,19 +15,16 @@ aws-sdk-ec2 = { version = "1.250.0", default-features = false, features = [
     "behavior-version-latest",
     "default-https-client",
     "rt-tokio",
-    "rustls",
 ] }
 aws-sdk-ssooidc = { version = "1.110.0", default-features = false, features = [
     "behavior-version-latest",
     "default-https-client",
     "rt-tokio",
-    "rustls",
 ] }
 aws-sdk-sts = { version = "1.113.0", default-features = false, features = [
     "behavior-version-latest",
     "default-https-client",
     "rt-tokio",
-    "rustls",
 ] }
 aws-types = "1.5.0"
 base64 = "0.22"
