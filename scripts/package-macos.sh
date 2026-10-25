@@ -46,4 +46,14 @@ cat > "$app_dir/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
+dist_dir="$root_dir/dist"
+tar_archive="$dist_dir/CloudDeck-$version-macos-aarch64.tar.gz"
+dmg_image="$dist_dir/CloudDeck-$version-macos-aarch64.dmg"
+rm -f "$tar_archive" "$dmg_image"
+
+tar -czf "$tar_archive" -C "$dist_dir" CloudDeck.app
+hdiutil create -quiet -volname CloudDeck -srcfolder "$app_dir" -ov -format UDZO "$dmg_image"
+
 echo "Packaged $app_dir"
+echo "Packaged $tar_archive"
+echo "Packaged $dmg_image"

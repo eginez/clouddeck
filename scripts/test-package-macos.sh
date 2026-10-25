@@ -43,14 +43,27 @@ done
 root="$(dirname "$manifest")"
 mkdir -p "$root/target/release" && cp /bin/true "$root/target/release/clouddeck"
 EOF
-chmod +x "$T/bin/uname" "$T/bin/cargo"
+cat >"$T/bin/hdiutil" <<'EOF'
+#!/bin/sh
+echo "hdiutil $*" >> "$HDIUTIL_LOG"
+out=""
+for arg in "$@"; do out="$arg"; done
+echo "fake dmg" > "$out"
+EOF
+chmod +x "$T/bin/uname" "$T/bin/cargo" "$T/bin/hdiutil"
 
+export HDIUTIL_LOG="$T/hdiutil.log"
 PATH="$T/bin:$PATH" "$R/scripts/package-macos.sh" >"$T/out.log" 2>&1
 check "package-macos.sh succeeds with cargo build --manifest-path first" test $? -eq 0
 
 VERSION="$(awk -F'"' '/^version = / { print $2; exit }' "$R/crates/clouddeck-app/Cargo.toml")"
 check "CloudDeck.app binary is installed" test -x "$R/dist/CloudDeck.app/Contents/MacOS/clouddeck"
 check "Info.plist carries the crate version" grep -q "<string>$VERSION</string>" "$R/dist/CloudDeck.app/Contents/Info.plist"
+check "versioned macOS tarball is produced" test -s "$R/dist/CloudDeck-$VERSION-macos-aarch64.tar.gz"
+check "tarball has CloudDeck.app at its root" \
+    bash -c "tar -tzf '$R/dist/CloudDeck-$VERSION-macos-aarch64.tar.gz' | grep -qx 'CloudDeck.app/Contents/MacOS/clouddeck'"
+check "versioned macOS dmg is produced" test -s "$R/dist/CloudDeck-$VERSION-macos-aarch64.dmg"
+check "dmg is built from the CloudDeck.app bundle" grep -q -e "-srcfolder $R/dist/CloudDeck.app" "$HDIUTIL_LOG"
 
 echo "$PASS passed, $FAIL failed"
 [[ "$FAIL" -eq 0 ]]
