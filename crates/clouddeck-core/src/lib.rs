@@ -3,9 +3,9 @@ mod fault_injecting;
 mod fleet_compute;
 mod mock;
 mod models;
+mod query;
 mod scenario;
 mod scenario_service;
-mod query;
 mod service;
 
 pub use error::CloudDeckError;
@@ -19,6 +19,7 @@ pub use models::{
     ComputeInstanceFilters, ComputeInstanceLoadResult, ComputeServicePartialFailure, EC2Instance,
     EC2InstanceTag, EC2SecurityGroup,
 };
+pub use query::*;
 pub use scenario::{
     DirectoryScenarioCatalog, EC2Scenario, EC2ScenarioCatalog, EC2ScenarioProfile,
     EC2ScenarioRegion, parse_scenario,
@@ -26,7 +27,6 @@ pub use scenario::{
 pub use scenario_service::{
     DEFAULT_FAILURE_MESSAGE, ScenarioFailureError, ScenarioService, TestScenarioKind,
 };
-pub use query::*;
 pub use service::{BoxError, ComputeService};
 
 mod instance_detail_view_model;
@@ -74,14 +74,14 @@ mod layout;
 mod selection;
 pub use selection::*;
 mod stale;
-pub use stale::*;
 pub use console_url::{
     ConsoleUrlError, Partition, console_url_for, console_url_for_instance, partition_for_region,
 };
 pub use context::{
-    AwsCredentialKind, AwsProfile, AwsProfileAuth, AwsSsoConfiguration, FLEET_REGIONS, REGIONS,
-    WorkspaceContext, context_path, load_profile_auth, load_profiles, parse_profile_auth,
-    parse_profiles,
+    AwsConfigFile, AwsConfigParseError, AwsCredentialKind, AwsProfile, AwsProfileAuth,
+    AwsSsoConfiguration, FLEET_REGIONS, REGIONS, WorkspaceContext, context_path, load_profile_auth,
+    load_profiles, parse_profile_auth, parse_profiles, read_profile_auth,
 };
 pub use layout::*;
+pub use stale::*;
 pub mod release;
