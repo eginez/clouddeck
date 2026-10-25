@@ -8,24 +8,44 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use flate2::read::GzDecoder;
 
 const UNSAFE_PATH: &str = "unsafe path in archive";
+const UNSUPPORTED_ENTRY: &str = "unsupported entry type in archive";
 
-/// Extracts a gzipped tarball into an existing directory, refusing unsafe paths.
+/// Extracts a gzipped tarball into an existing directory. Only regular files and
+/// directories are accepted; links and special files are refused.
 pub fn unpack(tar_gz: &[u8], dest: &Path) -> Result<(), String> {
     let mut archive = tar::Archive::new(GzDecoder::new(tar_gz));
     let entries = archive.entries().map_err(|e| e.to_string())?;
     for entry in entries {
         let mut entry = entry.map_err(|e| e.to_string())?;
-        let relative_ok = {
-            let path = entry.path().map_err(|e| e.to_string())?;
-            is_safe_relative(&path)
-        };
-        if !relative_ok {
+        let entry_type = entry.header().entry_type();
+        if !entry_type.is_file() && !entry_type.is_dir() {
+            return Err(UNSUPPORTED_ENTRY.into());
+        }
+        let executable = entry.header().mode().map_err(|e| e.to_string())? & 0o111 != 0;
+        let relative = entry.path().map_err(|e| e.to_string())?.into_owned();
+        if !is_safe_relative(&relative) {
             return Err(UNSAFE_PATH.into());
         }
         if !entry.unpack_in(dest).map_err(|e| e.to_string())? {
             return Err(UNSAFE_PATH.into());
         }
+        if entry_type.is_file() {
+            set_file_mode(&dest.join(&relative), executable)?;
+        }
     }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn set_file_mode(path: &Path, executable: bool) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = if executable { 0o755 } else { 0o644 };
+    fs::set_permissions(path, fs::Permissions::from_mode(mode))
+        .map_err(|e| format!("could not set mode on {}: {e}", path.display()))
+}
+
+#[cfg(not(unix))]
+fn set_file_mode(_path: &Path, _executable: bool) -> Result<(), String> {
     Ok(())
 }
 
@@ -54,7 +74,7 @@ pub fn install_macos(tar_gz: &[u8], bundle: &Path) -> Result<(), String> {
     let staging = StagingDir::create(parent)?;
     unpack(tar_gz, staging.path())?;
     let new = staging.path().join("CloudDeck.app");
-    if !new.exists() {
+    if !is_real_dir(&new) {
         return Err("archive has no CloudDeck.app".into());
     }
     swap(&new, bundle, &sibling_with_suffix(bundle, ".old"))
@@ -68,7 +88,7 @@ pub fn install_linux(tar_gz: &[u8], exe: &Path) -> Result<(), String> {
     let staging = StagingDir::create(parent)?;
     unpack(tar_gz, staging.path())?;
     let new = staging.path().join("clouddeck");
-    if !new.is_file() {
+    if !is_real_file(&new) {
         return Err("archive has no clouddeck binary".into());
     }
     #[cfg(unix)]
@@ -78,6 +98,14 @@ pub fn install_linux(tar_gz: &[u8], exe: &Path) -> Result<(), String> {
             .map_err(|e| format!("could not make new binary executable: {e}"))?;
     }
     swap(&new, exe, &sibling_with_suffix(exe, ".old"))
+}
+
+fn is_real_file(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok_and(|m| m.is_file())
+}
+
+fn is_real_dir(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok_and(|m| m.is_dir())
 }
 
 fn is_safe_relative(path: &Path) -> bool {
@@ -187,6 +215,75 @@ mod tests {
         let tgz = archive(&[("../evil", b"x")]);
         assert_eq!(unpack(&tgz, &dest), Err("unsafe path in archive".to_string()));
         assert!(!root.path().join("evil").exists());
+    }
+
+    fn archive_with_link(path: &str, target: &str, link_type: tar::EntryType) -> Vec<u8> {
+        let mut builder = tar::Builder::new(GzEncoder::new(Vec::new(), Compression::default()));
+        let mut header = tar::Header::new_gnu();
+        header.set_entry_type(link_type);
+        header.set_mode(0o777);
+        header.set_size(0);
+        builder.append_link(&mut header, path, target).unwrap();
+        builder.into_inner().unwrap().finish().unwrap()
+    }
+
+    #[test]
+    fn unpack_rejects_symlink_entry() {
+        let root = tempfile::tempdir().unwrap();
+        let dest = root.path().join("dest");
+        fs::create_dir(&dest).unwrap();
+        let tgz = archive_with_link("clouddeck", "../../outside", tar::EntryType::Symlink);
+        assert_eq!(unpack(&tgz, &dest), Err(UNSUPPORTED_ENTRY.to_string()));
+        assert!(only_entries(&dest).is_empty());
+    }
+
+    #[test]
+    fn unpack_rejects_hard_link_entry() {
+        let root = tempfile::tempdir().unwrap();
+        let dest = root.path().join("dest");
+        fs::create_dir(&dest).unwrap();
+        let tgz = archive_with_link("clouddeck", "/etc/hostname", tar::EntryType::Link);
+        assert_eq!(unpack(&tgz, &dest), Err(UNSUPPORTED_ENTRY.to_string()));
+        assert!(only_entries(&dest).is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn install_linux_refuses_symlink_binary_and_leaves_old_untouched() {
+        let root = tempfile::tempdir().unwrap();
+        let outside = root.path().join("outside");
+        fs::write(&outside, "target").unwrap();
+        let dir = root.path().join("bin");
+        fs::create_dir(&dir).unwrap();
+        let exe = dir.join("clouddeck");
+        fs::write(&exe, "old").unwrap();
+
+        let tgz = archive_with_link("clouddeck", outside.to_str().unwrap(), tar::EntryType::Symlink);
+        assert!(install_linux(&tgz, &exe).is_err());
+
+        assert_eq!(fs::read_to_string(&exe).unwrap(), "old");
+        assert_eq!(fs::read_to_string(&outside).unwrap(), "target");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unpack_normalizes_file_modes() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let mut builder = tar::Builder::new(GzEncoder::new(Vec::new(), Compression::default()));
+        for (name, mode) in [("plain", 0o666), ("program", 0o777)] {
+            let mut header = tar::Header::new_gnu();
+            header.set_mode(mode);
+            header.set_size(1);
+            header.set_cksum();
+            builder.append_data(&mut header, name, &b"x"[..]).unwrap();
+        }
+        let tgz = builder.into_inner().unwrap().finish().unwrap();
+        unpack(&tgz, dir.path()).unwrap();
+
+        let mode = |name: &str| fs::metadata(dir.path().join(name)).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode("plain"), 0o644);
+        assert_eq!(mode("program"), 0o755);
     }
 
     #[test]
