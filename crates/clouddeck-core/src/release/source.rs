@@ -86,7 +86,7 @@ impl GithubSource {
             .set("Accept", "application/vnd.github+json")
             .set("User-Agent", "clouddeck")
             .call()
-            .map_err(http_error)?;
+            .map_err(latest_release_error)?;
         read_body(response, &mut |_, _| {})
     }
 
@@ -179,6 +179,30 @@ fn http_error(error: ureq::Error) -> String {
     match error {
         ureq::Error::Status(code, _) => format!("GitHub request failed with HTTP {code}"),
         ureq::Error::Transport(transport) => format!("GitHub request failed: {transport}"),
+    }
+}
+
+fn latest_release_error(error: ureq::Error) -> String {
+    match error {
+        ureq::Error::Status(code, _) => latest_release_status_message(code)
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("GitHub request failed with HTTP {code}")),
+        ureq::Error::Transport(transport) => format!("GitHub request failed: {transport}"),
+    }
+}
+
+fn latest_release_status_message(code: u16) -> Option<&'static str> {
+    match code {
+        401 => Some(
+            "GitHub rejected the update token (bad or expired): run gh auth login or set a valid CLOUDDECK_UPDATE_TOKEN",
+        ),
+        403 => Some(
+            "GitHub refused the request (rate limit reached, or the token lacks access): try again later or check that CLOUDDECK_UPDATE_TOKEN has scope repo",
+        ),
+        404 => Some(
+            "No release has been published yet, or your GitHub token cannot see the private repository (check gh auth status or CLOUDDECK_UPDATE_TOKEN scope: repo)",
+        ),
+        _ => None,
     }
 }
 
@@ -283,6 +307,31 @@ mod tests {
             NO_TOKEN_MESSAGE,
             "Updates need GitHub access while the repository is private: run gh auth login or set CLOUDDECK_UPDATE_TOKEN"
         );
+    }
+
+    #[test]
+    fn latest_release_404_explains_missing_release_or_token_access() {
+        let message = latest_release_status_message(404).unwrap();
+        assert!(message.contains("No release has been published yet"));
+        assert!(message.contains("cannot see the private repository"));
+    }
+
+    #[test]
+    fn latest_release_401_names_the_token() {
+        let message = latest_release_status_message(401).unwrap();
+        assert!(message.contains("rejected the update token"));
+    }
+
+    #[test]
+    fn latest_release_403_is_distinct_from_401() {
+        let forbidden = latest_release_status_message(403).unwrap();
+        assert!(forbidden.contains("rate limit"));
+        assert_ne!(forbidden, latest_release_status_message(401).unwrap());
+    }
+
+    #[test]
+    fn latest_release_other_statuses_have_no_special_message() {
+        assert_eq!(latest_release_status_message(500), None);
     }
 
     #[test]
