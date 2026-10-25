@@ -8,6 +8,64 @@ uses the AWS CLI v2 as a subprocess so the CLI remains responsible for SSO,
 credential providers, and pagination; CloudDeck does not store credentials or
 perform cloud mutations.
 
+## Quickstart
+
+### Install
+
+Linux (x86_64): extract the archive produced by `scripts/package-linux.sh`
+(`dist/CloudDeck-<version>-linux-x86_64.tar.gz`) and run the app:
+
+```bash
+tar -xzf CloudDeck-<version>-linux-x86_64.tar.gz
+./clouddeck
+```
+
+macOS (Apple silicon): `scripts/package-macos.sh` writes
+`dist/CloudDeck-<version>-macos-aarch64.dmg` and a matching `.tar.gz` that
+contains `CloudDeck.app`. Open the disk image and copy CloudDeck to
+Applications.
+
+To try CloudDeck without AWS, start it with `--demo` (see [Run](#run)).
+
+### First launch
+
+Without `--demo`, the first launch with no saved context opens a welcome
+window that lists the profiles in `~/.aws/config`. Choose a profile and press
+Enter to open it. Set `AWS_CONFIG_FILE` to read a different config file.
+CloudDeck remembers the last profile and regions in
+`$XDG_CONFIG_HOME/clouddeck/context.json`.
+
+### Connect a profile
+
+Switch profiles with `Switch Profile…` (⌘P; Ctrl on Linux). The profile picker's
+`Connect to AWS…` entry opens the Connect screen, where `Rescan` re-reads the
+profile list and `Sign in with browser` starts IAM Identity Center (SSO)
+sign-in for profiles that support it.
+
+For each selected profile and region, CloudDeck runs a read only
+`aws ec2 describe-instances --profile <name> --region <region> --output json`
+with page size and timeout flags. The AWS CLI handles credentials, SSO tokens,
+and pagination.
+
+### Choose regions
+
+The fleet view loads `us-east-1`, `us-west-2`, `eu-west-1`, and
+`eu-central-1` by default. Use `Switch Region…` (⌘⇧R) to choose the regions to
+load from the full list. A region that fails keeps the results from the
+regions that succeeded. The failure popover offers `Retry region` for one
+failed region, or a `Retry` button per region plus `Retry all` for several.
+
+### Search
+
+Type words to search instances, or narrow results with `field:value` filters,
+for example `state:running`, `type:t3.*`, or `-state:stopped` to exclude
+stopped instances. The supported fields are `name`, `id`, `state`, `type`,
+`az`, `region`, `ip`, `private`, `public`, `vpc`, `subnet`, `sg`, `ami`,
+`key`, `age`, `has`, and `tag`, as defined in
+`crates/clouddeck-core/src/query/tokenize.rs`.
+
+If something does not load, see [docs/troubleshooting.md](docs/troubleshooting.md).
+
 ## Prerequisites
 
 - Rust stable (the repository's `Cargo.lock` may require a recent stable
