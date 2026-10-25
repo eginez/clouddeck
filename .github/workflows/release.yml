@@ -1,0 +1,152 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Build and upload workflow artifacts only. Set to false to create or update the draft release.
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+      - name: Resolve release version
+        id: version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [[ "$EVENT_NAME" == "workflow_dispatch" && "$DRY_RUN" == "false" && "$REF_TYPE" != "tag" ]]; then
+            echo "a draft release needs a tag ref; run dry_run=false from a vX.Y.Z tag" >&2
+            exit 1
+          fi
+          tag=""
+          if [[ "$REF_TYPE" == "tag" ]]; then tag="$REF_NAME"; fi
+          version="$(scripts/release-version.sh "$tag")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          echo "Release version $version" >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    needs: prepare
+    timeout-minutes: 60
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: ubuntu-latest
+            package: scripts/package-linux.sh
+            platform: linux-x86_64
+          - os: macos-14
+            package: scripts/package-macos.sh
+            platform: macos-aarch64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+      - name: Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential clang pkg-config \
+            libssl-dev libfontconfig-dev libvulkan-dev mesa-vulkan-drivers \
+            libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev libxcb1-dev \
+            libxcb-shape0-dev libxcb-xfixes0-dev libx11-dev libxcb-xkb-dev \
+            libxcb-randr0-dev fonts-dejavu-core
+      - name: Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustc --version
+      - name: Fetch dependencies
+        run: cargo fetch --locked
+      - name: Package
+        run: ${{ matrix.package }}
+      - name: Checksums
+        run: |
+          shopt -s nullglob
+          assets=(dist/*.tar.gz dist/*.dmg)
+          if command -v sha256sum >/dev/null; then sum=(sha256sum); else sum=(shasum -a 256); fi
+          {
+            echo "### ${{ matrix.platform }} checksums"
+            echo '```'
+            "${sum[@]}" "${assets[@]}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-${{ matrix.platform }}
+          path: |
+            dist/*.tar.gz
+            dist/*.dmg
+          if-no-files-found: error
+          retention-days: 14
+
+  publish-draft:
+    needs: [prepare, build]
+    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && !inputs.dry_run) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ needs.prepare.outputs.tag }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+      SOURCE_SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+      - name: Create or update draft release
+        run: |
+          shopt -s nullglob
+          assets=(dist/*.tar.gz dist/*.dmg)
+          if draft_state="$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null)"; then
+            if [[ "$draft_state" != "true" ]]; then
+              echo "release $TAG is already published; refusing to modify it" >&2
+              exit 1
+            fi
+            gh release upload "$TAG" "${assets[@]}" --clobber
+          else
+            gh release create "$TAG" --draft --target "$SOURCE_SHA" \
+              --title "CloudDeck $VERSION" \
+              --notes "Draft built by CI from $SOURCE_SHA. Sign the manifest locally before publishing." \
+              "${assets[@]}"
+          fi
+      - name: Draft release summary
+        run: |
+          shopt -s nullglob
+          assets=(dist/*.tar.gz dist/*.dmg)
+          {
+            echo "### Draft release $TAG"
+            echo '```'
+            sha256sum "${assets[@]}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
