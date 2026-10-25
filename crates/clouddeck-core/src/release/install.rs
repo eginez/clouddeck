@@ -77,7 +77,7 @@ pub fn install_macos(tar_gz: &[u8], bundle: &Path) -> Result<(), String> {
     if !is_real_dir(&new) {
         return Err("archive has no CloudDeck.app".into());
     }
-    swap(&new, bundle, &sibling_with_suffix(bundle, ".old"))
+    swap_bundle(&new, bundle)
 }
 
 /// Replaces the running executable with the one in the archive, rolling back on failure.
@@ -97,7 +97,7 @@ pub fn install_linux(tar_gz: &[u8], exe: &Path) -> Result<(), String> {
         fs::set_permissions(&new, fs::Permissions::from_mode(0o755))
             .map_err(|e| format!("could not make new binary executable: {e}"))?;
     }
-    swap(&new, exe, &sibling_with_suffix(exe, ".old"))
+    fs::rename(&new, exe).map_err(|e| format!("could not put new build in place: {e}"))
 }
 
 fn is_real_file(path: &Path) -> bool {
@@ -119,6 +119,30 @@ fn sibling_with_suffix(path: &Path, suffix: &str) -> PathBuf {
     path.with_file_name(name)
 }
 
+#[cfg(target_os = "macos")]
+fn swap_bundle(new: &Path, live: &Path) -> Result<(), String> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+    let from = CString::new(new.as_os_str().as_bytes()).map_err(|e| e.to_string())?;
+    let to = CString::new(live.as_os_str().as_bytes()).map_err(|e| e.to_string())?;
+    // SAFETY: both pointers are valid NUL-terminated paths for the duration of the call.
+    let rc = unsafe { libc::renamex_np(from.as_ptr(), to.as_ptr(), libc::RENAME_SWAP) };
+    if rc != 0 {
+        return Err(format!(
+            "could not swap new build into {}: {}",
+            live.display(),
+            io::Error::last_os_error()
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn swap_bundle(new: &Path, live: &Path) -> Result<(), String> {
+    swap(new, live, &sibling_with_suffix(live, ".old"))
+}
+
+#[cfg(not(target_os = "macos"))]
 fn swap(new: &Path, live: &Path, old: &Path) -> Result<(), String> {
     remove_existing(old).map_err(|e| format!("could not clear {}: {e}", old.display()))?;
     fs::rename(live, old).map_err(|e| format!("could not move {} aside: {e}", live.display()))?;
@@ -135,6 +159,7 @@ fn swap(new: &Path, live: &Path, old: &Path) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(not(target_os = "macos"))]
 fn remove_existing(path: &Path) -> io::Result<()> {
     match fs::symlink_metadata(path) {
         Ok(meta) if meta.is_dir() => fs::remove_dir_all(path),
@@ -378,7 +403,7 @@ mod tests {
     }
 
     #[test]
-    fn install_linux_tolerates_stale_old_file() {
+    fn install_linux_never_moves_live_binary_aside() {
         let dir = tempfile::tempdir().unwrap();
         let exe = dir.path().join("clouddeck");
         fs::write(&exe, "old").unwrap();
@@ -388,6 +413,10 @@ mod tests {
         install_linux(&tgz, &exe).unwrap();
 
         assert_eq!(fs::read_to_string(&exe).unwrap(), "new");
-        assert_eq!(only_entries(dir.path()), vec!["clouddeck".to_string()]);
+        assert_eq!(fs::read_to_string(dir.path().join("clouddeck.old")).unwrap(), "stale");
+        assert_eq!(
+            only_entries(dir.path()),
+            vec!["clouddeck".to_string(), "clouddeck.old".to_string()]
+        );
     }
 }
