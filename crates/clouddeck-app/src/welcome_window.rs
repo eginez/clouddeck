@@ -473,6 +473,7 @@ pub fn open_welcome_window_sized(
                     traffic_light_position: Some(point(px(14.0), px(15.0))),
                 }),
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
+                app_id: Some(crate::main_window::APP_ID.to_string()),
                 ..Default::default()
             },
             move |window, cx| {

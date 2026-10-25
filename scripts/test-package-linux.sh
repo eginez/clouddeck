@@ -54,6 +54,7 @@ check "hicolor 16 icon matches the iconset source" \
 
 check "clouddeck.desktop is in the tarball" test -f "$X/clouddeck.desktop"
 check "clouddeck.desktop has Icon=clouddeck" grep -qx "Icon=clouddeck" "$X/clouddeck.desktop"
+check "clouddeck.desktop has StartupWMClass=clouddeck" grep -qx "StartupWMClass=clouddeck" "$X/clouddeck.desktop"
 
 echo "$PASS passed, $FAIL failed"
 [[ "$FAIL" -eq 0 ]]

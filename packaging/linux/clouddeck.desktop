@@ -4,5 +4,6 @@ Name=CloudDeck
 Comment=Browse your AWS EC2 fleet
 Exec=clouddeck
 Icon=clouddeck
+StartupWMClass=clouddeck
 Categories=Development;Utility;
 Terminal=false

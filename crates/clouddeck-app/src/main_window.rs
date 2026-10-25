@@ -1043,6 +1043,8 @@ fn overlay_panel(selector: &'static str, view: AnyView) -> Div {
         .child(view)
 }
 
+pub const APP_ID: &str = "clouddeck";
+
 pub fn window_options(bounds: Bounds<Pixels>) -> WindowOptions {
     WindowOptions {
         titlebar: Some(TitlebarOptions {
@@ -1052,6 +1054,7 @@ pub fn window_options(bounds: Bounds<Pixels>) -> WindowOptions {
         }),
         window_bounds: Some(WindowBounds::Windowed(bounds)),
         window_min_size: Some(size(px(MAIN_WINDOW_MIN_WIDTH), px(MIN_WINDOW_HEIGHT))),
+        app_id: Some(APP_ID.to_string()),
         ..Default::default()
     }
 }
@@ -1960,5 +1963,11 @@ mod tests {
             Palette::for_dark(false)
         );
         assert!(!cx.update(|_, cx| gpui_component::Theme::global(cx).is_dark()));
+    }
+
+    #[test]
+    fn window_options_sets_app_id_for_desktop_entry_matching() {
+        let bounds = Bounds::new(point(px(0.0), px(0.0)), size(px(800.0), px(600.0)));
+        assert_eq!(window_options(bounds).app_id, Some("clouddeck".to_string()));
     }
 }

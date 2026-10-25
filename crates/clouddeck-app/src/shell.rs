@@ -913,6 +913,7 @@ impl AppShell {
                     ..Default::default()
                 }),
                 window_bounds: Some(gpui::WindowBounds::Windowed(bounds)),
+                app_id: Some(crate::main_window::APP_ID.to_string()),
                 ..Default::default()
             },
             move |_, cx| {
