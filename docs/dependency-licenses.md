@@ -99,9 +99,10 @@ permissive.
 ### Vendored patch
 
 - `blade-graphics` 0.7.1 is patched from `third_party/blade-graphics` and
-  declares MIT. The vendored copy does not ship a LICENSE file, so the upstream
-  copyright notice is not yet reproduced in this repository. That is tracked in
-  clouddeck-rs-oswu.3.
+  declares MIT. The upstream licence text and copyright line (Dzmitry Malyshau,
+  2022) ship in `third_party/blade-graphics/LICENSE`; the local changes are
+  described in `third_party/README.md`, and the top-level `NOTICE` lists the
+  vendored code.
 
 ## Conclusion
 
