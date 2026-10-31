@@ -31,8 +31,8 @@ write_jobs="$(awk '
 check "contents: write confined to publish-draft and sign-and-publish" \
     test "$write_jobs" = "$(printf 'publish-draft\nsign-and-publish')"
 
-unpinned="$(grep -E '^[[:space:]-]*uses:' "$WF" | grep -vE '@[0-9a-f]{40}([[:space:]]|$)' || true)"
-check "every uses: pinned to a 40-char SHA" test -z "$unpinned"
+unpinned="$(grep -E '^[[:space:]-]*uses:' "$WF" | grep -vE 'uses: \./' | grep -vE '@[0-9a-f]{40}([[:space:]]|$)' || true)"
+check "every remote uses: pinned to a 40-char SHA" test -z "$unpinned"
 
 # job_of PATTERN: the jobs whose lines contain PATTERN as a fixed string
 job_of() { awk -v pat="$1" '/^jobs:/ { injobs = 1; next } injobs && /^  [A-Za-z0-9_-]+:[[:space:]]*$/ { job = $1; sub(/:$/, "", job) } index($0, pat) { print job }' "$WF" | sort -u; }
@@ -80,6 +80,22 @@ check "publish sends the release notes file" grep -Fq 'gh release edit "$TAG" --
 check "draft assets are compared to the signed files before publishing" \
     bash -c "c=\$(grep -nF 'cmp \"\$f\"' '$WF' | head -n1 | cut -d: -f1); e=\$(grep -nF 'gh release edit' '$WF' | head -n1 | cut -d: -f1); [[ -n \"\$c\" && -n \"\$e\" && \"\$c\" -lt \"\$e\" ]]"
 check "sign-and-publish refuses an already-published tag" grep -Fq 'already published' "$WF"
+
+CI="$ROOT/.github/workflows/ci.yml"
+check "ci.yml is reusable and manual only" \
+    bash -c "grep -Fq 'workflow_call:' '$CI' && grep -Fq 'workflow_dispatch:' '$CI' && ! grep -Eq '^[[:space:]]*(push|pull_request(_target)?):' '$CI'"
+check "ci.yml has no secrets, no write permissions and no concurrency group" \
+    bash -c "! grep -Eq 'secrets|write|^concurrency:' '$CI'"
+release_calls_ci() { job_block ci | grep -Fxq '    uses: ./.github/workflows/ci.yml'; }
+check "release calls ci.yml from the ci job" release_calls_ci
+ci_job_safe() {
+    local b
+    b="$(job_block ci)"
+    ! grep -Eq 'secrets|write' <<<"$b" && grep -Fxq '      contents: read' <<<"$b"
+}
+check "release ci job passes no secrets and is read-only" ci_job_safe
+prepare_waits_for_ci() { job_block prepare | grep -Fxq '    needs: ci'; }
+check "prepare waits for ci" prepare_waits_for_ci
 
 CARGO_VERSION="$(awk -F'"' '/^version = / { print $2; exit }' "$ROOT/crates/clouddeck-app/Cargo.toml")"
 check "version from tag matching Cargo.toml" bash -c "[[ \"\$('$VERSION_SCRIPT' v$CARGO_VERSION)\" == '$CARGO_VERSION' ]]"

@@ -18,7 +18,8 @@ the desktop libraries GPUI needs on Linux.
 
 ## Build and test
 
-Run these before opening a pull request. They match the checks in CI:
+Run these before opening a pull request. They match the checks the release
+workflow runs in CI before it builds:
 
 ```bash
 cargo clippy --workspace --all-targets --locked -- -D warnings
@@ -28,7 +29,8 @@ cargo test --workspace --locked
 Core tests use fixtures and injected services and never contact AWS. Do not add
 tests that need real AWS credentials or network access.
 
-Shell scripts in `scripts/` are checked with `shellcheck --severity=warning`.
+Shell scripts in `scripts/` are checked with `shellcheck --severity=warning`,
+and CI runs the same check before each release.
 
 ## Pull requests
 
