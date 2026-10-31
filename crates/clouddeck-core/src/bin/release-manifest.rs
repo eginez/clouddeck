@@ -8,11 +8,12 @@ use chrono::DateTime;
 use clouddeck_core::release::manifest::{Asset, Manifest, to_canonical_json};
 use clouddeck_core::release::sign::{generate_keypair, sign_bytes};
 use clouddeck_core::release::target::{Target, asset_name};
-use clouddeck_core::release::verify::sha256_hex;
+use clouddeck_core::release::verify::{RELEASE_PUBLIC_KEY, sha256_hex, verify_manifest};
 use semver::Version;
 
 const USAGE: &str = "usage: release-manifest keygen --secret-out <path>
-       release-manifest build --version <X> --notes-file <file> --asset <target>=<path> [--asset ...] --key <secret> --out <dir> [--published-at <rfc3339>]";
+       release-manifest build --version <X> --notes-file <file> --asset <target>=<path> [--asset ...] --key <secret> --out <dir> [--published-at <rfc3339>]
+       release-manifest verify --dir <dir>";
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -31,8 +32,23 @@ pub fn run(args: &[String], now: &str) -> Result<String, (i32, String)> {
     match args.first().map(String::as_str) {
         Some("keygen") => keygen(&args[1..]),
         Some("build") => build(&args[1..], now),
+        Some("verify") => verify(&args[1..]),
         _ => Err((2, USAGE.to_string())),
     }
+}
+
+fn verify(args: &[String]) -> Result<String, (i32, String)> {
+    let pairs = flag_pairs(args, &["--dir"])?;
+    let dir = required(&pairs, "--dir")?;
+    let manifest_path = Path::new(&dir).join("manifest.json");
+    let signature_path = Path::new(&dir).join("manifest.json.sig");
+    let manifest = fs::read(&manifest_path)
+        .map_err(|e| (1, format!("cannot read {}: {e}", manifest_path.display())))?;
+    let signature = fs::read_to_string(&signature_path)
+        .map_err(|e| (1, format!("cannot read {}: {e}", signature_path.display())))?;
+    verify_manifest(&manifest, signature.trim(), RELEASE_PUBLIC_KEY)
+        .map_err(|e| (1, format!("manifest verification failed: {e}")))?;
+    Ok("manifest signature verified".to_string())
 }
 
 fn keygen(args: &[String]) -> Result<String, (i32, String)> {
@@ -301,6 +317,43 @@ mod tests {
             verify_manifest(&manifest, signature.trim(), &public),
             Ok(())
         );
+    }
+
+    #[test]
+    fn verify_rejects_manifest_not_signed_by_compiled_in_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let (key, _) = keygen_in(dir.path());
+        let asset = write_asset(dir.path(), MAC_ASSET);
+        let spec = format!("macos-aarch64={}", asset.display());
+        run(&build_args(dir.path(), &key, &[spec]), NOW).unwrap();
+
+        let out = dir.path().join("out");
+        let err = run(&args(&["verify", "--dir", out.to_str().unwrap()]), NOW).unwrap_err();
+        assert_eq!(
+            err,
+            (
+                1,
+                "manifest verification failed: signature does not match".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn verify_reports_missing_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = run(
+            &args(&["verify", "--dir", dir.path().to_str().unwrap()]),
+            NOW,
+        )
+        .unwrap_err();
+        assert_eq!(err.0, 1);
+        assert!(err.1.contains("cannot read"));
+    }
+
+    #[test]
+    fn verify_requires_dir() {
+        let (code, _) = run(&args(&["verify"]), NOW).unwrap_err();
+        assert_eq!(code, 2);
     }
 
     #[test]

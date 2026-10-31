@@ -137,7 +137,7 @@ jobs:
           else
             gh release create "$TAG" --draft --target "$SOURCE_SHA" \
               --title "CloudDeck $VERSION" \
-              --notes "Draft built by CI from $SOURCE_SHA. Sign the manifest locally before publishing." \
+              --notes "Draft built by CI from $SOURCE_SHA. CI signs the manifest and publishes after the release environment is approved." \
               "${assets[@]}"
           fi
       - name: Draft release summary
@@ -148,5 +148,89 @@ jobs:
             echo "### Draft release $TAG"
             echo '```'
             sha256sum "${assets[@]}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  sign-and-publish:
+    needs: [prepare, publish-draft]
+    if: ${{ github.event_name == 'workflow_dispatch' && !inputs.dry_run && github.ref_type == 'tag' && github.actor == github.repository_owner }}
+    environment: release
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ needs.prepare.outputs.tag }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+      SOURCE_SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          persist-credentials: false
+      - name: Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustc --version
+      - name: Build release-manifest
+        run: cargo build --locked --release -p clouddeck-core --bin release-manifest
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+      - name: Check draft and release notes
+        run: |
+          if [[ ! -s "docs/release-notes/v$VERSION.md" ]]; then
+            echo "release notes not found: docs/release-notes/v$VERSION.md" >&2
+            exit 1
+          fi
+          if ! draft_state="$(gh release view "$TAG" --json isDraft --jq .isDraft)"; then
+            echo "could not read the draft for $TAG; run the release workflow first" >&2
+            exit 1
+          fi
+          if [[ "$draft_state" != "true" ]]; then
+            echo "release $TAG is already published; refusing to modify it" >&2
+            exit 1
+          fi
+      - name: Sign manifest
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: |
+          umask 077
+          key="$RUNNER_TEMP/release-signing.key"
+          printf "%s" "$RELEASE_SIGNING_KEY" > "$key"
+          chmod 600 "$key"
+          target/release/release-manifest build --version "$VERSION" \
+            --notes-file "docs/release-notes/v$VERSION.md" \
+            --asset "macos-aarch64=dist/CloudDeck-$VERSION-macos-aarch64.tar.gz" \
+            --asset "linux-x86_64=dist/CloudDeck-$VERSION-linux-x86_64.tar.gz" \
+            --key "$key" --out dist
+          rm -f "$key"
+      - name: Remove signing key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/release-signing.key"
+      - name: Verify manifest against compiled-in key
+        run: target/release/release-manifest verify --dir dist
+      - name: Check draft assets match signed files
+        run: |
+          rm -rf draft-check
+          mkdir draft-check
+          gh release download "$TAG" --dir draft-check --pattern "CloudDeck-$VERSION-*"
+          for f in "dist/CloudDeck-$VERSION-macos-aarch64.tar.gz" "dist/CloudDeck-$VERSION-linux-x86_64.tar.gz" "dist/CloudDeck-$VERSION-macos-aarch64.dmg"; do
+            cmp "$f" "draft-check/$(basename "$f")"
+          done
+      - name: Publish release
+        run: |
+          gh release upload "$TAG" dist/manifest.json dist/manifest.json.sig --clobber
+          gh release edit "$TAG" --draft=false --notes-file "docs/release-notes/v$VERSION.md"
+      - name: Manifest summary
+        run: |
+          {
+            echo "### Published $TAG"
+            echo '```'
+            sha256sum dist/manifest.json
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
