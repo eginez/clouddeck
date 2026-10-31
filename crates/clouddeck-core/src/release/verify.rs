@@ -4,8 +4,8 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use ed25519_dalek::{Signature, VerifyingKey};
 use sha2::{Digest, Sha256};
 
-/// Placeholder release public key (base64 of 32 zero bytes); a later bead replaces it with the real key.
-pub const RELEASE_PUBLIC_KEY: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+/// Release public key generated 2026-10-31. The private key lives in the RELEASE_SIGNING_KEY Actions secret and on the maintainer's Mac.
+pub const RELEASE_PUBLIC_KEY: &str = "QQmck07601yw+Q7ZGL9ZtsZjOmLSFvGHMUZDaoj2DME=";
 
 /// Checks that the manifest bytes carry a valid ed25519 signature from the given public key.
 pub fn verify_manifest(
@@ -123,12 +123,13 @@ mod tests {
     }
 
     #[test]
-    fn placeholder_release_key_is_not_configured() {
+    fn zero_release_key_is_not_configured() {
         let (signing, _) = keypair();
         let manifest = b"manifest";
         let sig = sign_b64(&signing, manifest);
+        let zero_key = STANDARD.encode([0u8; 32]);
         assert_eq!(
-            verify_manifest(manifest, &sig, RELEASE_PUBLIC_KEY),
+            verify_manifest(manifest, &sig, &zero_key),
             Err("release key not configured".to_string())
         );
     }
