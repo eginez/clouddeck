@@ -13,11 +13,18 @@ cargo build --manifest-path "$root_dir/Cargo.toml" --locked --offline --release 
 
 app_dir="$root_dir/dist/CloudDeck.app"
 binary="$root_dir/target/release/clouddeck"
+icon="$root_dir/design/icon/AppIcon.icns"
 version="$(awk -F'"' '/^version = / { print $2; exit }' "$root_dir/crates/clouddeck-app/Cargo.toml")"
 
+if [[ ! -f "$icon" ]]; then
+    echo "missing app icon: $icon" >&2
+    exit 1
+fi
+
 rm -rf "$app_dir"
-mkdir -p "$app_dir/Contents/MacOS"
+mkdir -p "$app_dir/Contents/MacOS" "$app_dir/Contents/Resources"
 install -m 0755 "$binary" "$app_dir/Contents/MacOS/clouddeck"
+install -m 0644 "$icon" "$app_dir/Contents/Resources/AppIcon.icns"
 
 cat > "$app_dir/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -28,6 +35,8 @@ cat > "$app_dir/Contents/Info.plist" <<PLIST
     <string>CloudDeck</string>
     <key>CFBundleExecutable</key>
     <string>clouddeck</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
     <string>com.clouddeck.rust.mvp</string>
     <key>CFBundleName</key>

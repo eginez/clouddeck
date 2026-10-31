@@ -21,6 +21,8 @@ R="$T/repo"
 mkdir -p "$R/scripts" "$R/crates/clouddeck-app" "$T/bin"
 cp "$SRC/scripts/package-macos.sh" "$R/scripts/"
 cp "$SRC/crates/clouddeck-app/Cargo.toml" "$R/crates/clouddeck-app/"
+mkdir -p "$R/design/icon"
+cp "$SRC/design/icon/AppIcon.icns" "$R/design/icon/"
 touch "$R/Cargo.toml"
 
 cat >"$T/bin/uname" <<'EOF'
@@ -59,11 +61,20 @@ check "package-macos.sh succeeds with cargo build --manifest-path first" test $?
 VERSION="$(awk -F'"' '/^version = / { print $2; exit }' "$R/crates/clouddeck-app/Cargo.toml")"
 check "CloudDeck.app binary is installed" test -x "$R/dist/CloudDeck.app/Contents/MacOS/clouddeck"
 check "Info.plist carries the crate version" grep -q "<string>$VERSION</string>" "$R/dist/CloudDeck.app/Contents/Info.plist"
+check "app icon is installed into Contents/Resources" \
+    cmp -s "$SRC/design/icon/AppIcon.icns" "$R/dist/CloudDeck.app/Contents/Resources/AppIcon.icns"
+check "Info.plist sets CFBundleIconFile to AppIcon" \
+    bash -c "grep -A1 '<key>CFBundleIconFile</key>' '$R/dist/CloudDeck.app/Contents/Info.plist' | grep -q '<string>AppIcon</string>'"
 check "versioned macOS tarball is produced" test -s "$R/dist/CloudDeck-$VERSION-macos-aarch64.tar.gz"
 check "tarball has CloudDeck.app at its root" \
     bash -c "tar -tzf '$R/dist/CloudDeck-$VERSION-macos-aarch64.tar.gz' | grep -qx 'CloudDeck.app/Contents/MacOS/clouddeck'"
 check "versioned macOS dmg is produced" test -s "$R/dist/CloudDeck-$VERSION-macos-aarch64.dmg"
 check "dmg is built from the CloudDeck.app bundle" grep -q -e "-srcfolder $R/dist/CloudDeck.app" "$HDIUTIL_LOG"
+
+rm -f "$R/design/icon/AppIcon.icns"
+PATH="$T/bin:$PATH" "$R/scripts/package-macos.sh" >"$T/noicon.log" 2>&1
+check "package-macos.sh fails when AppIcon.icns is missing" test $? -ne 0
+check "missing-icon failure names the icon" grep -q "missing app icon" "$T/noicon.log"
 
 echo "$PASS passed, $FAIL failed"
 [[ "$FAIL" -eq 0 ]]
