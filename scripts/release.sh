@@ -9,6 +9,7 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="${RELEASE_REPO_ROOT:-$(cd -- "$SCRIPT_DIR/.." && pwd)}"
 RELEASE_CARGO="${RELEASE_CARGO:-cargo}"
 RELEASE_GH="${RELEASE_GH:-gh}"
+RELEASE_REPO="${RELEASE_REPO:-eginez/clouddeck}"
 RELEASE_SSH="${RELEASE_SSH:-ssh}"
 RELEASE_SCP="${RELEASE_SCP:-scp}"
 RELEASE_GIT="${RELEASE_GIT:-git}"
@@ -120,9 +121,9 @@ wait_for_ci_draft() { # version
     local max="${RELEASE_CI_ATTEMPTS:-60}" interval="${RELEASE_CI_INTERVAL:-30}"
     expected="$(expected_ci_assets "$1")"
     while :; do
-        if is_draft="$("$RELEASE_GH" release view "$tag" --json isDraft --jq .isDraft 2>/dev/null)"; then
+        if is_draft="$("$RELEASE_GH" release view "$tag" -R "$RELEASE_REPO" --json isDraft --jq .isDraft 2>/dev/null)"; then
             [[ "$is_draft" == true ]] || die "release $tag is already published; refusing to modify it"
-            found="$("$RELEASE_GH" release view "$tag" --json assets --jq '.assets[].name' 2>/dev/null | sort)" || found=""
+            found="$("$RELEASE_GH" release view "$tag" -R "$RELEASE_REPO" --json assets --jq '.assets[].name' 2>/dev/null | sort)" || found=""
             if [[ "$found" == "$expected" ]]; then
                 return 0
             fi
@@ -149,7 +150,7 @@ main_from_ci() { # version, notes, dry-run (0/1), yes (0/1)
 
     echo "==> downloading $tag assets into dist/"
     mkdir -p "$dist"
-    "$RELEASE_GH" release download "$tag" --dir "$dist" --clobber || die "downloading $tag assets failed"
+    "$RELEASE_GH" release download "$tag" -R "$RELEASE_REPO" --dir "$dist" --clobber || die "downloading $tag assets failed"
     require_file "$mac_tar" "$mac_dmg" "$linux_tar"
 
     echo "==> signing manifest"
@@ -170,9 +171,9 @@ main_from_ci() { # version, notes, dry-run (0/1), yes (0/1)
     fi
 
     echo "==> uploading manifest and signature"
-    "$RELEASE_GH" release upload "$tag" "$manifest" "$signature" || die "uploading the manifest to $tag failed"
+    "$RELEASE_GH" release upload "$tag" -R "$RELEASE_REPO" "$manifest" "$signature" || die "uploading the manifest to $tag failed"
     echo "==> publishing"
-    "$RELEASE_GH" release edit "$tag" --draft=false --notes-file "$notes" || die "publishing $tag failed"
+    "$RELEASE_GH" release edit "$tag" -R "$RELEASE_REPO" --draft=false --notes-file "$notes" || die "publishing $tag failed"
     echo "Published $tag"
 }
 
@@ -308,7 +309,7 @@ main() {
 
     echo "==> publishing"
     local url
-    url="$("$RELEASE_GH" release create "v$version" "${assets[@]}" --title "CloudDeck $version" --notes-file "$notes")" \
+    url="$("$RELEASE_GH" release create "v$version" -R "$RELEASE_REPO" "${assets[@]}" --title "CloudDeck $version" --notes-file "$notes")" \
         || die "gh release create failed"
     echo "Released $url"
 }

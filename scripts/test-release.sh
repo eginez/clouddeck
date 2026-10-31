@@ -243,6 +243,7 @@ check "full run pushes tag v0.2.0 to origin" test -n "$(git -C "$T/full-run/orig
 check "gh release create gets the five assets in order" bash -c "diff <(cat '$FAKE_LOG/gh-assets.log') <(printf '%s\n' \
     CloudDeck-0.2.0-macos-aarch64.tar.gz CloudDeck-0.2.0-macos-aarch64.dmg CloudDeck-0.2.0-linux-x86_64.tar.gz manifest.json manifest.json.sig) >/dev/null"
 check "gh release create targets tag v0.2.0" grep -q '^release create v0.2.0 ' "$FAKE_LOG/gh.log"
+check "gh release create pins the product repo" grep -q '^release create v0.2.0 -R eginez/clouddeck ' "$FAKE_LOG/gh.log"
 
 R="$(fixture fleet-path)"
 PKG_LINUX='' release_in "$R" 0.2.0 "$T/notes.md"; rc=$?
@@ -351,7 +352,7 @@ R="$(ci_fixture ci-publish)"
 release_in "$R" 0.2.0 "$T/notes.md" --from-ci --yes; rc=$?
 check "from-ci real run exits 0" test "$rc" -eq 0
 check "from-ci real run uploads manifest and signature" grep -q 'release upload v0.2.0 .*manifest.json .*manifest.json.sig$' "$FAKE_LOG/gh.log"
-check "from-ci real run publishes the draft with the notes" grep -q 'release edit v0.2.0 --draft=false --notes-file' "$FAKE_LOG/gh.log"
+check "from-ci real run publishes the draft with the notes" grep -q 'release edit v0.2.0 -R eginez/clouddeck --draft=false --notes-file' "$FAKE_LOG/gh.log"
 check "from-ci real run uploads before publishing" upload_before_publish
 
 R="$(ci_fixture ci-upload-fails)"
