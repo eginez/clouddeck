@@ -84,7 +84,7 @@ check "sign-and-publish refuses an already-published tag" grep -Fq 'already publ
 CARGO_VERSION="$(awk -F'"' '/^version = / { print $2; exit }' "$ROOT/crates/clouddeck-app/Cargo.toml")"
 check "version from tag matching Cargo.toml" bash -c "[[ \"\$('$VERSION_SCRIPT' v$CARGO_VERSION)\" == '$CARGO_VERSION' ]]"
 check "version script without tag prints Cargo version" bash -c "[[ \"\$('$VERSION_SCRIPT')\" == '$CARGO_VERSION' ]]"
-check "version script rejects mismatched tag" bash -c "! '$VERSION_SCRIPT' v0.2.0 >/dev/null 2>&1"
+check "version script rejects mismatched tag" bash -c "! '$VERSION_SCRIPT' v0.3.0 >/dev/null 2>&1"
 check "version script rejects non-semver tag" bash -c "! '$VERSION_SCRIPT' v0.1 >/dev/null 2>&1"
 check "version script rejects tag without v" bash -c "! '$VERSION_SCRIPT' 0.1.0 >/dev/null 2>&1"
 
