@@ -7,7 +7,7 @@ use serde::Deserialize;
 /// GitHub owner that publishes releases; changing it is a one-line move to a public releases repo.
 pub const RELEASE_OWNER: &str = "eginez";
 /// GitHub repository that publishes releases; see RELEASE_OWNER.
-pub const RELEASE_REPO: &str = "clouddeck-rs";
+pub const RELEASE_REPO: &str = "clouddeck";
 /// The only host the GitHub token is ever sent to.
 const TOKEN_HOST: &str = "api.github.com";
 /// Shown when no GitHub token can be found for the private repository.
@@ -278,7 +278,7 @@ fn gh_auth_token() -> Option<String> {
 mod tests {
     use super::*;
 
-    const RELEASE_JSON: &str = r#"{"tag_name":"v0.2.0","assets":[{"name":"manifest.json","url":"https://api.github.com/repos/eginez/clouddeck-rs/releases/assets/1"},{"name":"manifest.json.sig","url":"https://api.github.com/repos/eginez/clouddeck-rs/releases/assets/2"}]}"#;
+    const RELEASE_JSON: &str = r#"{"tag_name":"v0.2.0","assets":[{"name":"manifest.json","url":"https://api.github.com/repos/eginez/clouddeck/releases/assets/1"},{"name":"manifest.json.sig","url":"https://api.github.com/repos/eginez/clouddeck/releases/assets/2"}]}"#;
 
     struct FakeSource;
 
@@ -305,7 +305,7 @@ mod tests {
     #[test]
     fn token_host_accepts_https_github_api() {
         assert!(
-            ensure_token_host("https://api.github.com/repos/eginez/clouddeck-rs/releases/assets/1")
+            ensure_token_host("https://api.github.com/repos/eginez/clouddeck/releases/assets/1")
                 .is_ok()
         );
     }
@@ -328,7 +328,7 @@ mod tests {
     fn token_host_rejects_non_default_port() {
         assert!(
             ensure_token_host(
-                "https://api.github.com:8443/repos/eginez/clouddeck-rs/releases/assets/1"
+                "https://api.github.com:8443/repos/eginez/clouddeck/releases/assets/1"
             )
             .is_err()
         );
@@ -337,7 +337,7 @@ mod tests {
     #[test]
     fn token_host_rejects_plain_http() {
         assert!(
-            ensure_token_host("http://api.github.com/repos/eginez/clouddeck-rs/releases/assets/1")
+            ensure_token_host("http://api.github.com/repos/eginez/clouddeck/releases/assets/1")
                 .is_err()
         );
     }
@@ -356,10 +356,10 @@ mod tests {
     }
 
     #[test]
-    fn latest_release_url_points_at_eginez_clouddeck_rs() {
+    fn latest_release_url_points_at_eginez_clouddeck() {
         assert_eq!(
-            latest_release_url("eginez", "clouddeck-rs"),
-            "https://api.github.com/repos/eginez/clouddeck-rs/releases/latest"
+            latest_release_url("eginez", "clouddeck"),
+            "https://api.github.com/repos/eginez/clouddeck/releases/latest"
         );
     }
 
@@ -367,7 +367,7 @@ mod tests {
     fn asset_api_url_returns_url_of_named_asset() {
         assert_eq!(
             asset_api_url(RELEASE_JSON.as_bytes(), "manifest.json.sig").unwrap(),
-            "https://api.github.com/repos/eginez/clouddeck-rs/releases/assets/2"
+            "https://api.github.com/repos/eginez/clouddeck/releases/assets/2"
         );
     }
 

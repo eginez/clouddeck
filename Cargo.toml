@@ -4,7 +4,7 @@ members = ["crates/clouddeck-core", "crates/clouddeck-app"]
 
 [workspace.package]
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/eginez/clouddeck-rs"
+repository = "https://github.com/eginez/clouddeck"
 
 # clouddeck-rs-sr7i.1: blade-graphics 0.7.1 hard-codes VK_COMPOSITE_ALPHA_OPAQUE,
 # which Lavapipe lacks (black window under Xvfb). Vendored copy falls back to
