@@ -113,3 +113,5 @@ When some regions load and others fail, the fleet keeps the results it has.
 With one failed region, the failure popover offers `Retry region`. With
 several, each row has a `Retry` button, and `Retry all` retries every failed
 region.
+
+If a region keeps failing after a retry, run the same aws ec2 describe-instances command in a terminal to see the AWS CLI error.
