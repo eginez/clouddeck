@@ -219,4 +219,9 @@ mod tests {
         assert_eq!(QueryField::from_name("nope"), None);
         assert_eq!(QueryField::from_name(""), None);
     }
+
+    #[test]
+    fn from_name_unknown_field_is_none() {
+        assert_eq!(QueryField::from_name("nope"), None);
+    }
 }
