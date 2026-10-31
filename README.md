@@ -37,18 +37,23 @@ running app.
 
 ## Install
 
-Linux (x86_64): extract the archive produced by `scripts/package-linux.sh`
-(`dist/CloudDeck-<version>-linux-x86_64.tar.gz`) and run the app:
+There are no prebuilt downloads yet. The first release (0.2.0) is in
+preparation; until it is published, build CloudDeck from source (see
+[Build from source and test](#build-from-source-and-test)), or package it
+yourself:
 
-```bash
-tar -xzf CloudDeck-<version>-linux-x86_64.tar.gz
-./clouddeck
-```
+- Linux (x86_64): `scripts/package-linux.sh` writes
+  `dist/CloudDeck-<version>-linux-x86_64.tar.gz`. Extract it and run `./clouddeck`.
+- macOS (Apple silicon): `scripts/package-macos.sh` writes
+  `dist/CloudDeck-<version>-macos-aarch64.dmg` and a matching `.tar.gz` that
+  contains `CloudDeck.app`. The app is ad-hoc signed, not notarized, so the
+  first launch needs a right-click, Open (or
+  `xattr -dr com.apple.quarantine CloudDeck.app`).
 
-macOS (Apple silicon): `scripts/package-macos.sh` writes
-`dist/CloudDeck-<version>-macos-aarch64.dmg` and a matching `.tar.gz` that
-contains `CloudDeck.app`. Open the disk image and copy CloudDeck to
-Applications.
+Releases will be published on the
+[GitHub Releases page](https://github.com/eginez/clouddeck/releases), and the
+app will offer updates itself (a Software Update window; nothing installs
+silently, and every download is checked against a signed manifest).
 
 To try CloudDeck without AWS, start it with `--demo` (see
 [Quick start](#quick-start)).
