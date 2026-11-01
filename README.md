@@ -16,8 +16,6 @@ uses for SSO), so your sign-in and permissions work as they always have.
 
 ![CloudDeck main window, dark theme](design/images/02-main-window-dark.png)
 
-*Screenshots are renders of the design mockup.*
-
 ## Install
 
 **macOS (Apple silicon), with Homebrew:**
