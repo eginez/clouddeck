@@ -104,5 +104,15 @@ check "version script rejects mismatched tag" bash -c "! '$VERSION_SCRIPT' v0.3.
 check "version script rejects non-semver tag" bash -c "! '$VERSION_SCRIPT' v0.1 >/dev/null 2>&1"
 check "version script rejects tag without v" bash -c "! '$VERSION_SCRIPT' 0.1.0 >/dev/null 2>&1"
 
+DRIFT="$(mktemp -d)"
+trap 'rm -rf "$DRIFT"' EXIT
+mkdir -p "$DRIFT/scripts" "$DRIFT/crates/clouddeck-app" "$DRIFT/crates/clouddeck-core"
+cp "$VERSION_SCRIPT" "$DRIFT/scripts/"
+printf '[package]\nname = "clouddeck-app"\nversion = "0.2.1"\n' > "$DRIFT/crates/clouddeck-app/Cargo.toml"
+printf '[package]\nname = "clouddeck-core"\nversion = "0.1.0"\n' > "$DRIFT/crates/clouddeck-core/Cargo.toml"
+check "version script rejects a crate that drifts from clouddeck-app" bash -c "! '$DRIFT/scripts/release-version.sh' >/dev/null 2>&1"
+printf '[package]\nname = "clouddeck-core"\nversion = "0.2.1"\n' > "$DRIFT/crates/clouddeck-core/Cargo.toml"
+check "version script accepts matching crate versions" bash -c "[[ \"\$('$DRIFT/scripts/release-version.sh')\" == '0.2.1' ]]"
+
 echo "$PASS passed, $FAIL failed"
 [[ "$FAIL" -eq 0 ]]

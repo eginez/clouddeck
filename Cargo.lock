@@ -1351,7 +1351,7 @@ dependencies = [
 
 [[package]]
 name = "clouddeck-app"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "chrono",
  "clouddeck-core",
@@ -1366,7 +1366,7 @@ dependencies = [
 
 [[package]]
 name = "clouddeck-core"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "async-trait",
  "aws-config",

@@ -103,8 +103,14 @@ mod tests {
     }
 
     #[test]
-    fn current_version_matches_package() {
-        assert_eq!(current_version().to_string(), env!("CARGO_PKG_VERSION"));
+    fn current_version_matches_app_manifest() {
+        const APP_MANIFEST: &str = include_str!("../../../clouddeck-app/Cargo.toml");
+        let app_version = APP_MANIFEST
+            .lines()
+            .find_map(|line| line.strip_prefix("version = \""))
+            .and_then(|rest| rest.strip_suffix('"'))
+            .expect("app manifest has a version");
+        assert_eq!(current_version().to_string(), app_version);
     }
 
     #[test]
