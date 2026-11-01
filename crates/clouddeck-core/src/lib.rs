@@ -1,6 +1,8 @@
 mod error;
 mod fault_injecting;
 mod fleet_compute;
+mod instance;
+pub use instance::{Address, AddressKind, ExtrasSection, Instance, Label};
 mod mock;
 mod models;
 mod query;
