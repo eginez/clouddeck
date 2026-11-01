@@ -31,7 +31,7 @@ const BADGE_FONT_SIZE: f32 = 11.0;
 const ROW_RADIUS: f32 = 8.0;
 const DEFAULT_REGION: &str = "us-east-1";
 const NO_PROFILES_TEXT: &str = "No AWS profiles found in ~/.aws/config.";
-const FOOTER_TEXT: &str = "Profiles are read from ~/.aws/config. Press ↵ to open the selected profile. Credentials stay with the AWS CLI.";
+const FOOTER_TEXT: &str = "Profiles are read from ~/.aws/config. Press ↵ to open the selected profile. If credentials expire, sign in with browser on the Connect screen.";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WelcomeEvent {

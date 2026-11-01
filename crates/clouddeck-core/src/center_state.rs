@@ -143,7 +143,7 @@ pub fn center_text(state: &CenterState, ctx: &CenterContext) -> CenterText {
             action: Some("Retry".to_string()),
             ..text(
                 &format!("Credentials for {} need attention", ctx.profile),
-                "AWS rejected this profile’s credentials. Renew them with the AWS CLI, then retry."
+                "AWS rejected this profile’s credentials. Sign in with browser on the Connect screen, then retry."
                     .to_string(),
             )
         },
@@ -455,7 +455,7 @@ mod tests {
             center_text(&CenterState::SignedOut, &ctx()),
             expected(
                 "Credentials for prod-readonly need attention",
-                "AWS rejected this profile’s credentials. Renew them with the AWS CLI, then retry.",
+                "AWS rejected this profile’s credentials. Sign in with browser on the Connect screen, then retry.",
                 Some("Retry"),
                 None
             )
