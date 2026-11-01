@@ -31,6 +31,7 @@ aws-sdk-sts = { version = "1.113.0", default-features = false, features = [
 aws-types = "1.5.0"
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+clouddeck-provider-api = { path = "../clouddeck-provider-api" }
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 flate2 = "1"
 hex = "0.4"

@@ -3,6 +3,11 @@ mod fault_injecting;
 mod fleet_compute;
 mod instance;
 pub use instance::{Address, AddressKind, ExtrasSection, Instance, Label};
+mod provider;
+pub use clouddeck_provider_api::{
+    Connection, FieldDef, FieldKind, ListResult, Provider, ProviderError, Scope, ScopeFailure,
+};
+pub use provider::{ComputeServiceProvider, aws_provider};
 mod mock;
 mod models;
 mod query;

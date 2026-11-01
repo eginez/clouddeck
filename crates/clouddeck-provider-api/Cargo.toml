@@ -1,0 +1,8 @@
+[package]
+name = "clouddeck-provider-api"
+version = "0.2.1"
+edition = "2024"
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
