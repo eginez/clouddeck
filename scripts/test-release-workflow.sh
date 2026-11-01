@@ -93,6 +93,7 @@ ci_installs_pinned_rustqual_before_tests() {
     [[ -n "$install" && -n "$test" && "$install" -lt "$test" ]]
 }
 check "ci.yml installs pinned rustqual before cargo test" ci_installs_pinned_rustqual_before_tests
+check "ci.yml caches the rustqual binary" grep -Fq rustqual-1.8.3 "$CI"
 check "quality gate test exists" test -f "$ROOT/crates/clouddeck-core/tests/quality_gate.rs"
 check "no workflow sets CLOUDDECK_SKIP_QUALITY" bash -c "! grep -rq CLOUDDECK_SKIP_QUALITY '$ROOT/.github'"
 check "quality gate test refuses the skip under CI" grep -Fq 'var_os("CI")' "$ROOT/crates/clouddeck-core/tests/quality_gate.rs"

@@ -28,6 +28,12 @@ jobs:
           rustup toolchain install stable --profile minimal --component clippy
           rustup default stable
           rustc --version
+      - name: rustqual cache
+        id: rustqual-cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cargo/bin/rustqual
+          key: rustqual-1.8.3-${{ runner.os }}
       - name: rustqual 1.8.3
         run: |
           if ! command -v rustqual >/dev/null || [ "$(rustqual --version)" != "rustqual 1.8.3" ]; then
