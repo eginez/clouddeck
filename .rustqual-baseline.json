@@ -1,0 +1,99 @@
+{
+  "version": 2,
+  "quality_score": 0.8116561656165624,
+  "iosp_score": 0.9901365705614568,
+  "violations": 13,
+  "total": 2222,
+  "complexity_warnings": 6,
+  "magic_number_warnings": 0,
+  "nesting_depth_warnings": 0,
+  "function_length_warnings": 44,
+  "unsafe_warnings": 1,
+  "error_handling_warnings": 7,
+  "duplicate_groups": 40,
+  "dead_code_warnings": 34,
+  "dead_type_warnings": 6,
+  "fragment_groups": 88,
+  "boilerplate_warnings": 25,
+  "srp_struct_warnings": 8,
+  "srp_module_warnings": 15,
+  "wildcard_import_warnings": 1,
+  "sdp_violations": 0,
+  "coupling_warnings": 0,
+  "coupling_cycles": 0,
+  "tq_no_assertion_warnings": 0,
+  "tq_no_sut_warnings": 6,
+  "tq_untested_warnings": 125,
+  "tq_uncovered_warnings": 0,
+  "tq_untested_logic_warnings": 0,
+  "structural_srp_warnings": 7,
+  "structural_coupling_warnings": 8,
+  "total_findings": 447,
+  "violation_details": [
+    {
+      "name": "apply_appearance",
+      "file": "crates/clouddeck-app/src/main_window.rs",
+      "line": 124
+    },
+    {
+      "name": "MainWindow::new",
+      "file": "crates/clouddeck-app/src/main_window.rs",
+      "line": 161
+    },
+    {
+      "name": "AppShell::scope_for_region",
+      "file": "crates/clouddeck-app/src/shell.rs",
+      "line": 369
+    },
+    {
+      "name": "AppShell::demo_service",
+      "file": "crates/clouddeck-app/src/shell.rs",
+      "line": 425
+    },
+    {
+      "name": "AppShell::service",
+      "file": "crates/clouddeck-app/src/shell.rs",
+      "line": 466
+    },
+    {
+      "name": "AppShell::build_with_profiles",
+      "file": "crates/clouddeck-app/src/shell.rs",
+      "line": 520
+    },
+    {
+      "name": "AppShell::apply_context",
+      "file": "crates/clouddeck-app/src/shell.rs",
+      "line": 816
+    },
+    {
+      "name": "AppShell::open_setup",
+      "file": "crates/clouddeck-app/src/shell.rs",
+      "line": 912
+    },
+    {
+      "name": "Palette::for_dark",
+      "file": "crates/clouddeck-app/src/tokens.rs",
+      "line": 90
+    },
+    {
+      "name": "MockComputeService::list_instances",
+      "file": "crates/clouddeck-core/src/mock.rs",
+      "line": 53
+    },
+    {
+      "name": "classify",
+      "file": "crates/clouddeck-core/src/query/term.rs",
+      "line": 64
+    },
+    {
+      "name": "QueryField::from_name",
+      "file": "crates/clouddeck-core/src/query/tokenize.rs",
+      "line": 89
+    },
+    {
+      "name": "RegionScope::from_selected",
+      "file": "crates/clouddeck-core/src/region_scope.rs",
+      "line": 16
+    }
+  ]
+}

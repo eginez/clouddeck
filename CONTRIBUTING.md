@@ -29,6 +29,28 @@ cargo test --workspace --locked
 Core tests use fixtures and injected services and never contact AWS. Do not add
 tests that need real AWS credentials or network access.
 
+## Code quality gate
+
+The workspace is checked with [rustqual](https://github.com/SaschaOnTour/rustqual)
+1.8.3 (`cargo install rustqual --version 1.8.3 --locked`). Its settings live in
+`rustqual.toml`, and the accepted state lives in `.rustqual-baseline.json`. Run
+the gate from the repository root:
+
+```bash
+rustqual . --compare .rustqual-baseline.json --fail-on-regression --no-fail
+```
+
+The gate fails when the score or the findings get worse than the baseline. It
+does not fail on existing findings. The architecture rules in `rustqual.toml`
+enforce the crate dependency direction: `clouddeck-provider-api` <-
+`clouddeck-core` <- `clouddeck-app`.
+
+The baseline may only improve. A change that lowers the score or adds findings
+is rejected. Fixing findings and then regenerating the baseline with
+`rustqual . --save-baseline .rustqual-baseline.json` is fine. Only the
+maintainer or the planner edits the baseline, and never to hide a regression.
+Each suppression in `rustqual.toml` carries a written reason.
+
 Shell scripts in `scripts/` are checked with `shellcheck --severity=warning`,
 and CI runs the same check before each release.
 

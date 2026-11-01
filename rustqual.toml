@@ -1,0 +1,137 @@
+# rustqual configuration. Baseline: .rustqual-baseline.json (may only improve; see CONTRIBUTING.md).
+
+# Vendored blade-graphics is patched in from third_party and is not ours to gate.
+exclude_files = ["third_party/**"]
+# Closures, iterator chains and `?` stay non-logic: counting them makes IOSP flag ordinary Rust idioms.
+strict_closures = false
+strict_iterator_chains = false
+strict_error_propagation = false
+# Recursive helpers are a legitimate shape for tree walks in the release and query code.
+allow_recursion = true
+
+max_suppression_ratio = 0.05
+# Warnings (such as the suppression-ratio cap) are reported but do not change the exit code; the baseline compare is the gate.
+fail_on_warnings = false
+
+# ── Architecture ─────────────────────────────────────────────────────────
+# Dependency direction: provider_api <- core <- app. Each layer may use the
+# ones listed before it; nothing may import outward.
+
+[architecture]
+enabled = true
+
+[architecture.layers]
+order = ["provider_api", "core", "app"]
+unmatched_behavior = "strict_error"
+
+[architecture.layers.provider_api]
+paths = ["crates/clouddeck-provider-api/**"]
+
+[architecture.layers.core]
+paths = ["crates/clouddeck-core/**"]
+
+[architecture.layers.app]
+paths = ["crates/clouddeck-app/**"]
+
+[architecture.external_crates]
+clouddeck_provider_api = "provider_api"
+clouddeck_core = "core"
+clouddeck_app = "app"
+
+# The app reaches AWS only through clouddeck-core. The list is the aws-* crates in Cargo.lock;
+# keep it in step when the SDK adds crates. The AWS provider code in core is not restricted here.
+[[architecture.pattern]]
+name = "no_aws_sdk_in_app"
+forbid_path_prefix = [
+    "aws_config", "aws_credential_types", "aws_lc_rs", "aws_lc_sys", "aws_runtime",
+    "aws_sdk_ec2", "aws_sdk_sso", "aws_sdk_ssooidc", "aws_sdk_sts", "aws_sigv4",
+    "aws_smithy_async", "aws_smithy_http", "aws_smithy_http_client", "aws_smithy_json",
+    "aws_smithy_observability", "aws_smithy_query", "aws_smithy_runtime",
+    "aws_smithy_runtime_api", "aws_smithy_runtime_api_macros", "aws_smithy_schema",
+    "aws_smithy_types", "aws_smithy_xml", "aws_types",
+]
+forbidden_in = ["crates/clouddeck-app/**"]
+reason = "The app reaches AWS through clouddeck-core; AWS SDK crates stay inside core's AWS provider code"
+
+# ── Complexity ───────────────────────────────────────────────────────────
+
+[complexity]
+enabled = true
+# Sane defaults: the --init values were set to the current maximum, which gates nothing.
+max_cognitive = 15
+max_cyclomatic = 10
+max_nesting_depth = 4
+max_function_lines = 60
+include_nesting_penalty = true
+# Layout constants in table.rs and similar views are intentional; magic-number noise was 330 findings on main.
+detect_magic_numbers = false
+detect_unsafe = true
+detect_error_handling = true
+
+# ── DRY / Duplicate Detection ────────────────────────────────────────────
+
+[duplicates]
+enabled = true
+similarity_threshold = 0.85
+min_tokens = 30
+min_lines = 5
+min_statements = 3
+ignore_trait_impls = true
+detect_dead_code = true
+detect_dead_types = true
+detect_wildcard_imports = true
+detect_repeated_matches = true
+
+# ── Boilerplate ──────────────────────────────────────────────────────────
+
+[boilerplate]
+enabled = true
+suggest_crates = true
+
+# ── SRP ──────────────────────────────────────────────────────────────────
+
+[srp]
+enabled = true
+smell_threshold = 0.6
+max_fields = 12
+max_methods = 20
+max_fan_out = 10
+lcom4_threshold = 2
+weights = [0.4, 0.25, 0.15, 0.2]
+file_length = 300
+max_independent_clusters = 2
+min_cluster_statements = 5
+max_parameters = 5
+
+# ── Coupling ─────────────────────────────────────────────────────────────
+
+[coupling]
+enabled = true
+max_instability = 0.8
+max_fan_in = 15
+max_fan_out = 12
+check_sdp = true
+
+# ── Test Quality ─────────────────────────────────────────────────────────
+
+[test_quality]
+enabled = true
+# coverage_file = "lcov.info"
+
+[tests]
+# max_function_lines   = 60      # overrides [complexity].max_function_lines
+# file_length          = 300     # overrides [srp].file_length
+
+# ── Quality Score Weights ────────────────────────────────────────────────
+# Must sum to 1.0. IOSP has no config switch and only accepts per-function
+# qual:allow(iosp), so its weight is zero: its findings are still reported
+# and baselined, but they do not drag the score.
+
+[weights]
+iosp         = 0.00
+complexity   = 0.20
+dry          = 0.15
+srp          = 0.20
+coupling     = 0.10
+test_quality = 0.15
+architecture = 0.20
