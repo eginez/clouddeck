@@ -28,6 +28,12 @@ jobs:
           rustup toolchain install stable --profile minimal --component clippy
           rustup default stable
           rustc --version
+      - name: rustqual 1.8.3
+        run: |
+          if ! command -v rustqual >/dev/null || [ "$(rustqual --version)" != "rustqual 1.8.3" ]; then
+            cargo install rustqual --version 1.8.3 --locked
+          fi
+          rustqual --version
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: cargo test

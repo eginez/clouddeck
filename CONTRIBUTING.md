@@ -32,18 +32,26 @@ tests that need real AWS credentials or network access.
 ## Code quality gate
 
 The workspace is checked with [rustqual](https://github.com/SaschaOnTour/rustqual)
-1.8.3 (`cargo install rustqual --version 1.8.3 --locked`). Its settings live in
-`rustqual.toml`, and the accepted state lives in `.rustqual-baseline.json`. Run
-the gate from the repository root:
+1.8.3, which is required: install it with
+`cargo install rustqual --version 1.8.3 --locked`. Its settings live in
+`rustqual.toml`, and the accepted state lives in `.rustqual-baseline.json`.
+
+`cargo test --workspace` runs the gate (`crates/clouddeck-core/tests/quality_gate.rs`),
+so CI and the release workflow enforce it too. It fails when the quality score
+drops below the baseline, and when any architecture rule is violated, even if the
+score is unchanged. Existing findings do not fail it. The architecture rules in
+`rustqual.toml` enforce the crate dependency direction: `clouddeck-provider-api` <-
+`clouddeck-core` <- `clouddeck-app`.
+
+To run the gate's checks by hand, from the repository root:
 
 ```bash
 rustqual . --compare .rustqual-baseline.json --fail-on-regression --no-fail
 ```
 
-The gate fails when the score or the findings get worse than the baseline. It
-does not fail on existing findings. The architecture rules in `rustqual.toml`
-enforce the crate dependency direction: `clouddeck-provider-api` <-
-`clouddeck-core` <- `clouddeck-app`.
+If rustqual is not on `PATH`, set `CLOUDDECK_RUSTQUAL` to the binary. For local
+runs only, `CLOUDDECK_SKIP_QUALITY=1` skips the gate. CI, the release workflow,
+and automated workers must never set it.
 
 The baseline may only improve. A change that lowers the score or adds findings
 is rejected. Fixing findings and then regenerating the baseline with

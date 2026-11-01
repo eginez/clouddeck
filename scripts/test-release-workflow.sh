@@ -86,6 +86,16 @@ check "ci.yml is reusable and manual only" \
     bash -c "grep -Fq 'workflow_call:' '$CI' && grep -Fq 'workflow_dispatch:' '$CI' && ! grep -Eq '^[[:space:]]*(push|pull_request(_target)?):' '$CI'"
 check "ci.yml has no secrets, no write permissions and no concurrency group" \
     bash -c "! grep -Eq 'secrets|write|^concurrency:' '$CI'"
+ci_installs_pinned_rustqual_before_tests() {
+    local install test
+    install="$(grep -nF 'cargo install rustqual --version 1.8.3 --locked' "$CI" | head -n1 | cut -d: -f1)"
+    test="$(grep -nF 'cargo test --workspace --locked' "$CI" | head -n1 | cut -d: -f1)"
+    [[ -n "$install" && -n "$test" && "$install" -lt "$test" ]]
+}
+check "ci.yml installs pinned rustqual before cargo test" ci_installs_pinned_rustqual_before_tests
+check "quality gate test exists" test -f "$ROOT/crates/clouddeck-core/tests/quality_gate.rs"
+check "no workflow sets CLOUDDECK_SKIP_QUALITY" bash -c "! grep -rq CLOUDDECK_SKIP_QUALITY '$ROOT/.github'"
+check "quality gate test refuses the skip under CI" grep -Fq 'var_os("CI")' "$ROOT/crates/clouddeck-core/tests/quality_gate.rs"
 release_calls_ci() { job_block ci | grep -Fxq '    uses: ./.github/workflows/ci.yml'; }
 check "release calls ci.yml from the ci job" release_calls_ci
 ci_job_safe() {
