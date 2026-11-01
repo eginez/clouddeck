@@ -8,7 +8,7 @@ pull requests are welcome.
 CloudDeck is a Rust workspace with two crates:
 
 - `crates/clouddeck-core`: the platform-independent domain layer (EC2 models,
-  search, profiles, loading, and the AWS CLI adapter). It builds and tests
+  search, profiles, loading, and the AWS SDK adapter). It builds and tests
   without a display.
 - `crates/clouddeck-app`: the GPUI desktop shell, built as the `clouddeck`
   binary.

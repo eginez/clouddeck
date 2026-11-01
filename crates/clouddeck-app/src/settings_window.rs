@@ -8,8 +8,8 @@ use clouddeck_core::{
     DefaultSort, Density, FLEET_REGIONS, KEYMAP, LaunchBehavior, LogLevel, Platform,
     RECENT_SEARCH_LIMITS, REFRESH_INTERVALS, REQUEST_TIMEOUTS, SETTINGS_CATEGORIES, SettingId,
     Settings, SettingsSearchResults, Theme, UiState, changed_categories, context_path,
-    resolve_aws_cli_path, search_settings, settings_no_match_text, settings_path,
-    settings_search_breadcrumb, shortcut_label, test_aws_cli, ui_state_path,
+    search_settings, settings_no_match_text, settings_path, settings_search_breadcrumb,
+    shortcut_label, ui_state_path,
 };
 use gpui::{
     AnyElement, App, Bounds, ClickEvent, Context, Div, Entity, EventEmitter, Global,
@@ -28,7 +28,6 @@ use crate::tokens::{Palette, palette};
 
 const SAVE_DEBOUNCE: Duration = Duration::from_millis(300);
 const NOTE_DURATION: Duration = Duration::from_secs(2);
-const CLI_PATHS: [&str; 2] = ["/opt/homebrew/bin/aws", "/usr/local/bin/aws"];
 const CATEGORY_ICONS: [AppIcon; 8] = [
     AppIcon::PanelLeft,
     AppIcon::Server,
@@ -59,8 +58,6 @@ pub struct SettingsWindow {
     save_generation: u64,
     note: Option<Note>,
     note_generation: u64,
-    cli_version: Option<String>,
-    cli_test_generation: u64,
     /// Settings drawn by the last render, since `debug_bounds` keeps removed elements.
     #[cfg(test)]
     rendered: Vec<SettingId>,
@@ -86,7 +83,6 @@ enum Pick {
     RefreshInterval(u32),
     RecentSearchLimit(u32),
     RequestTimeout(u32),
-    AwsCliPath(Option<String>),
 }
 
 impl Pick {
@@ -100,7 +96,6 @@ impl Pick {
             Pick::RefreshInterval(value) => settings.refresh_interval_minutes = value,
             Pick::RecentSearchLimit(value) => settings.recent_search_limit = value,
             Pick::RequestTimeout(value) => settings.request_timeout_seconds = value,
-            Pick::AwsCliPath(value) => settings.aws_cli_path = value,
         }
     }
 }
@@ -177,7 +172,7 @@ fn minutes_label(minutes: u32) -> String {
     }
 }
 
-fn choices(id: SettingId, settings: &Settings) -> Vec<Choice> {
+fn choices(id: SettingId) -> Vec<Choice> {
     match id {
         SettingId::Theme => vec![
             choice("Follow system", Pick::Theme(Theme::FollowSystem)),
@@ -226,19 +221,6 @@ fn choices(id: SettingId, settings: &Settings) -> Vec<Choice> {
             .iter()
             .map(|&seconds| choice(format!("{seconds} seconds"), Pick::RequestTimeout(seconds)))
             .collect(),
-        SettingId::AwsCliPath => {
-            let custom = settings
-                .aws_cli_path
-                .as_deref()
-                .filter(|path| !CLI_PATHS.contains(path));
-            std::iter::once(choice("Auto-detect", Pick::AwsCliPath(None)))
-                .chain(
-                    CLI_PATHS.iter().copied().chain(custom).map(|path| {
-                        choice(path.to_owned(), Pick::AwsCliPath(Some(path.to_owned())))
-                    }),
-                )
-                .collect()
-        }
         _ => Vec::new(),
     }
 }
@@ -253,7 +235,6 @@ fn current(id: SettingId, settings: &Settings) -> Option<Pick> {
         SettingId::RefreshInterval => Pick::RefreshInterval(settings.refresh_interval_minutes),
         SettingId::RecentSearchLimit => Pick::RecentSearchLimit(settings.recent_search_limit),
         SettingId::RequestTimeout => Pick::RequestTimeout(settings.request_timeout_seconds),
-        SettingId::AwsCliPath => Pick::AwsCliPath(settings.aws_cli_path.clone()),
         _ => return None,
     })
 }
@@ -450,7 +431,7 @@ impl SettingsWindow {
             },
         ));
         for id in SettingId::ALL {
-            let items = choices(id, &settings);
+            let items = choices(id);
             if items.is_empty() {
                 continue;
             }
@@ -481,8 +462,6 @@ impl SettingsWindow {
             save_generation: 0,
             note: None,
             note_generation: 0,
-            cli_version: None,
-            cli_test_generation: 0,
             #[cfg(test)]
             rendered: Vec::new(),
             #[cfg(test)]
@@ -614,38 +593,6 @@ impl SettingsWindow {
             .ok();
         })
         .detach();
-    }
-
-    fn run_cli_test(&mut self, cx: &mut Context<Self>) {
-        let path = resolve_aws_cli_path(self.settings.aws_cli_path.as_deref().map(Path::new));
-        let timeout = Duration::from_secs(u64::from(self.settings.request_timeout_seconds));
-        self.cli_test_generation += 1;
-        let generation = self.cli_test_generation;
-        self.show_note("Testing…", None, cx);
-        cx.spawn(async move |this, cx| {
-            let outcome = crate::runtime::runtime()
-                .spawn(async move { test_aws_cli(&path, timeout).await })
-                .await
-                .map_err(|error| error.to_string())
-                .and_then(|result| result.map_err(|error| error.to_string()));
-            this.update(cx, |this, cx| this.finish_cli_test(generation, outcome, cx))
-                .ok();
-        })
-        .detach();
-    }
-
-    fn finish_cli_test(
-        &mut self,
-        generation: u64,
-        outcome: Result<String, String>,
-        cx: &mut Context<Self>,
-    ) {
-        if self.cli_test_generation != generation {
-            return;
-        }
-        self.cli_version = outcome.clone().ok();
-        let text = outcome.unwrap_or_else(|error| error);
-        self.show_note(text, None, cx);
     }
 
     fn edit_ui_state(
@@ -798,17 +745,6 @@ impl SettingsWindow {
     fn control(&self, id: SettingId, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
         match id {
             SettingId::Regions => self.regions_control(palette, cx),
-            SettingId::AwsCliPath => div()
-                .flex()
-                .items_center()
-                .gap(px(8.))
-                .child(self.select_control(id, palette))
-                .child(
-                    button("settings-cli-test", "Test", palette)
-                        .debug_selector(|| "settings.cli-test".into())
-                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.run_cli_test(cx))),
-                )
-                .into_any_element(),
             SettingId::AwsConfigFile => div()
                 .debug_selector(move || format!("settings.control.{id:?}"))
                 .w(px(260.))
@@ -1037,12 +973,6 @@ impl SettingsWindow {
         ];
         rows.extend(
             [
-                (
-                    "AWS CLI",
-                    self.cli_version
-                        .clone()
-                        .unwrap_or_else(|| "unknown".to_owned()),
-                ),
                 ("Config file", self.settings.aws_config_file.clone()),
                 ("Data folder", "~/.config/clouddeck".to_owned()),
                 ("Platform", platform.to_owned()),
@@ -1607,13 +1537,11 @@ mod tests {
     }
 
     #[gpui::test]
-    fn aws_pane_has_cli_test_and_config_controls(cx: &mut TestAppContext) {
+    fn aws_pane_has_config_control(cx: &mut TestAppContext) {
         let (_view, cx) = rooted(cx, Settings::default());
 
         click(cx, "settings.cat.5");
 
-        assert!(cx.debug_bounds("settings.control.AwsCliPath").is_some());
-        assert!(cx.debug_bounds("settings.cli-test").is_some());
         assert!(cx.debug_bounds("settings.control.AwsConfigFile").is_some());
     }
 
@@ -1700,31 +1628,6 @@ mod tests {
 
         assert!(!view.read_with(cx, |view, _| view.rendered_search));
         assert!(cx.debug_bounds("settings.item.Theme").is_some());
-    }
-
-    #[test]
-    fn custom_aws_cli_path_is_offered_and_selected() {
-        let settings = Settings {
-            aws_cli_path: Some("/home/me/bin/aws".into()),
-            ..Default::default()
-        };
-        let items = choices(SettingId::AwsCliPath, &settings);
-        let selected = current(SettingId::AwsCliPath, &settings);
-        assert!(
-            items
-                .iter()
-                .any(|choice| Some(&choice.pick) == selected.as_ref())
-        );
-        assert_eq!(items.len(), 4);
-    }
-
-    #[test]
-    fn preset_aws_cli_path_is_not_duplicated() {
-        let settings = Settings {
-            aws_cli_path: Some("/usr/local/bin/aws".into()),
-            ..Default::default()
-        };
-        assert_eq!(choices(SettingId::AwsCliPath, &settings).len(), 3);
     }
 
     #[test]

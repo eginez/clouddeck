@@ -22,6 +22,6 @@ You can expect an acknowledgement within a few business days. We will keep you
 informed while the issue is investigated and fixed, and will credit you in the
 release notes unless you ask us not to.
 
-CloudDeck only reads EC2 metadata through the AWS CLI and does not store
+CloudDeck only reads EC2 metadata through the AWS SDK and does not store
 credentials, so reports about credential handling or unexpected AWS requests
 are especially welcome.

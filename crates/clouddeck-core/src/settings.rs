@@ -111,8 +111,6 @@ pub struct Settings {
     pub recent_search_limit: u32,
     /// Whether search matches tag values.
     pub match_tags: bool,
-    /// Path to the AWS CLI, or `None` to auto-detect.
-    pub aws_cli_path: Option<String>,
     /// Path to the AWS config file.
     pub aws_config_file: String,
     /// Seconds before an AWS request times out.
@@ -145,7 +143,6 @@ impl Default for Settings {
             show_unnamed_label: true,
             recent_search_limit: 10,
             match_tags: true,
-            aws_cli_path: None,
             aws_config_file: "~/.aws/config".to_owned(),
             request_timeout_seconds: 30,
             demo_mode: false,
@@ -188,7 +185,6 @@ impl Settings {
             } else {
                 self.regions
             },
-            aws_cli_path: self.aws_cli_path.filter(|path| !path.trim().is_empty()),
             ..self
         }
     }
@@ -261,8 +257,6 @@ pub enum SettingId {
     RecentSearchLimit,
     /// Match tag keys and values in search.
     MatchTags,
-    /// Path to the AWS CLI.
-    AwsCliPath,
     /// Path to the AWS config file.
     AwsConfigFile,
     /// Seconds before an AWS request times out.
@@ -277,7 +271,7 @@ pub enum SettingId {
 
 impl SettingId {
     /// Every setting in display order.
-    pub const ALL: [SettingId; 20] = [
+    pub const ALL: [SettingId; 19] = [
         Self::Theme,
         Self::Density,
         Self::ShowSidebarOnLaunch,
@@ -292,7 +286,6 @@ impl SettingId {
         Self::ShowUnnamedLabel,
         Self::RecentSearchLimit,
         Self::MatchTags,
-        Self::AwsCliPath,
         Self::AwsConfigFile,
         Self::RequestTimeout,
         Self::CheckForUpdates,
@@ -315,7 +308,7 @@ impl SettingId {
             | Self::Regions => "Fleet",
             Self::DefaultSort | Self::ShowUnnamedLabel => "Table",
             Self::RecentSearchLimit | Self::MatchTags => "Search",
-            Self::AwsCliPath | Self::AwsConfigFile | Self::RequestTimeout => "AWS & Privacy",
+            Self::AwsConfigFile | Self::RequestTimeout => "AWS & Privacy",
             Self::CheckForUpdates | Self::DemoMode | Self::LogLevel => "Advanced",
         }
     }
@@ -331,7 +324,7 @@ impl SettingId {
             Self::OnLaunch | Self::Regions => "Scope",
             Self::DefaultSort | Self::ShowUnnamedLabel => "Display",
             Self::RecentSearchLimit | Self::MatchTags => "Behaviour",
-            Self::AwsCliPath | Self::AwsConfigFile | Self::RequestTimeout => "AWS CLI",
+            Self::AwsConfigFile | Self::RequestTimeout => "AWS",
             Self::CheckForUpdates => "Updates",
             Self::DemoMode | Self::LogLevel => "Developer",
         }
@@ -354,7 +347,6 @@ impl SettingId {
             Self::ShowUnnamedLabel => "Show instances without a Name tag as “unnamed”",
             Self::RecentSearchLimit => "Remember recent searches",
             Self::MatchTags => "Match tag keys and values",
-            Self::AwsCliPath => "AWS CLI",
             Self::AwsConfigFile => "AWS config file",
             Self::RequestTimeout => "Request timeout",
             Self::CheckForUpdates => "Check for updates automatically",
@@ -384,9 +376,6 @@ impl SettingId {
             Self::ShowUnnamedLabel => "Otherwise they show their instance ID in the Name column.",
             Self::RecentSearchLimit => "Shown when you focus an empty search field.",
             Self::MatchTags => "Search also looks at name, ID, IPs, zone and type.",
-            Self::AwsCliPath => {
-                "CloudDeck runs the AWS CLI (v2) read-only; it handles SSO and credentials."
-            }
             Self::AwsConfigFile => "Where profiles are read from.",
             Self::RequestTimeout => "Per region, per request.",
             Self::CheckForUpdates => {
@@ -428,7 +417,6 @@ impl SettingId {
             Self::ShowUnnamedLabel => settings.show_unnamed_label = defaults.show_unnamed_label,
             Self::RecentSearchLimit => settings.recent_search_limit = defaults.recent_search_limit,
             Self::MatchTags => settings.match_tags = defaults.match_tags,
-            Self::AwsCliPath => settings.aws_cli_path = defaults.aws_cli_path,
             Self::AwsConfigFile => settings.aws_config_file = defaults.aws_config_file,
             Self::RequestTimeout => {
                 settings.request_timeout_seconds = defaults.request_timeout_seconds
@@ -601,7 +589,6 @@ mod tests {
         assert!(settings.show_unnamed_label);
         assert_eq!(settings.recent_search_limit, 10);
         assert!(settings.match_tags);
-        assert_eq!(settings.aws_cli_path, None);
         assert_eq!(settings.aws_config_file, "~/.aws/config");
         assert_eq!(settings.request_timeout_seconds, 30);
         assert!(!settings.demo_mode);
@@ -626,7 +613,6 @@ mod tests {
             auto_refresh: false,
             refresh_interval_minutes: 10,
             check_for_updates: false,
-            aws_cli_path: Some("/opt/homebrew/bin/aws".into()),
             ..Settings::default()
         };
         settings.save(&path).unwrap();
@@ -684,13 +670,21 @@ mod tests {
     }
 
     #[test]
-    fn normalized_clears_blank_cli_path() {
-        let settings = Settings {
-            aws_cli_path: Some("  ".into()),
-            ..Settings::default()
-        }
-        .normalized();
-        assert_eq!(settings.aws_cli_path, None);
+    fn load_ignores_retired_aws_cli_path_key() {
+        let path = temp_file("retired-cli-path");
+        std::fs::write(
+            &path,
+            br#"{"aws_cli_path":"/usr/local/bin/aws","theme":"dark"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            Settings::load(&path),
+            Settings {
+                theme: Theme::Dark,
+                ..Settings::default()
+            }
+        );
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]
@@ -710,7 +704,7 @@ mod tests {
 
     #[test]
     fn catalog_has_twenty_labels_in_display_order() {
-        assert_eq!(SettingId::ALL.len(), 20);
+        assert_eq!(SettingId::ALL.len(), 19);
         let labels: Vec<&str> = SettingId::ALL.iter().map(|id| id.label()).collect();
         assert_eq!(
             labels,
@@ -729,7 +723,6 @@ mod tests {
                 "Show instances without a Name tag as “unnamed”",
                 "Remember recent searches",
                 "Match tag keys and values",
-                "AWS CLI",
                 "AWS config file",
                 "Request timeout",
                 "Check for updates automatically",

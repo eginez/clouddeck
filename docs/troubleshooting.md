@@ -1,8 +1,9 @@
 # Troubleshooting
 
-CloudDeck never stores credentials. Sign-in, SSO tokens, and permissions are
-handled by the AWS CLI, so most fixes happen in your AWS configuration or in
-the Connect screen. The messages below are shown as written in the app.
+CloudDeck reads profiles from `~/.aws/config` and loads EC2 through the AWS
+SDK, using the standard AWS sign-in cache. CloudDeck never stores credentials.
+Most fixes happen in your AWS configuration or on the Connect screen. The
+messages below are shown as written in the app.
 
 Shortcuts use ⌘ on macOS and Ctrl on Linux.
 
@@ -16,16 +17,15 @@ On the Connect screen:
 
 > The selected profile's browser session has expired. Sign in again and retry.
 
-Fix it in one of two ways:
+Sign in from CloudDeck:
 
-- Open `Switch Profile…` (⌘P), choose `Connect to AWS…`, select the profile,
-  and choose `Sign in with browser`.
-- Sign in with the AWS CLI for that profile:
-  `aws sso login --profile <name>`. CloudDeck reads the refreshed session the
-  next time it loads.
+1. Open `Switch Profile…` (⌘P) and choose `Connect to AWS…`.
+2. Select the profile and choose `Sign in with browser`.
+3. Retry the load.
 
-CloudDeck also treats AWS CLI output that mentions an expired SSO session as a
-sign-in problem, so the same advice appears when the CLI reports one.
+Some expired sessions reach the fleet as a generic `EC2 DescribeInstances
+failed.` message instead of the sign-in message above. If a profile that
+worked earlier fails that way, sign in from the Connect screen first.
 
 ## AccessDenied or permission errors
 
@@ -55,7 +55,7 @@ On the Connect screen, the title is `Choose a region to continue`, with:
 Choose a region on the Connect screen before connecting. A profile's `region`
 in `~/.aws/config` is only used as the initial selection.
 
-## No profiles found
+## Profile not found or no profiles
 
 On the welcome window:
 
@@ -65,10 +65,13 @@ On the Connect screen, the title is `No AWS profiles detected`, with:
 
 > Sign in through your browser, then rescan to pick up the profile.
 
-Check that `~/.aws/config` contains a `[profile <name>]` section, or that
-`AWS_CONFIG_FILE` points to the file you expect. Then choose `Rescan`. If the
-file cannot be read, CloudDeck shows `Could not read AWS profiles:` followed by
-the reason.
+Check that `~/.aws/config` contains a `[profile <name>]` section. If your
+profiles live somewhere else, set `Settings > AWS & Privacy > AWS config file`
+to that file. Then choose `Rescan`. If the file cannot be read, CloudDeck shows
+`Could not read AWS profiles:` followed by the reason.
+
+A profile you used before may have been removed from the file. Choose another
+profile on the Connect screen, or rescan after you restore it.
 
 ## Profile uses an unsupported credential provider
 
@@ -77,17 +80,6 @@ the reason.
 This message appears on the Connect screen. Choose a profile that uses SSO or
 static access keys; CloudDeck does not open profiles that use
 `credential_process`.
-
-## AWS CLI not found or too old
-
-> AWS CLI not found at <path>. Set the path in Settings > AWS & Privacy or install AWS CLI v2.
-
-> AWS CLI v1 is not supported at <path> (<version>). Install AWS CLI v2: https://aws.amazon.com/cli/
-
-Install AWS CLI v2, or set the path to it under `Settings > AWS & Privacy`.
-A path set in Settings is used first. Otherwise CloudDeck uses the first of
-`/opt/homebrew/bin/aws`, `/usr/local/bin/aws`, and `/usr/bin/aws` that exists,
-and falls back to `aws` on `PATH`.
 
 ## Could not reach AWS
 
@@ -103,6 +95,9 @@ Check your network connection, proxy, or VPN, then retry.
 
 > AWS did not respond in time. Retry the load.
 
+Retry the load. If it keeps timing out, check your network connection, proxy,
+or VPN.
+
 ## Throttled requests
 
 > AWS is limiting requests from this account. Wait a moment, then retry.
@@ -114,4 +109,5 @@ With one failed region, the failure popover offers `Retry region`. With
 several, each row has a `Retry` button, and `Retry all` retries every failed
 region.
 
-If a region keeps failing after a retry, run the same aws ec2 describe-instances command in a terminal to see the AWS CLI error.
+If a region keeps failing after a retry, check the permissions for that region
+in the sections above.

@@ -42,7 +42,6 @@ mod instance_detail_view_model;
 mod instance_list_view_model;
 pub use instance_detail_view_model::InstanceDetailViewModel;
 pub use instance_list_view_model::InstanceListViewModel;
-mod aws_cli;
 mod aws_fields;
 pub use aws_fields::aws_fields;
 mod aws_identity;
@@ -71,10 +70,6 @@ pub use ui_state::*;
 mod settings;
 pub use settings::*;
 mod center_state;
-pub use aws_cli::{
-    AwsCliComputeService, CliVersionError, DEFAULT_REQUEST_TIMEOUT, resolve_aws_cli_path,
-    test_aws_cli,
-};
 pub use aws_identity::{AwsIdentity, AwsIdentityProvider, AwsIdentityService};
 pub use aws_sdk::{AwsSdkComputeService, Ec2Page, Ec2PageSource};
 pub use aws_sso_login::{
