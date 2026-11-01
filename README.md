@@ -7,9 +7,10 @@ your AWS accounts and regions in one searchable table. Pick a profile, pick the
 regions, type a few words, and find the machine you are looking for without
 clicking through the AWS console.
 
-It is read only. It never changes anything in your cloud and never stores your
-credentials: it asks the AWS CLI you already use to do the fetching, so your
-sign-in, SSO tokens and permissions work as they always have.
+It is read only: it never changes anything in your cloud. It keeps no
+credentials of its own. It uses the AWS profiles you already have in
+`~/.aws/config` and the standard AWS sign-in cache (the same one the AWS CLI
+uses for SSO), so your sign-in and permissions work as they always have.
 
 ![CloudDeck main window, light theme](design/images/01-main-window-light.png)
 
@@ -43,8 +44,9 @@ without your say so.
 
 ## Use it
 
-1. Install the [AWS CLI v2](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)
-   and set up a profile (`aws configure` or `aws configure sso`).
+1. Have an AWS profile in `~/.aws/config` (made with `aws configure` or
+   `aws configure sso`, or written by hand). For an IAM Identity Center (SSO)
+   profile, CloudDeck can sign you in itself, in your browser.
 2. Start CloudDeck. It lists your profiles. Choose one and press Enter.
 3. Choose the regions to load. A region that fails does not hide the others,
    and you can retry it.
@@ -66,7 +68,7 @@ account.
 
 ## What you need
 
-- AWS CLI v2.
+- An AWS profile in `~/.aws/config` (the AWS CLI is not required).
 - Read only permission for `ec2:DescribeInstances` in the regions you look at.
 - On Linux: a Vulkan driver, libxkbcommon, fontconfig, and a Wayland or X11
   session.
