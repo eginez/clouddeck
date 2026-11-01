@@ -3,7 +3,7 @@
 use std::time::SystemTime;
 
 use clouddeck_core::{
-    EC2Instance, InspectorRow, InspectorSection, NO_TAGS_TEXT, OPEN_IN_CONSOLE_FLASH,
+    EC2Instance, InspectorRow, InspectorSection, Instance, NO_TAGS_TEXT, OPEN_IN_CONSOLE_FLASH,
     console_url_for, copied_flash, inspector_sections, inspector_summary, inspector_tags,
     inspector_title, security_group_rows, security_groups_title, tags_title, tags_toggle_text,
     visible_tags,
@@ -86,10 +86,11 @@ impl Render for InspectorPane {
             return div().into_any_element();
         };
         let tags_show_all = state.tags_show_all;
-        let sections = inspector_sections(&instance);
-        let summary = inspector_summary(&instance, SystemTime::now());
+        let neutral = Instance::from(&instance);
+        let sections = inspector_sections(&neutral);
+        let summary = inspector_summary(&neutral, SystemTime::now());
 
-        let title = inspector_title(&instance);
+        let title = inspector_title(&neutral);
         record(
             cx,
             "inspector.title",
@@ -116,7 +117,7 @@ impl Render for InspectorPane {
             .bg(palette.panel)
             .text_size(px(FONT_SIZE))
             .text_color(palette.text)
-            .child(header(&instance, summary, &palette, cx))
+            .child(header(&instance, title, summary, &palette, cx))
             .child(
                 div()
                     .id("inspector-body")
@@ -136,8 +137,8 @@ impl Render for InspectorPane {
                             .enumerate()
                             .map(|(index, section)| section_view(index, section, &palette, cx)),
                     )
-                    .child(security_groups(&instance, &palette, cx))
-                    .child(tags(&instance, tags_show_all, &palette, cx))
+                    .child(security_groups(&neutral, &palette, cx))
+                    .child(tags(&neutral, tags_show_all, &palette, cx))
                     .child(actions(&instance, &palette, cx)),
             )
             .into_any_element()
@@ -146,11 +147,12 @@ impl Render for InspectorPane {
 
 fn header(
     instance: &EC2Instance,
+    title: Option<String>,
     summary: String,
     palette: &Palette,
     cx: &Context<InspectorPane>,
 ) -> impl IntoElement {
-    let title = match inspector_title(instance) {
+    let title = match title {
         Some(name) => div().child(name),
         None => div().italic().text_color(palette.faint).child("unnamed"),
     }
@@ -305,7 +307,7 @@ fn row_view(
 }
 
 fn security_groups(
-    instance: &EC2Instance,
+    instance: &Instance,
     palette: &Palette,
     cx: &Context<InspectorPane>,
 ) -> impl IntoElement {
@@ -343,7 +345,7 @@ fn security_groups(
 }
 
 fn tags(
-    instance: &EC2Instance,
+    instance: &Instance,
     show_all: bool,
     palette: &Palette,
     cx: &Context<InspectorPane>,

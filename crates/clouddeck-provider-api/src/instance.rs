@@ -30,6 +30,8 @@ pub struct Instance {
     pub id: String,
     pub name: Option<String>,
     pub state: Option<String>,
+    /// Provider's explanation of the last state change.
+    pub state_reason: Option<String>,
     pub instance_type: Option<String>,
     pub region: Option<String>,
     pub location: Option<String>,

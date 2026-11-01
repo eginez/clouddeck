@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use clouddeck_provider_api::{
-    Connection, FieldDef, Instance, ListResult, Provider, ProviderError, Scope, ScopeFailure,
+    Connection, FieldDef, InspectorSectionDef, Instance, ListResult, Provider, ProviderError,
+    Scope, ScopeFailure,
 };
 
 use crate::aws_sdk::AwsSdkComputeService;
@@ -196,6 +197,10 @@ impl Provider for ComputeServiceProvider {
     fn fields(&self) -> Vec<FieldDef> {
         crate::aws_fields()
     }
+
+    fn inspector(&self) -> Vec<InspectorSectionDef> {
+        crate::aws_inspector::aws_inspector()
+    }
 }
 
 fn all_scopes_failed(scopes: &[String], error: &CloudDeckError) -> ListResult {
@@ -342,6 +347,15 @@ mod tests {
             ProviderError::from(CloudDeckError::Unknown("boom".to_string())),
             ProviderError::Other("boom".to_string())
         );
+    }
+
+    #[test]
+    fn inspector_layout_is_the_aws_layout() {
+        let mock = MockComputeService::new(vec![ec2("i-1")], None);
+        let provider =
+            ComputeServiceProvider::from_shared("mock", scopes(&["us-east-1"]), Arc::new(mock));
+
+        assert_eq!(provider.inspector(), crate::aws_inspector::aws_inspector());
     }
 
     #[test]

@@ -91,6 +91,35 @@ pub struct FieldDef {
     pub getter: fn(&Instance) -> Vec<String>,
 }
 
+/// Where an inspector row's value comes from on a neutral `Instance`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InspectorValue {
+    State,
+    Type,
+    Location,
+    Created,
+    PrivateAddress,
+    PublicAddress,
+    Extra {
+        section: &'static str,
+        key: &'static str,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InspectorRowDef {
+    pub label: &'static str,
+    pub value: InspectorValue,
+    pub monospace: bool,
+    pub copyable: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InspectorSectionDef {
+    pub title: &'static str,
+    pub rows: Vec<InspectorRowDef>,
+}
+
 pub trait Provider: Send + Sync {
     fn id(&self) -> String;
     fn connections(&self) -> Result<Vec<Connection>, ProviderError>;
@@ -103,6 +132,10 @@ pub trait Provider: Send + Sync {
 
     fn console_url(&self, instance: &Instance) -> Option<String>;
     fn fields(&self) -> Vec<FieldDef>;
+
+    fn inspector(&self) -> Vec<InspectorSectionDef> {
+        Vec::new()
+    }
 }
 
 #[cfg(test)]
@@ -153,6 +186,11 @@ mod tests {
     #[test]
     fn dyn_provider_is_send_and_sync() {
         assert_send_sync::<dyn Provider>();
+    }
+
+    #[test]
+    fn default_inspector_is_empty() {
+        assert!(EmptyProvider.inspector().is_empty());
     }
 
     #[test]

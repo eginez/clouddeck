@@ -58,6 +58,7 @@ impl From<&EC2Instance> for Instance {
                 .filter(|name| !name.is_empty())
                 .map(str::to_string),
             state: instance.state.clone(),
+            state_reason: instance.state_transition_reason.clone(),
             instance_type: instance.instance_type.clone(),
             region: instance.region.clone(),
             location: instance.availability_zone.clone(),
@@ -117,6 +118,18 @@ mod tests {
         assert_eq!(converted.labels.len(), source.tags.len());
         assert_eq!(converted.labels[0].key, "Name");
         assert_eq!(converted.labels[0].value, "api-gateway-01");
+    }
+
+    #[test]
+    fn conversion_keeps_state_reason() {
+        let mut source = fleet()[0].clone();
+        source.state_transition_reason =
+            Some("User initiated (2026-10-03 09:12:15 GMT)".to_string());
+
+        assert_eq!(
+            Instance::from(&source).state_reason,
+            source.state_transition_reason
+        );
     }
 
     #[test]

@@ -1,11 +1,14 @@
 //! Pure text helpers for the instance inspector pane.
 
+use std::sync::OnceLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use chrono::{DateTime, NaiveDateTime, Utc};
 
-use crate::EC2Instance;
+use crate::aws_inspector::aws_inspector;
+use crate::{AddressKind, InspectorRowDef, InspectorSectionDef, InspectorValue, Instance};
 
+const SECURITY_GROUPS_SECTION: &str = "Security groups";
 const STOP_TIME_FORMAT: &str = "%Y-%m-%d %H:%M:%S GMT";
 const LAUNCH_TIME_FORMAT: &str = "%Y-%m-%d %H:%M UTC";
 const SECONDS_PER_HOUR: u64 = 3_600;
@@ -51,7 +54,7 @@ pub fn reason_label(reason: &str) -> String {
 }
 
 /// One-line summary shown under the instance name in the inspector.
-pub fn inspector_summary(instance: &EC2Instance, now: SystemTime) -> String {
+pub fn inspector_summary(instance: &Instance, now: SystemTime) -> String {
     let state = normalized_state(instance);
     if state.as_deref() == Some("stopped") {
         return stopped_summary(instance, now);
@@ -59,10 +62,10 @@ pub fn inspector_summary(instance: &EC2Instance, now: SystemTime) -> String {
 
     let mut parts = Vec::new();
     push_present(&mut parts, instance.instance_type.as_deref());
-    push_present(&mut parts, instance.availability_zone.as_deref());
+    push_present(&mut parts, instance.location.as_deref());
     match state.as_deref() {
         Some("running") => {
-            if let Some(uptime) = instance.launch_time.and_then(|launch| uptime(launch, now)) {
+            if let Some(uptime) = instance.created.and_then(|launch| uptime(launch, now)) {
                 parts.push(format!("up {uptime}"));
             }
         }
@@ -74,13 +77,9 @@ pub fn inspector_summary(instance: &EC2Instance, now: SystemTime) -> String {
 }
 
 /// Public address, or the reason there is none for the instance's state.
-pub fn public_ip_text(instance: &EC2Instance) -> String {
-    if let Some(ip) = instance
-        .public_ip_address
-        .as_deref()
-        .filter(|ip| !ip.is_empty())
-    {
-        return ip.to_string();
+pub fn public_ip_text(instance: &Instance) -> String {
+    if let Some(ip) = address(instance, AddressKind::Public) {
+        return ip;
     }
     match normalized_state(instance).as_deref() {
         Some("stopped") => "Released while stopped",
@@ -90,78 +89,81 @@ pub fn public_ip_text(instance: &EC2Instance) -> String {
     .to_string()
 }
 
-/// Instance and Network sections of the inspector body.
-pub fn inspector_sections(instance: &EC2Instance) -> Vec<InspectorSection> {
-    let instance_rows = vec![
-        text_row(
-            "State",
-            capitalized(instance.state.as_deref()).as_deref(),
-            false,
-            false,
-        ),
-        text_row("Type", instance.instance_type.as_deref(), false, false),
-        text_row("Zone", instance.availability_zone.as_deref(), false, false),
-        text_row("AMI", instance.image_id.as_deref(), true, true),
-        text_row("Key pair", instance.key_name.as_deref(), false, false),
-        text_row(
-            "Launched",
-            instance.launch_time.map(launched_text).as_deref(),
-            false,
-            false,
-        ),
-    ];
-    let network_rows = vec![
-        text_row(
-            "Private IP",
-            instance.private_ip_address.as_deref(),
-            true,
-            true,
-        ),
-        InspectorRow {
-            label: "Public IP",
-            value: non_empty(instance.public_ip_address.as_deref()),
-            empty_text: public_ip_text(instance),
-            monospace: true,
-            copyable: true,
-        },
-        text_row(
-            "Private DNS",
-            instance.private_dns_name.as_deref(),
-            true,
-            true,
-        ),
-        text_row("VPC", instance.vpc_id.as_deref(), true, true),
-        text_row("Subnet", instance.subnet_id.as_deref(), true, true),
-    ];
-    vec![
-        InspectorSection {
-            title: "Instance".to_string(),
-            rows: instance_rows,
-        },
-        InspectorSection {
-            title: "Network".to_string(),
-            rows: network_rows,
-        },
-    ]
+/// Inspector body sections, laid out by the provider's inspector definition.
+pub fn inspector_sections(instance: &Instance) -> Vec<InspectorSection> {
+    provider_inspector()
+        .iter()
+        .map(|section| InspectorSection {
+            title: section.title.to_string(),
+            rows: section
+                .rows
+                .iter()
+                .map(|row| resolve_row(instance, row))
+                .collect(),
+        })
+        .collect()
 }
 
 /// Heading for the security group list, including the group count.
-pub fn security_groups_title(instance: &EC2Instance) -> String {
-    format!("Security groups · {}", instance.security_groups.len())
+pub fn security_groups_title(instance: &Instance) -> String {
+    format!("Security groups · {}", security_group_rows(instance).len())
 }
 
 /// `(group name, group id)` for each security group, in model order; missing fields are empty.
-pub fn security_group_rows(instance: &EC2Instance) -> Vec<(String, String)> {
+pub fn security_group_rows(instance: &Instance) -> Vec<(String, String)> {
     instance
-        .security_groups
+        .extras
         .iter()
-        .map(|group| {
-            (
-                group.group_name.clone().unwrap_or_default(),
-                group.group_id.clone().unwrap_or_default(),
-            )
-        })
-        .collect()
+        .find(|section| section.title == SECURITY_GROUPS_SECTION)
+        .map(|section| section.entries.clone())
+        .unwrap_or_default()
+}
+
+fn provider_inspector() -> &'static [InspectorSectionDef] {
+    static LAYOUT: OnceLock<Vec<InspectorSectionDef>> = OnceLock::new();
+    LAYOUT.get_or_init(aws_inspector)
+}
+
+fn resolve_row(instance: &Instance, def: &InspectorRowDef) -> InspectorRow {
+    let value = match &def.value {
+        InspectorValue::State => capitalized(instance.state.as_deref()),
+        InspectorValue::Type => non_empty(instance.instance_type.as_deref()),
+        InspectorValue::Location => non_empty(instance.location.as_deref()),
+        InspectorValue::Created => instance.created.map(launched_text),
+        InspectorValue::PrivateAddress => address(instance, AddressKind::Private),
+        InspectorValue::PublicAddress => address(instance, AddressKind::Public),
+        InspectorValue::Extra { section, key } => extra_value(instance, section, key),
+    };
+    let empty_text = match def.value {
+        InspectorValue::PublicAddress => public_ip_text(instance),
+        _ => "None".to_string(),
+    };
+    InspectorRow {
+        label: def.label,
+        value,
+        empty_text,
+        monospace: def.monospace,
+        copyable: def.copyable,
+    }
+}
+
+fn address(instance: &Instance, kind: AddressKind) -> Option<String> {
+    instance
+        .addresses
+        .iter()
+        .find(|address| address.kind == kind)
+        .and_then(|address| non_empty(Some(&address.value)))
+}
+
+fn extra_value(instance: &Instance, section: &str, key: &str) -> Option<String> {
+    instance
+        .extras
+        .iter()
+        .find(|extra| extra.title == section)?
+        .entries
+        .iter()
+        .find(|(entry_key, _)| entry_key == key)
+        .and_then(|(_, value)| non_empty(Some(value)))
 }
 
 /// Tags shown before the inspector offers "Show all".
@@ -172,19 +174,16 @@ pub const NO_TAGS_TEXT: &str =
     "This instance has no tags. Names come from the Name tag, so it shows as unnamed.";
 
 /// Name tag value for the inspector header, or `None` when it is absent or empty.
-pub fn inspector_title(instance: &EC2Instance) -> Option<String> {
-    instance
-        .name()
-        .filter(|name| !name.is_empty())
-        .map(str::to_string)
+pub fn inspector_title(instance: &Instance) -> Option<String> {
+    instance.name.clone().filter(|name| !name.is_empty())
 }
 
 /// All tags as `(key, value)`: Name first, then by key ignoring ASCII case, then by value.
-pub fn inspector_tags(instance: &EC2Instance) -> Vec<(String, String)> {
+pub fn inspector_tags(instance: &Instance) -> Vec<(String, String)> {
     let mut tags: Vec<(String, String)> = instance
-        .tags
+        .labels
         .iter()
-        .map(|tag| (tag.key.clone(), tag.value.clone()))
+        .map(|label| (label.key.clone(), label.value.clone()))
         .collect();
     tags.sort_by_key(|(key, value)| {
         (
@@ -226,21 +225,6 @@ pub fn stale_note(refreshed_at: &str, region: &str) -> String {
     format!("From the {refreshed_at} refresh. {region} failed to load.")
 }
 
-fn text_row(
-    label: &'static str,
-    value: Option<&str>,
-    monospace: bool,
-    copyable: bool,
-) -> InspectorRow {
-    InspectorRow {
-        label,
-        value: non_empty(value),
-        empty_text: "None".to_string(),
-        monospace,
-        copyable,
-    }
-}
-
 fn non_empty(value: Option<&str>) -> Option<String> {
     value.filter(|value| !value.is_empty()).map(str::to_string)
 }
@@ -257,7 +241,7 @@ fn launched_text(launch: SystemTime) -> String {
         .to_string()
 }
 
-fn normalized_state(instance: &EC2Instance) -> Option<String> {
+fn normalized_state(instance: &Instance) -> Option<String> {
     instance
         .state
         .as_deref()
@@ -265,12 +249,8 @@ fn normalized_state(instance: &EC2Instance) -> Option<String> {
         .map(str::to_ascii_lowercase)
 }
 
-fn stopped_summary(instance: &EC2Instance, now: SystemTime) -> String {
-    let reason = instance
-        .state_transition_reason
-        .as_deref()
-        .unwrap_or("")
-        .trim();
+fn stopped_summary(instance: &Instance, now: SystemTime) -> String {
+    let reason = instance.state_reason.as_deref().unwrap_or("").trim();
     match stopped_at(reason) {
         Some(stopped) => {
             let days = now
@@ -315,7 +295,7 @@ fn push_present(parts: &mut Vec<String>, value: Option<&str>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{EC2InstanceTag, EC2SecurityGroup};
+    use crate::{EC2Instance, EC2InstanceTag, EC2SecurityGroup};
 
     fn at(rfc3339: &str) -> SystemTime {
         let seconds = chrono::DateTime::parse_from_rfc3339(rfc3339)
@@ -434,7 +414,7 @@ mod tests {
     #[test]
     fn running_summary_reports_uptime_units() {
         assert_eq!(
-            inspector_summary(&running(), now()),
+            inspector_summary(&Instance::from(&running()), now()),
             "t3.medium · us-east-1a · up 1 day"
         );
 
@@ -443,19 +423,19 @@ mod tests {
             ..running()
         };
         assert_eq!(
-            inspector_summary(&launched("2026-10-08T09:00:00Z"), now()),
+            inspector_summary(&Instance::from(&launched("2026-10-08T09:00:00Z")), now()),
             "t3.medium · us-east-1a · up 3 hours"
         );
         assert_eq!(
-            inspector_summary(&launched("2026-10-08T11:00:00Z"), now()),
+            inspector_summary(&Instance::from(&launched("2026-10-08T11:00:00Z")), now()),
             "t3.medium · us-east-1a · up 1 hour"
         );
         assert_eq!(
-            inspector_summary(&launched("2026-10-08T12:03:30Z"), now()),
+            inspector_summary(&Instance::from(&launched("2026-10-08T12:03:30Z")), now()),
             "t3.medium · us-east-1a · up 1 minute"
         );
         assert_eq!(
-            inspector_summary(&launched("2026-09-28T12:04:00Z"), now()),
+            inspector_summary(&Instance::from(&launched("2026-09-28T12:04:00Z")), now()),
             "t3.medium · us-east-1a · up 10 days"
         );
     }
@@ -467,7 +447,7 @@ mod tests {
             ..running()
         };
         assert_eq!(
-            inspector_summary(&no_launch, now()),
+            inspector_summary(&Instance::from(&no_launch), now()),
             "t3.medium · us-east-1a"
         );
 
@@ -475,20 +455,26 @@ mod tests {
             launch_time: Some(at("2026-10-09T00:00:00Z")),
             ..running()
         };
-        assert_eq!(inspector_summary(&future, now()), "t3.medium · us-east-1a");
+        assert_eq!(
+            inspector_summary(&Instance::from(&future), now()),
+            "t3.medium · us-east-1a"
+        );
 
         let no_type_or_launch = EC2Instance {
             instance_type: None,
             launch_time: None,
             ..running()
         };
-        assert_eq!(inspector_summary(&no_type_or_launch, now()), "us-east-1a");
+        assert_eq!(
+            inspector_summary(&Instance::from(&no_type_or_launch), now()),
+            "us-east-1a"
+        );
     }
 
     #[test]
     fn stopped_summary_uses_reason_and_age() {
         assert_eq!(
-            inspector_summary(&stopped(), now()),
+            inspector_summary(&Instance::from(&stopped()), now()),
             "Stopped 7 days ago · User initiated"
         );
 
@@ -498,20 +484,23 @@ mod tests {
         };
         assert_eq!(
             inspector_summary(
-                &with_reason("User initiated (2026-10-08 09:00:00 GMT)"),
+                &Instance::from(&with_reason("User initiated (2026-10-08 09:00:00 GMT)")),
                 now()
             ),
             "Stopped today · User initiated"
         );
         assert_eq!(
             inspector_summary(
-                &with_reason("User initiated (2026-10-07 09:00:00 GMT)"),
+                &Instance::from(&with_reason("User initiated (2026-10-07 09:00:00 GMT)")),
                 now()
             ),
             "Stopped 1 day ago · User initiated"
         );
         assert_eq!(
-            inspector_summary(&with_reason("Instance initiated shutdown"), now()),
+            inspector_summary(
+                &Instance::from(&with_reason("Instance initiated shutdown")),
+                now()
+            ),
             "Stopped · Instance initiated shutdown"
         );
 
@@ -519,27 +508,36 @@ mod tests {
             state_transition_reason: None,
             ..stopped()
         };
-        assert_eq!(inspector_summary(&no_reason, now()), "Stopped");
+        assert_eq!(
+            inspector_summary(&Instance::from(&no_reason), now()),
+            "Stopped"
+        );
     }
 
     #[test]
     fn pending_and_other_states_are_appended_lowercased() {
         assert_eq!(
-            inspector_summary(&with_state(running(), "pending"), now()),
+            inspector_summary(&Instance::from(&with_state(running(), "pending")), now()),
             "t3.medium · us-east-1a · starting"
         );
         assert_eq!(
-            inspector_summary(&with_state(running(), "Stopping"), now()),
+            inspector_summary(&Instance::from(&with_state(running(), "Stopping")), now()),
             "t3.medium · us-east-1a · stopping"
         );
     }
 
     #[test]
     fn public_ip_text_explains_missing_address() {
-        assert_eq!(public_ip_text(&running()), "No public address");
-        assert_eq!(public_ip_text(&stopped()), "Released while stopped");
         assert_eq!(
-            public_ip_text(&with_state(running(), "pending")),
+            public_ip_text(&Instance::from(&running())),
+            "No public address"
+        );
+        assert_eq!(
+            public_ip_text(&Instance::from(&stopped())),
+            "Released while stopped"
+        );
+        assert_eq!(
+            public_ip_text(&Instance::from(&with_state(running(), "pending"))),
             "Not assigned yet"
         );
 
@@ -547,10 +545,10 @@ mod tests {
             public_ip_address: Some("54.1.2.3".to_string()),
             ..running()
         };
-        assert_eq!(public_ip_text(&with_public), "54.1.2.3");
+        assert_eq!(public_ip_text(&Instance::from(&with_public)), "54.1.2.3");
 
         assert_eq!(
-            public_ip_text(&with_state(blank(), "terminated")),
+            public_ip_text(&Instance::from(&with_state(blank(), "terminated"))),
             "No public address"
         );
     }
@@ -569,7 +567,7 @@ mod tests {
 
     #[test]
     fn sections_are_instance_then_network() {
-        let sections = inspector_sections(&running());
+        let sections = inspector_sections(&Instance::from(&running()));
         let titles: Vec<&str> = sections.iter().map(|s| s.title.as_str()).collect();
         assert_eq!(titles, ["Instance", "Network"]);
         assert_eq!(
@@ -584,7 +582,7 @@ mod tests {
 
     #[test]
     fn running_instance_values() {
-        let sections = inspector_sections(&running());
+        let sections = inspector_sections(&Instance::from(&running()));
         assert_eq!(
             values(&sections[0]),
             [
@@ -600,7 +598,7 @@ mod tests {
 
     #[test]
     fn running_network_values_and_public_ip_placeholder() {
-        let sections = inspector_sections(&running());
+        let sections = inspector_sections(&Instance::from(&running()));
         assert_eq!(
             values(&sections[1]),
             [
@@ -623,7 +621,7 @@ mod tests {
 
     #[test]
     fn ami_is_monospace_and_copyable_state_is_neither() {
-        let sections = inspector_sections(&running());
+        let sections = inspector_sections(&Instance::from(&running()));
         let ami = &sections[0].rows[3];
         assert!(ami.monospace && ami.copyable);
         let state = &sections[0].rows[0];
@@ -632,7 +630,7 @@ mod tests {
 
     #[test]
     fn stopped_instance_shows_placeholders() {
-        let sections = inspector_sections(&stopped());
+        let sections = inspector_sections(&Instance::from(&stopped()));
         let ami = &sections[0].rows[3];
         assert_eq!(ami.value, None);
         assert_eq!(ami.empty_text, "None");
@@ -641,27 +639,46 @@ mod tests {
     }
 
     #[test]
+    fn missing_extra_is_none() {
+        let sections = inspector_sections(&Instance::from(&blank()));
+        let ami = sections[0]
+            .rows
+            .iter()
+            .find(|row| row.label == "AMI")
+            .unwrap();
+
+        assert_eq!(ami.value, None);
+        assert_eq!(ami.empty_text, "None");
+    }
+
+    #[test]
     fn empty_key_name_is_no_value() {
         let instance = EC2Instance {
             key_name: Some(String::new()),
             ..running()
         };
-        let sections = inspector_sections(&instance);
+        let sections = inspector_sections(&Instance::from(&instance));
         assert_eq!(sections[0].rows[4].value, None);
     }
 
     #[test]
     fn security_group_title_and_rows() {
-        assert_eq!(security_groups_title(&running()), "Security groups · 2");
         assert_eq!(
-            security_group_rows(&running()),
+            security_groups_title(&Instance::from(&running())),
+            "Security groups · 2"
+        );
+        assert_eq!(
+            security_group_rows(&Instance::from(&running())),
             [
                 ("web-sg".to_string(), "sg-0d2fc5662".to_string()),
                 ("monitoring-sg".to_string(), "sg-074bb5deb".to_string()),
             ]
         );
-        assert_eq!(security_groups_title(&stopped()), "Security groups · 0");
-        assert!(security_group_rows(&stopped()).is_empty());
+        assert_eq!(
+            security_groups_title(&Instance::from(&stopped())),
+            "Security groups · 0"
+        );
+        assert!(security_group_rows(&Instance::from(&stopped())).is_empty());
     }
 
     fn many_tags() -> EC2Instance {
@@ -682,24 +699,24 @@ mod tests {
     #[test]
     fn title_is_non_empty_name_tag() {
         assert_eq!(
-            inspector_title(&running()),
+            inspector_title(&Instance::from(&running())),
             Some("api-gateway-01".to_string())
         );
         let untagged = EC2Instance {
             tags: Vec::new(),
             ..running()
         };
-        assert_eq!(inspector_title(&untagged), None);
+        assert_eq!(inspector_title(&Instance::from(&untagged)), None);
         let empty_name = EC2Instance {
             tags: vec![tag("Name", "")],
             ..running()
         };
-        assert_eq!(inspector_title(&empty_name), None);
+        assert_eq!(inspector_title(&Instance::from(&empty_name)), None);
     }
 
     #[test]
     fn tags_put_name_first_then_by_key_and_value() {
-        let tags = inspector_tags(&running());
+        let tags = inspector_tags(&Instance::from(&running()));
         assert_eq!(
             pairs(&tags),
             [
@@ -718,7 +735,7 @@ mod tests {
             ],
             ..running()
         };
-        let tags = inspector_tags(&mixed);
+        let tags = inspector_tags(&Instance::from(&mixed));
         assert_eq!(
             pairs(&tags),
             [("NAME", "n"), ("A", "1"), ("b", "1"), ("b", "2")]
@@ -733,7 +750,7 @@ mod tests {
 
     #[test]
     fn many_tags_collapse_to_eight_with_toggle() {
-        let tags = inspector_tags(&many_tags());
+        let tags = inspector_tags(&Instance::from(&many_tags()));
         assert_eq!(tags.len(), 10);
 
         let collapsed = visible_tags(&tags, false);
