@@ -65,13 +65,29 @@ pub enum FieldKind {
     Date,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MatchMode {
+    Contains,
+    StartsWith,
+    Glob,
+    PrefixOrGlob,
+}
+
 #[derive(Debug, Clone)]
 pub struct FieldDef {
     pub name: String,
     pub label: String,
+    /// Text shown next to the key in query suggestions.
+    pub hint: String,
     pub kind: FieldKind,
+    pub match_mode: MatchMode,
+    /// Usable as a `name:value` query key.
+    pub query: bool,
+    /// Getter values are part of free-text search.
+    pub search: bool,
     pub facet: bool,
     pub column: bool,
+    /// Returns several values; a term matches when any one of them matches.
     pub getter: fn(&Instance) -> Vec<String>,
 }
 

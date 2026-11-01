@@ -2,6 +2,7 @@
 
 mod edit;
 mod facets;
+mod fields;
 mod matcher;
 mod suggest;
 mod tags;
@@ -13,6 +14,7 @@ pub(crate) mod fixtures;
 
 pub use edit::*;
 pub use facets::*;
+pub use fields::*;
 pub use matcher::*;
 pub use suggest::*;
 pub use tags::*;

@@ -1,5 +1,6 @@
 //! Autocomplete for the word being typed in the search field, and applying a chosen suggestion.
 
+use super::fields::provider_field;
 use super::term::{TermKind, classify};
 use super::tokenize::{QueryField, tokenize};
 use crate::models::EC2Instance;
@@ -120,9 +121,9 @@ pub fn suggest(query: &str, instances: &[EC2Instance], known_tag_keys: &[String]
         };
     }
 
-    let candidates = QueryField::ALL
-        .iter()
-        .map(|field| (field.name().to_string(), field_hint(*field)))
+    let candidates = QueryField::all()
+        .into_iter()
+        .map(|field| (field.name().to_string(), field_hint(field)))
         .chain(
             known_tag_keys
                 .iter()
@@ -400,11 +401,7 @@ fn field_hint(field: QueryField) -> &'static str {
         QueryField::Ip => "private or public",
         QueryField::Private => "private IP",
         QueryField::Public => "public IP",
-        QueryField::Vpc => "VPC id",
-        QueryField::Subnet => "subnet id",
-        QueryField::Sg => "security group",
-        QueryField::Ami => "image id",
-        QueryField::Key => "key pair",
+        QueryField::Provider(name) => provider_field(name).map_or("", |def| def.hint.as_str()),
         QueryField::Age => "time since launch, e.g. >30d",
         QueryField::Has => "public-ip, tags, name",
         QueryField::Tag => "tag key or key=value",

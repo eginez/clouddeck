@@ -5,7 +5,8 @@ mod instance;
 pub use instance::{Address, AddressKind, ExtrasSection, Instance, Label};
 mod provider;
 pub use clouddeck_provider_api::{
-    Connection, FieldDef, FieldKind, ListResult, Provider, ProviderError, Scope, ScopeFailure,
+    Connection, FieldDef, FieldKind, ListResult, MatchMode, Provider, ProviderError, Scope,
+    ScopeFailure,
 };
 pub use provider::{ComputeServiceProvider, aws_provider};
 mod mock;
@@ -41,6 +42,8 @@ mod instance_list_view_model;
 pub use instance_detail_view_model::InstanceDetailViewModel;
 pub use instance_list_view_model::InstanceListViewModel;
 mod aws_cli;
+mod aws_fields;
+pub use aws_fields::aws_fields;
 mod aws_identity;
 mod aws_sdk;
 mod aws_sso_login;

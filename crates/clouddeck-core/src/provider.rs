@@ -194,7 +194,7 @@ impl Provider for ComputeServiceProvider {
     }
 
     fn fields(&self) -> Vec<FieldDef> {
-        Vec::new()
+        crate::aws_fields()
     }
 }
 
@@ -342,6 +342,16 @@ mod tests {
             ProviderError::from(CloudDeckError::Unknown("boom".to_string())),
             ProviderError::Other("boom".to_string())
         );
+    }
+
+    #[test]
+    fn fields_are_the_aws_registry() {
+        let mock = MockComputeService::new(vec![ec2("i-1")], None);
+        let provider =
+            ComputeServiceProvider::from_shared("mock", scopes(&["us-east-1"]), Arc::new(mock));
+        let names: Vec<String> = provider.fields().into_iter().map(|f| f.name).collect();
+        let expected: Vec<String> = crate::aws_fields().into_iter().map(|f| f.name).collect();
+        assert_eq!(names, expected);
     }
 
     #[test]

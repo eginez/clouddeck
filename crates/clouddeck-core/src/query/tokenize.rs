@@ -32,45 +32,39 @@ pub enum QueryField {
     Private,
     /// `public:` public IP.
     Public,
-    /// `vpc:` VPC id.
-    Vpc,
-    /// `subnet:` subnet id.
-    Subnet,
-    /// `sg:` security group.
-    Sg,
-    /// `ami:` AMI id.
-    Ami,
-    /// `key:` key pair name.
-    Key,
     /// `age:` launch age.
     Age,
     /// `has:` attribute presence.
     Has,
     /// `tag:` tag filters.
     Tag,
+    /// A provider field from `provider_fields()`, by name.
+    Provider(&'static str),
 }
 
 impl QueryField {
-    /// All fields in their canonical order.
-    pub const ALL: [QueryField; 17] = [
-        QueryField::Name,
-        QueryField::Id,
-        QueryField::State,
-        QueryField::Type,
-        QueryField::Az,
-        QueryField::Region,
-        QueryField::Ip,
-        QueryField::Private,
-        QueryField::Public,
-        QueryField::Vpc,
-        QueryField::Subnet,
-        QueryField::Sg,
-        QueryField::Ami,
-        QueryField::Key,
-        QueryField::Age,
-        QueryField::Has,
-        QueryField::Tag,
-    ];
+    /// All query fields: neutral fields, then provider fields in registry order, then age, has and tag.
+    pub fn all() -> Vec<QueryField> {
+        let mut fields = vec![
+            QueryField::Name,
+            QueryField::Id,
+            QueryField::State,
+            QueryField::Type,
+            QueryField::Az,
+            QueryField::Region,
+            QueryField::Ip,
+            QueryField::Private,
+            QueryField::Public,
+        ];
+        fields.extend(
+            super::fields::provider_fields()
+                .iter()
+                .filter(|def| def.query)
+                .map(|def| QueryField::Provider(def.name.as_str())),
+        );
+        fields.extend([QueryField::Age, QueryField::Has, QueryField::Tag]);
+        fields
+    }
 
     /// Lowercase name of the field.
     pub fn name(self) -> &'static str {
@@ -84,14 +78,10 @@ impl QueryField {
             QueryField::Ip => "ip",
             QueryField::Private => "private",
             QueryField::Public => "public",
-            QueryField::Vpc => "vpc",
-            QueryField::Subnet => "subnet",
-            QueryField::Sg => "sg",
-            QueryField::Ami => "ami",
-            QueryField::Key => "key",
             QueryField::Age => "age",
             QueryField::Has => "has",
             QueryField::Tag => "tag",
+            QueryField::Provider(name) => name,
         }
     }
 
@@ -101,10 +91,7 @@ impl QueryField {
         if lower == "zone" {
             return Some(QueryField::Az);
         }
-        Self::ALL
-            .iter()
-            .copied()
-            .find(|f| f.name() == lower)
+        Self::all().into_iter().find(|f| f.name() == lower)
     }
 }
 
@@ -199,9 +186,9 @@ mod tests {
 
     #[test]
     fn all_fields_have_expected_names() {
-        assert_eq!(QueryField::ALL.len(), 17);
+        assert_eq!(QueryField::all().len(), 17);
         assert_eq!(
-            QueryField::ALL
+            QueryField::all()
                 .iter()
                 .map(|f| f.name())
                 .collect::<Vec<_>>(),

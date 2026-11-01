@@ -1,8 +1,10 @@
 //! Compiles a query into a predicate over instances.
 
+use super::fields::{provider_field, provider_fields};
 use super::term::{Term, TermKind, parse};
 use super::tokenize::QueryField;
 use crate::models::EC2Instance;
+use crate::{Instance, MatchMode};
 use chrono::{DateTime, Utc};
 use std::time::SystemTime;
 
@@ -83,10 +85,10 @@ impl CompiledQuery {
 
     /// Whether `instance` satisfies every term.
     pub fn matches(&self, instance: &EC2Instance) -> bool {
-        self.terms
-            .iter()
-            .zip(&self.ignored)
-            .all(|(term, ignored)| *ignored || self.term_matches(term, instance) != term.negated)
+        let neutral = Instance::from(instance);
+        self.terms.iter().zip(&self.ignored).all(|(term, ignored)| {
+            *ignored || self.term_matches(term, instance, &neutral) != term.negated
+        })
     }
 
     /// Clones of the matching instances, in input order.
@@ -98,10 +100,10 @@ impl CompiledQuery {
             .collect()
     }
 
-    fn term_matches(&self, term: &Term, instance: &EC2Instance) -> bool {
+    fn term_matches(&self, term: &Term, instance: &EC2Instance, neutral: &Instance) -> bool {
         match &term.kind {
             TermKind::Word { text } | TermKind::Unknown { text, .. } => {
-                haystack(instance).contains(&text.to_lowercase())
+                haystack(instance, neutral).contains(&text.to_lowercase())
             }
             TermKind::Field {
                 field: QueryField::Age,
@@ -112,7 +114,7 @@ impl CompiledQuery {
                 .is_none_or(|age| age_matches(instance, age, self.now)),
             TermKind::Field { field, value, .. } => field_values(value)
                 .iter()
-                .any(|v| field_matches(*field, instance, v)),
+                .any(|v| field_matches(*field, instance, neutral, v)),
             TermKind::TagShorthand { key, value, .. } => field_values(value)
                 .iter()
                 .any(|v| tag_value_matches(instance, key, v)),
@@ -216,7 +218,12 @@ fn field_text(value: &Option<String>) -> String {
     value.as_deref().unwrap_or("").to_lowercase()
 }
 
-fn field_matches(field: QueryField, instance: &EC2Instance, value: &str) -> bool {
+fn field_matches(
+    field: QueryField,
+    instance: &EC2Instance,
+    neutral: &Instance,
+    value: &str,
+) -> bool {
     let prefix_or_glob = |text: &Option<String>| {
         if value.contains('*') {
             glob(text.as_deref().unwrap_or(""), value)
@@ -237,17 +244,25 @@ fn field_matches(field: QueryField, instance: &EC2Instance, value: &str) -> bool
         }
         QueryField::Private => field_text(&instance.private_ip_address).contains(value),
         QueryField::Public => field_text(&instance.public_ip_address).contains(value),
-        QueryField::Vpc => field_text(&instance.vpc_id).contains(value),
-        QueryField::Subnet => field_text(&instance.subnet_id).contains(value),
-        QueryField::Ami => field_text(&instance.image_id).contains(value),
-        QueryField::Key => field_text(&instance.key_name).contains(value),
-        QueryField::Sg => instance.security_groups.iter().any(|group| {
-            field_text(&group.group_name).contains(value)
-                || field_text(&group.group_id).contains(value)
+        QueryField::Provider(name) => provider_field(name).is_some_and(|def| {
+            (def.getter)(neutral)
+                .iter()
+                .any(|text| mode_matches(def.match_mode, text, value))
         }),
         QueryField::Tag => tag_field_matches(instance, value),
         QueryField::Has => has_matches(instance, value),
         QueryField::Age => unreachable!("age terms are matched in term_matches"),
+    }
+}
+
+fn mode_matches(mode: MatchMode, text: &str, value: &str) -> bool {
+    let lower = text.to_lowercase();
+    match mode {
+        MatchMode::Contains => lower.contains(value),
+        MatchMode::StartsWith => lower.starts_with(value),
+        MatchMode::Glob => glob(text, value),
+        MatchMode::PrefixOrGlob if value.contains('*') => glob(text, value),
+        MatchMode::PrefixOrGlob => lower.starts_with(value),
     }
 }
 
@@ -278,7 +293,7 @@ fn tag_value_matches(instance: &EC2Instance, key: &str, value: &str) -> bool {
         .any(|tag| tag.key.to_lowercase() == key && tag.value.to_lowercase().contains(value))
 }
 
-fn haystack(instance: &EC2Instance) -> String {
+fn haystack(instance: &EC2Instance, neutral: &Instance) -> String {
     let field = |value: &Option<String>| value.as_deref().unwrap_or("").to_string();
     let launch = instance
         .launch_time
@@ -298,18 +313,10 @@ fn haystack(instance: &EC2Instance) -> String {
         field(&instance.private_ip_address),
         field(&instance.public_ip_address),
         launch,
-        field(&instance.vpc_id),
-        field(&instance.subnet_id),
-        field(&instance.image_id),
-        field(&instance.key_name),
     ];
-    parts.extend(instance.security_groups.iter().map(|group| {
-        format!(
-            "{} {}",
-            group.group_name.as_deref().unwrap_or(""),
-            group.group_id.as_deref().unwrap_or("")
-        )
-    }));
+    for def in provider_fields().iter().filter(|def| def.search) {
+        parts.extend((def.getter)(neutral));
+    }
     parts.extend(
         instance
             .tags
