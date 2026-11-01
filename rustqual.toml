@@ -53,6 +53,13 @@ forbid_path_prefix = [
 forbidden_in = ["crates/clouddeck-app/**"]
 reason = "The app reaches AWS through clouddeck-core; AWS SDK crates stay inside core's AWS provider code"
 
+# rustqual cannot match a crate-name wildcard, so each new provider crate is added here when created.
+[[architecture.pattern]]
+name = "no_provider_crates_in_app"
+forbid_path_prefix = ["clouddeck_provider_aws"]
+forbidden_in = ["crates/clouddeck-app/**"]
+reason = "The app registers providers through clouddeck-core and never imports a provider crate"
+
 # ── Complexity ───────────────────────────────────────────────────────────
 
 [complexity]
