@@ -191,17 +191,24 @@ fn sdk_request_error<R: std::fmt::Debug + 'static>(
     let code = error
         .as_service_error()
         .and_then(|service_error| service_error.meta().code());
-    let detail = if error.as_service_error().is_some() {
-        error.to_string()
-    } else {
-        error_chain_text(error)
-    };
-    aws_request_error(operation, code, &detail)
+    aws_request_error(operation, code, &sdk_error_detail(error))
 }
 
 /// Transport and credential SDK errors display only their outer layer ("dispatch
 /// failure", "failed to construct request"); the real reason is in the source chain.
 /// Service errors keep their own message so unrelated text cannot match a keyword.
+pub(crate) fn sdk_error_detail<E, R>(error: &aws_sdk_ec2::error::SdkError<E, R>) -> String
+where
+    E: std::error::Error + 'static,
+    R: std::fmt::Debug + 'static,
+{
+    if error.as_service_error().is_some() {
+        error.to_string()
+    } else {
+        error_chain_text(error)
+    }
+}
+
 fn error_chain_text(error: &(dyn std::error::Error + 'static)) -> String {
     let mut text = error.to_string();
     let mut source = error.source();

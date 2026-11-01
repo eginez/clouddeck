@@ -15,6 +15,7 @@
 //! transparently refreshes the token again later -- renewal does not need to
 //! be reimplemented here, only the initial browser sign-in.
 
+use crate::aws_sdk::sdk_error_detail;
 use crate::{AwsCredentialKind, AwsSsoConfiguration, BoxError, CloudDeckError};
 use aws_config::BehaviorVersion;
 use aws_sdk_ssooidc::operation::create_token::CreateTokenError;
@@ -393,7 +394,7 @@ impl SsoOidcProvider for SdkSsoOidcProvider {
                 oidc_error(
                     "register this application with AWS SSO",
                     code,
-                    &error.to_string(),
+                    &sdk_error_detail(&error),
                 )
             })?;
         let client_id = output
@@ -433,7 +434,7 @@ impl SsoOidcProvider for SdkSsoOidcProvider {
                 oidc_error(
                     "start the AWS SSO browser sign-in",
                     code,
-                    &error.to_string(),
+                    &sdk_error_detail(&error),
                 )
             })?;
         let device_code = output
@@ -489,7 +490,7 @@ impl SsoOidcProvider for SdkSsoOidcProvider {
         let output = match result {
             Ok(output) => output,
             Err(error) => {
-                return create_token_failure(error.as_service_error(), &error.to_string());
+                return create_token_failure(error.as_service_error(), &sdk_error_detail(&error));
             }
         };
         let access_token = output
@@ -882,6 +883,34 @@ mod tests {
             error.to_string(),
             "Sign-in was denied in the browser. Choose Sign in again to retry."
         );
+    }
+
+    #[test]
+    fn sso_expired_sdk_credentials_in_source_chain_surface_auth_message() {
+        #[derive(Debug)]
+        struct CredentialsFailure(std::io::Error);
+
+        impl std::fmt::Display for CredentialsFailure {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("failed to load credentials")
+            }
+        }
+
+        impl std::error::Error for CredentialsFailure {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                Some(&self.0)
+            }
+        }
+
+        let sdk_error = aws_sdk_ssooidc::error::SdkError::<CreateTokenError>::construction_failure(
+            Box::new(CredentialsFailure(std::io::Error::other(
+                "the SSO token has expired and cannot be refreshed",
+            ))),
+        );
+        let Err(error) = create_token_failure(None, &sdk_error_detail(&sdk_error)) else {
+            panic!("an SDK credentials failure must not be treated as a poll result");
+        };
+        assert!(error.to_string().contains("invalid or expired"));
     }
 
     #[test]

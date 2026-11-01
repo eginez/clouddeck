@@ -1,5 +1,6 @@
 //! AWS account identity resolution used to verify onboarding credentials.
 
+use crate::aws_sdk::sdk_error_detail;
 use crate::{BoxError, CloudDeckError};
 use aws_config::BehaviorVersion;
 use aws_types::region::Region;
@@ -33,7 +34,7 @@ impl AwsIdentityProvider for SdkIdentityProvider {
                 let code = error
                     .as_service_error()
                     .and_then(|service_error| service_error.meta().code());
-                return Err(identity_error(code, &error.to_string()));
+                return Err(identity_error(code, &sdk_error_detail(&error)));
             }
         };
         let account_id = output
@@ -183,6 +184,33 @@ mod tests {
             }))),
         );
         assert_eq!(service.resolve().await.unwrap().account_id, "123456789012");
+    }
+
+    #[test]
+    fn expired_sso_token_in_sts_source_chain_is_auth() {
+        #[derive(Debug)]
+        struct CredentialsFailure(std::io::Error);
+
+        impl std::fmt::Display for CredentialsFailure {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("failed to load credentials")
+            }
+        }
+
+        impl std::error::Error for CredentialsFailure {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                Some(&self.0)
+            }
+        }
+
+        let sdk_error = aws_sdk_sts::error::SdkError::<
+            aws_sdk_sts::operation::get_caller_identity::GetCallerIdentityError,
+        >::construction_failure(Box::new(CredentialsFailure(
+            std::io::Error::other("the SSO token has expired and cannot be refreshed"),
+        )));
+
+        let error = identity_error(None, &sdk_error_detail(&sdk_error));
+        assert!(error.to_string().contains("invalid or expired"));
     }
 
     #[tokio::test]
