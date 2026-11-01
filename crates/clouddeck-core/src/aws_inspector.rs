@@ -61,7 +61,8 @@ mod tests {
 
     #[test]
     fn aws_inspector_reproduces_todays_layout() {
-        let layout: Vec<(&str, Vec<(&str, bool, bool)>)> = aws_inspector()
+        type Layout<'a> = Vec<(&'a str, Vec<(&'a str, bool, bool)>)>;
+        let layout: Layout = aws_inspector()
             .iter()
             .map(|section| {
                 (

@@ -2,12 +2,13 @@ mod error;
 mod fault_injecting;
 mod fleet_compute;
 mod instance;
-pub use instance::{Address, AddressKind, ExtrasSection, Instance, Label};
+pub use instance::{Address, AddressKind, ExtrasSection, Instance, Label, State, StateKind};
 mod aws_inspector;
 mod provider;
 pub use clouddeck_provider_api::{
-    Connection, FieldDef, FieldKind, InspectorRowDef, InspectorSectionDef, InspectorValue,
-    ListResult, MatchMode, Provider, ProviderError, Scope, ScopeFailure,
+    Connection, CoreField, ErrorKind, FieldDef, FieldKind, FieldSource, InspectorRowDef,
+    InspectorSectionDef, InspectorValue, ListResult, MatchMode, Provider, ProviderError, Scope,
+    ScopeFailure,
 };
 pub use provider::{ComputeServiceProvider, aws_provider};
 mod mock;

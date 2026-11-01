@@ -1,5 +1,6 @@
-use std::fmt;
-
+use crate::error::ProviderError;
+use crate::field::FieldDef;
+use crate::inspector::InspectorSectionDef;
 use crate::instance::Instance;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -15,35 +16,6 @@ pub struct Scope {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ProviderError {
-    Auth,
-    Network,
-    Timeout,
-    Permission,
-    Throttled,
-    NotFound,
-    Unsupported,
-    Other(String),
-}
-
-impl fmt::Display for ProviderError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ProviderError::Auth => f.write_str("authentication failed"),
-            ProviderError::Network => f.write_str("network request failed"),
-            ProviderError::Timeout => f.write_str("request timed out"),
-            ProviderError::Permission => f.write_str("permission denied"),
-            ProviderError::Throttled => f.write_str("request throttled"),
-            ProviderError::NotFound => f.write_str("resource not found"),
-            ProviderError::Unsupported => f.write_str("operation not supported"),
-            ProviderError::Other(message) => f.write_str(message),
-        }
-    }
-}
-
-impl std::error::Error for ProviderError {}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScopeFailure {
     pub scope: String,
     pub message: String,
@@ -56,70 +28,6 @@ pub struct ListResult {
     pub failures: Vec<ScopeFailure>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FieldKind {
-    Text,
-    Enum,
-    Tag,
-    Address,
-    Date,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MatchMode {
-    Contains,
-    StartsWith,
-    Glob,
-    PrefixOrGlob,
-}
-
-#[derive(Debug, Clone)]
-pub struct FieldDef {
-    pub name: String,
-    pub label: String,
-    /// Text shown next to the key in query suggestions.
-    pub hint: String,
-    pub kind: FieldKind,
-    pub match_mode: MatchMode,
-    /// Usable as a `name:value` query key.
-    pub query: bool,
-    /// Getter values are part of free-text search.
-    pub search: bool,
-    pub facet: bool,
-    pub column: bool,
-    /// Returns several values; a term matches when any one of them matches.
-    pub getter: fn(&Instance) -> Vec<String>,
-}
-
-/// Where an inspector row's value comes from on a neutral `Instance`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum InspectorValue {
-    State,
-    Type,
-    Location,
-    Created,
-    PrivateAddress,
-    PublicAddress,
-    Extra {
-        section: &'static str,
-        key: &'static str,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct InspectorRowDef {
-    pub label: &'static str,
-    pub value: InspectorValue,
-    pub monospace: bool,
-    pub copyable: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct InspectorSectionDef {
-    pub title: &'static str,
-    pub rows: Vec<InspectorRowDef>,
-}
-
 pub trait Provider: Send + Sync {
     fn id(&self) -> String;
     fn connections(&self) -> Result<Vec<Connection>, ProviderError>;
@@ -127,7 +35,7 @@ pub trait Provider: Send + Sync {
     fn list(&self, connection: &str, scopes: &[String]) -> ListResult;
 
     fn sign_in(&self, _connection: &str) -> Result<(), ProviderError> {
-        Err(ProviderError::Unsupported)
+        Err(ProviderError::unsupported())
     }
 
     fn console_url(&self, instance: &Instance) -> Option<String>;
@@ -197,7 +105,7 @@ mod tests {
     fn default_sign_in_is_unsupported() {
         assert_eq!(
             EmptyProvider.sign_in("default"),
-            Err(ProviderError::Unsupported)
+            Err(ProviderError::unsupported())
         );
     }
 }

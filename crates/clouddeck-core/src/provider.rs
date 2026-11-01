@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use clouddeck_provider_api::{
-    Connection, FieldDef, InspectorSectionDef, Instance, ListResult, Provider, ProviderError,
-    Scope, ScopeFailure,
+    Connection, ErrorKind, FieldDef, InspectorSectionDef, Instance, ListResult, Provider,
+    ProviderError, Scope, ScopeFailure,
 };
 
 use crate::aws_sdk::AwsSdkComputeService;
@@ -102,13 +102,13 @@ impl ComputeService for Forwarding {
 impl From<CloudDeckError> for ProviderError {
     fn from(error: CloudDeckError) -> Self {
         match error {
-            CloudDeckError::Auth => ProviderError::Auth,
-            CloudDeckError::Network => ProviderError::Network,
-            CloudDeckError::Timeout => ProviderError::Timeout,
-            CloudDeckError::Permission => ProviderError::Permission,
-            CloudDeckError::Throttled => ProviderError::Throttled,
-            CloudDeckError::NotFound => ProviderError::NotFound,
-            CloudDeckError::Unknown(message) => ProviderError::Other(message),
+            CloudDeckError::Auth => ProviderError::of(ErrorKind::Auth),
+            CloudDeckError::Network => ProviderError::of(ErrorKind::Network),
+            CloudDeckError::Timeout => ProviderError::of(ErrorKind::Timeout),
+            CloudDeckError::Permission => ProviderError::of(ErrorKind::Permission),
+            CloudDeckError::Throttled => ProviderError::of(ErrorKind::Throttled),
+            CloudDeckError::NotFound => ProviderError::of(ErrorKind::NotFound),
+            CloudDeckError::Unknown(message) => ProviderError::new(ErrorKind::Other, message),
         }
     }
 }
@@ -288,7 +288,7 @@ mod tests {
         assert_eq!(result.instances[1].region.as_deref(), Some("us-west-2"));
         assert_eq!(result.failures.len(), 1);
         assert_eq!(result.failures[0].scope, "eu-west-1");
-        assert_eq!(result.failures[0].error, ProviderError::Network);
+        assert_eq!(result.failures[0].error.kind, ErrorKind::Network);
     }
 
     #[test]
@@ -305,10 +305,8 @@ mod tests {
         assert_eq!(result.failures.len(), 2);
         assert_eq!(result.failures[0].scope, "us-east-1");
         assert_eq!(result.failures[1].scope, "us-west-2");
-        assert_eq!(
-            result.failures[1].error,
-            ProviderError::Other("boom".to_string())
-        );
+        assert_eq!(result.failures[1].error.kind, ErrorKind::Other);
+        assert_eq!(result.failures[1].error.message, "boom");
     }
 
     #[test]
@@ -319,34 +317,21 @@ mod tests {
 
     #[test]
     fn cloud_deck_errors_map_one_to_one() {
-        assert_eq!(
-            ProviderError::from(CloudDeckError::Auth),
-            ProviderError::Auth
-        );
-        assert_eq!(
-            ProviderError::from(CloudDeckError::Network),
-            ProviderError::Network
-        );
-        assert_eq!(
-            ProviderError::from(CloudDeckError::Timeout),
-            ProviderError::Timeout
-        );
-        assert_eq!(
-            ProviderError::from(CloudDeckError::Permission),
-            ProviderError::Permission
-        );
-        assert_eq!(
-            ProviderError::from(CloudDeckError::Throttled),
-            ProviderError::Throttled
-        );
-        assert_eq!(
-            ProviderError::from(CloudDeckError::NotFound),
-            ProviderError::NotFound
-        );
-        assert_eq!(
-            ProviderError::from(CloudDeckError::Unknown("boom".to_string())),
-            ProviderError::Other("boom".to_string())
-        );
+        let kinds = [
+            (CloudDeckError::Auth, ErrorKind::Auth),
+            (CloudDeckError::Network, ErrorKind::Network),
+            (CloudDeckError::Timeout, ErrorKind::Timeout),
+            (CloudDeckError::Permission, ErrorKind::Permission),
+            (CloudDeckError::Throttled, ErrorKind::Throttled),
+            (CloudDeckError::NotFound, ErrorKind::NotFound),
+        ];
+        for (error, kind) in kinds {
+            assert_eq!(ProviderError::from(error).kind, kind);
+        }
+
+        let unknown = ProviderError::from(CloudDeckError::Unknown("boom".to_string()));
+        assert_eq!(unknown.kind, ErrorKind::Other);
+        assert_eq!(unknown.message, "boom");
     }
 
     #[test]

@@ -126,7 +126,7 @@ fn provider_inspector() -> &'static [InspectorSectionDef] {
 
 fn resolve_row(instance: &Instance, def: &InspectorRowDef) -> InspectorRow {
     let value = match &def.value {
-        InspectorValue::State => capitalized(instance.state.as_deref()),
+        InspectorValue::State => capitalized(Some(&instance.state.raw)),
         InspectorValue::Type => non_empty(instance.instance_type.as_deref()),
         InspectorValue::Location => non_empty(instance.location.as_deref()),
         InspectorValue::Created => instance.created.map(launched_text),
@@ -148,11 +148,7 @@ fn resolve_row(instance: &Instance, def: &InspectorRowDef) -> InspectorRow {
 }
 
 fn address(instance: &Instance, kind: AddressKind) -> Option<String> {
-    instance
-        .addresses
-        .iter()
-        .find(|address| address.kind == kind)
-        .and_then(|address| non_empty(Some(&address.value)))
+    non_empty(instance.address(kind))
 }
 
 fn extra_value(instance: &Instance, section: &str, key: &str) -> Option<String> {
@@ -183,7 +179,7 @@ pub fn inspector_tags(instance: &Instance) -> Vec<(String, String)> {
     let mut tags: Vec<(String, String)> = instance
         .labels
         .iter()
-        .map(|label| (label.key.clone(), label.value.clone()))
+        .map(|label| (label.key.clone(), label.value.clone().unwrap_or_default()))
         .collect();
     tags.sort_by_key(|(key, value)| {
         (
@@ -242,11 +238,7 @@ fn launched_text(launch: SystemTime) -> String {
 }
 
 fn normalized_state(instance: &Instance) -> Option<String> {
-    instance
-        .state
-        .as_deref()
-        .filter(|state| !state.is_empty())
-        .map(str::to_ascii_lowercase)
+    non_empty(Some(&instance.state.raw)).map(|state| state.to_ascii_lowercase())
 }
 
 fn stopped_summary(instance: &Instance, now: SystemTime) -> String {

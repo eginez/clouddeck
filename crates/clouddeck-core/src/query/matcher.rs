@@ -245,7 +245,8 @@ fn field_matches(
         QueryField::Private => field_text(&instance.private_ip_address).contains(value),
         QueryField::Public => field_text(&instance.public_ip_address).contains(value),
         QueryField::Provider(name) => provider_field(name).is_some_and(|def| {
-            (def.getter)(neutral)
+            def.source
+                .values(neutral)
                 .iter()
                 .any(|text| mode_matches(def.match_mode, text, value))
         }),
@@ -315,7 +316,7 @@ fn haystack(instance: &EC2Instance, neutral: &Instance) -> String {
         launch,
     ];
     for def in provider_fields().iter().filter(|def| def.search) {
-        parts.extend((def.getter)(neutral));
+        parts.extend(def.source.values(neutral));
     }
     parts.extend(
         instance
@@ -514,9 +515,8 @@ mod tests {
     #[test]
     fn recognised_field_count_cases() {
         let fleet = fleet();
-        let count = |query: &str| {
-            compile(query, &known_tag_keys(&fleet), now()).recognised_field_count()
-        };
+        let count =
+            |query: &str| compile(query, &known_tag_keys(&fleet), now()).recognised_field_count();
         assert_eq!(count("state:stopped type:t3 web"), 2);
         assert_eq!(count("-state:stopped"), 1);
         assert_eq!(count("state:"), 0);
