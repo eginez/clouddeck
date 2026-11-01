@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
+    time::Duration,
 };
 
 /// Allowed auto-refresh intervals in minutes.
@@ -67,18 +68,6 @@ pub enum DefaultSort {
     State,
 }
 
-/// Diagnostic logging verbosity.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum LogLevel {
-    /// Only errors.
-    ErrorsOnly,
-    /// Informational messages and errors.
-    Info,
-    /// Everything, including debug output.
-    Debug,
-}
-
 /// User preferences that apply immediately and persist across launches.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -119,8 +108,6 @@ pub struct Settings {
     pub demo_mode: bool,
     /// Whether CloudDeck checks for new releases automatically.
     pub check_for_updates: bool,
-    /// Diagnostic logging verbosity.
-    pub log_level: LogLevel,
 }
 
 impl Default for Settings {
@@ -147,7 +134,6 @@ impl Default for Settings {
             request_timeout_seconds: 30,
             demo_mode: false,
             check_for_updates: true,
-            log_level: LogLevel::ErrorsOnly,
         }
     }
 }
@@ -189,6 +175,10 @@ impl Settings {
         }
     }
 
+    pub fn request_timeout(&self) -> Duration {
+        Duration::from_secs(u64::from(self.clone().normalized().request_timeout_seconds))
+    }
+
     /// Loads settings from `path`, falling back to defaults when missing or invalid.
     pub fn load(path: &Path) -> Self {
         std::fs::read(path)
@@ -219,6 +209,11 @@ impl Settings {
         file.sync_all()?;
         std::fs::rename(temp, path)
     }
+}
+
+/// Per-region fleet deadline, kept above the SDK request deadline so the SDK's own timeout message wins.
+pub fn fleet_region_timeout(request_timeout: Duration) -> Duration {
+    request_timeout + Duration::from_secs(5)
 }
 
 /// Location of `settings.json`, next to `context.json`.
@@ -265,13 +260,11 @@ pub enum SettingId {
     CheckForUpdates,
     /// Simulated fleet without AWS calls.
     DemoMode,
-    /// Diagnostic logging verbosity.
-    LogLevel,
 }
 
 impl SettingId {
     /// Every setting in display order.
-    pub const ALL: [SettingId; 19] = [
+    pub const ALL: [SettingId; 18] = [
         Self::Theme,
         Self::Density,
         Self::ShowSidebarOnLaunch,
@@ -290,7 +283,6 @@ impl SettingId {
         Self::RequestTimeout,
         Self::CheckForUpdates,
         Self::DemoMode,
-        Self::LogLevel,
     ];
 
     /// Settings category this setting is listed under.
@@ -309,7 +301,7 @@ impl SettingId {
             Self::DefaultSort | Self::ShowUnnamedLabel => "Table",
             Self::RecentSearchLimit | Self::MatchTags => "Search",
             Self::AwsConfigFile | Self::RequestTimeout => "AWS & Privacy",
-            Self::CheckForUpdates | Self::DemoMode | Self::LogLevel => "Advanced",
+            Self::CheckForUpdates | Self::DemoMode => "Advanced",
         }
     }
 
@@ -326,7 +318,7 @@ impl SettingId {
             Self::RecentSearchLimit | Self::MatchTags => "Behaviour",
             Self::AwsConfigFile | Self::RequestTimeout => "AWS",
             Self::CheckForUpdates => "Updates",
-            Self::DemoMode | Self::LogLevel => "Developer",
+            Self::DemoMode => "Developer",
         }
     }
 
@@ -351,7 +343,6 @@ impl SettingId {
             Self::RequestTimeout => "Request timeout",
             Self::CheckForUpdates => "Check for updates automatically",
             Self::DemoMode => "Demo mode",
-            Self::LogLevel => "Log level",
         }
     }
 
@@ -382,7 +373,6 @@ impl SettingId {
                 "Checks on launch and about once an hour while CloudDeck runs."
             }
             Self::DemoMode => "Simulated fleet, no AWS calls. A DEMO tag stays in the status bar.",
-            Self::LogLevel => "Written to ~/.config/clouddeck/logs.",
         }
     }
 
@@ -423,7 +413,6 @@ impl SettingId {
             }
             Self::CheckForUpdates => settings.check_for_updates = defaults.check_for_updates,
             Self::DemoMode => settings.demo_mode = defaults.demo_mode,
-            Self::LogLevel => settings.log_level = defaults.log_level,
         }
     }
 
@@ -593,7 +582,6 @@ mod tests {
         assert_eq!(settings.request_timeout_seconds, 30);
         assert!(!settings.demo_mode);
         assert!(settings.check_for_updates);
-        assert_eq!(settings.log_level, LogLevel::ErrorsOnly);
         assert_eq!(SettingId::CheckForUpdates.category(), "Advanced");
     }
 
@@ -688,6 +676,38 @@ mod tests {
     }
 
     #[test]
+    fn load_ignores_retired_log_level_key() {
+        let path = temp_file("retired-log-level");
+        std::fs::write(&path, br#"{"log_level":"debug","theme":"dark"}"#).unwrap();
+        assert_eq!(
+            Settings::load(&path),
+            Settings {
+                theme: Theme::Dark,
+                ..Settings::default()
+            }
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn request_timeout_maps_to_sdk_and_fleet_deadlines() {
+        let cases = [(15, 15, 20), (30, 30, 35), (60, 60, 65)];
+        for (seconds, sdk, fleet) in cases {
+            let settings = Settings {
+                request_timeout_seconds: seconds,
+                ..Settings::default()
+            };
+            let request = settings.request_timeout();
+            assert_eq!(request, Duration::from_secs(sdk));
+            assert_eq!(fleet_region_timeout(request), Duration::from_secs(fleet));
+        }
+        assert_eq!(
+            Settings::default().request_timeout(),
+            Duration::from_secs(30)
+        );
+    }
+
+    #[test]
     fn normalized_keeps_allowed_values() {
         let settings = Settings {
             refresh_interval_minutes: 15,
@@ -704,7 +724,7 @@ mod tests {
 
     #[test]
     fn catalog_has_twenty_labels_in_display_order() {
-        assert_eq!(SettingId::ALL.len(), 19);
+        assert_eq!(SettingId::ALL.len(), 18);
         let labels: Vec<&str> = SettingId::ALL.iter().map(|id| id.label()).collect();
         assert_eq!(
             labels,
@@ -727,7 +747,6 @@ mod tests {
                 "Request timeout",
                 "Check for updates automatically",
                 "Demo mode",
-                "Log level",
             ]
         );
     }

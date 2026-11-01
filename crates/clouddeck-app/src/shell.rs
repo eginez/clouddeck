@@ -8,7 +8,7 @@ use crate::{
 use clouddeck_core::{
     AwsSdkComputeService, ComputeService, EC2Instance, EC2Scenario, FLEET_REGIONS,
     FleetComputeService, InstanceListViewModel, MockComputeService, ProfileInput, RegionScope,
-    Settings, UiState, WindowFrame, WorkspaceContext, settings_path,
+    Settings, UiState, WindowFrame, WorkspaceContext, fleet_region_timeout, settings_path,
 };
 use gpui::{
     AnyWindowHandle, App, Bounds, Context, Entity, IntoElement, KeyBinding, ParentElement, Render,
@@ -47,6 +47,7 @@ pub struct AppShell {
     settings_subscription: Option<Subscription>,
     applied_scope: RegionScope,
     remembered_scope: Vec<String>,
+    request_timeout: Duration,
     /// Test-only: an optional compute service injected into `apply_context`
     /// so that a test can deterministically hold a picker-driven context
     /// switch load open (via `GatedComputeService`) and observe the
@@ -467,6 +468,7 @@ impl AppShell {
         demo: bool,
         demo_scenario: DemoScenario,
         fleet_regions: &[String],
+        request_timeout: Duration,
     ) -> Box<dyn ComputeService + Send + Sync> {
         if demo {
             return Self::demo_service(context, demo_scenario, fleet_regions);
@@ -476,15 +478,21 @@ impl AppShell {
         }
         if context.region == "fleet" {
             let profile = context.profile.clone();
-            Box::new(FleetComputeService::new(
+            Box::new(FleetComputeService::with_timeout(
                 fleet_regions.to_vec(),
-                move |region| Box::new(AwsSdkComputeService::new(profile.clone(), region)),
+                move |region| {
+                    Box::new(
+                        AwsSdkComputeService::new(profile.clone(), region)
+                            .with_timeout(request_timeout),
+                    )
+                },
+                fleet_region_timeout(request_timeout),
             ))
         } else {
-            Box::new(AwsSdkComputeService::new(
-                context.profile.clone(),
-                context.region.clone(),
-            ))
+            Box::new(
+                AwsSdkComputeService::new(context.profile.clone(), context.region.clone())
+                    .with_timeout(request_timeout),
+            )
         }
     }
 
@@ -566,11 +574,13 @@ impl AppShell {
             restored
         };
         let fleet_regions = Self::fleet_regions(&scope, &available);
+        let request_timeout = Settings::load(&settings_path()).request_timeout();
         let view_model = InstanceListViewModel::new(Self::service(
             &context,
             demo,
             demo_scenario,
             &fleet_regions,
+            request_timeout,
         ));
         let mut fleet_state = FleetState::new(view_model, context.profile.clone(), demo);
         fleet_state.pinned_searches = ui_state.pinned_searches.clone();
@@ -629,6 +639,7 @@ impl AppShell {
             settings_subscription: None,
             applied_scope,
             remembered_scope,
+            request_timeout,
             wizard: None,
             #[cfg(test)]
             test_service_override: None,
@@ -681,6 +692,7 @@ impl AppShell {
     fn handle_settings_event(&mut self, event: &SettingsEvent, cx: &mut Context<Self>) {
         match event {
             SettingsEvent::Changed(settings) => {
+                self.request_timeout = settings.request_timeout();
                 let main_window = self.main_window.clone();
                 let _ = self.window_handle.update(cx, |_, window, cx| {
                     main_window.update(cx, |main_window, cx| {
@@ -832,11 +844,22 @@ impl AppShell {
                 )) as _
             })
             .unwrap_or_else(|| {
-                Self::service(&self.context, self.demo, self.demo_scenario, &fleet_regions)
+                Self::service(
+                    &self.context,
+                    self.demo,
+                    self.demo_scenario,
+                    &fleet_regions,
+                    self.request_timeout,
+                )
             });
         #[cfg(not(test))]
-        let service: Box<dyn ComputeService + Send + Sync> =
-            Self::service(&self.context, self.demo, self.demo_scenario, &fleet_regions);
+        let service: Box<dyn ComputeService + Send + Sync> = Self::service(
+            &self.context,
+            self.demo,
+            self.demo_scenario,
+            &fleet_regions,
+            self.request_timeout,
+        );
         let vm = InstanceListViewModel::new(service);
         let profile = self.context.profile.clone();
         let demo = self.demo;

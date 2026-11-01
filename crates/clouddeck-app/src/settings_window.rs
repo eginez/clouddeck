@@ -5,11 +5,11 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use clouddeck_core::{
-    DefaultSort, Density, FLEET_REGIONS, KEYMAP, LaunchBehavior, LogLevel, Platform,
-    RECENT_SEARCH_LIMITS, REFRESH_INTERVALS, REQUEST_TIMEOUTS, SETTINGS_CATEGORIES, SettingId,
-    Settings, SettingsSearchResults, Theme, UiState, changed_categories, context_path,
-    search_settings, settings_no_match_text, settings_path, settings_search_breadcrumb,
-    shortcut_label, ui_state_path,
+    DefaultSort, Density, FLEET_REGIONS, KEYMAP, LaunchBehavior, Platform, RECENT_SEARCH_LIMITS,
+    REFRESH_INTERVALS, REQUEST_TIMEOUTS, SETTINGS_CATEGORIES, SettingId, Settings,
+    SettingsSearchResults, Theme, UiState, changed_categories, context_path, search_settings,
+    settings_no_match_text, settings_path, settings_search_breadcrumb, shortcut_label,
+    ui_state_path,
 };
 use gpui::{
     AnyElement, App, Bounds, ClickEvent, Context, Div, Entity, EventEmitter, Global,
@@ -79,7 +79,6 @@ enum Pick {
     Density(Density),
     LaunchBehavior(LaunchBehavior),
     DefaultSort(DefaultSort),
-    LogLevel(LogLevel),
     RefreshInterval(u32),
     RecentSearchLimit(u32),
     RequestTimeout(u32),
@@ -92,7 +91,6 @@ impl Pick {
             Pick::Density(value) => settings.density = value,
             Pick::LaunchBehavior(value) => settings.on_launch = value,
             Pick::DefaultSort(value) => settings.default_sort = value,
-            Pick::LogLevel(value) => settings.log_level = value,
             Pick::RefreshInterval(value) => settings.refresh_interval_minutes = value,
             Pick::RecentSearchLimit(value) => settings.recent_search_limit = value,
             Pick::RequestTimeout(value) => settings.request_timeout_seconds = value,
@@ -204,11 +202,6 @@ fn choices(id: SettingId) -> Vec<Choice> {
             ),
             choice("State", Pick::DefaultSort(DefaultSort::State)),
         ],
-        SettingId::LogLevel => vec![
-            choice("Errors only", Pick::LogLevel(LogLevel::ErrorsOnly)),
-            choice("Info", Pick::LogLevel(LogLevel::Info)),
-            choice("Debug", Pick::LogLevel(LogLevel::Debug)),
-        ],
         SettingId::RefreshInterval => REFRESH_INTERVALS
             .iter()
             .map(|&minutes| choice(minutes_label(minutes), Pick::RefreshInterval(minutes)))
@@ -231,7 +224,6 @@ fn current(id: SettingId, settings: &Settings) -> Option<Pick> {
         SettingId::Density => Pick::Density(settings.density),
         SettingId::OnLaunch => Pick::LaunchBehavior(settings.on_launch),
         SettingId::DefaultSort => Pick::DefaultSort(settings.default_sort),
-        SettingId::LogLevel => Pick::LogLevel(settings.log_level),
         SettingId::RefreshInterval => Pick::RefreshInterval(settings.refresh_interval_minutes),
         SettingId::RecentSearchLimit => Pick::RecentSearchLimit(settings.recent_search_limit),
         SettingId::RequestTimeout => Pick::RequestTimeout(settings.request_timeout_seconds),
