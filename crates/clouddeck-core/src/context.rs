@@ -352,13 +352,47 @@ pub fn load_profiles() -> std::io::Result<Vec<AwsProfile>> {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(untagged)]
+enum StoredContext {
+    Current {
+        provider: String,
+        connection: String,
+        scopes: Vec<String>,
+    },
+    Legacy {
+        profile: String,
+        region: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceContext {
     pub profile: String,
     pub region: String,
 }
 impl WorkspaceContext {
     pub fn load(path: &Path) -> Option<Self> {
-        let context: Self = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
+        Self::decode(&std::fs::read(path).ok()?)
+    }
+
+    fn decode(bytes: &[u8]) -> Option<Self> {
+        let context = match serde_json::from_slice::<StoredContext>(bytes).ok()? {
+            StoredContext::Current {
+                provider,
+                connection,
+                scopes,
+            } => {
+                if provider != "aws" {
+                    return None;
+                }
+                let [region] = <[String; 1]>::try_from(scopes).ok()?;
+                Self {
+                    profile: connection,
+                    region,
+                }
+            }
+            StoredContext::Legacy { profile, region } => Self { profile, region },
+        };
         context.is_usable().then_some(context)
     }
 
@@ -388,7 +422,12 @@ impl WorkspaceContext {
         ));
         let mut file = std::fs::File::create(&temp)?;
         use std::io::Write;
-        file.write_all(&serde_json::to_vec(self).map_err(std::io::Error::other)?)?;
+        let stored = StoredContext::Current {
+            provider: "aws".into(),
+            connection: self.profile.clone(),
+            scopes: vec![self.region.clone()],
+        };
+        file.write_all(&serde_json::to_vec(&stored).map_err(std::io::Error::other)?)?;
         file.sync_all()?;
         std::fs::rename(temp, path)
     }
@@ -552,5 +591,66 @@ mod tests {
         std::fs::write(&path, br#"{"profile":"","region":"us-east-1"}"#).unwrap();
         assert!(WorkspaceContext::load(&path).is_none());
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn legacy_context_fixture_loads_as_aws_profile_and_region() {
+        let legacy = include_bytes!("../tests/fixtures/context/legacy-context.json");
+        assert_eq!(
+            WorkspaceContext::decode(legacy),
+            Some(WorkspaceContext {
+                profile: "team".into(),
+                region: "eu-west-1".into(),
+            })
+        );
+    }
+
+    #[test]
+    fn workspace_context_writes_provider_connection_scopes() {
+        let path = std::env::temp_dir().join(format!(
+            "clouddeck-context-format-{}-{}.json",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        WorkspaceContext {
+            profile: "team".into(),
+            region: "eu-west-1".into(),
+        }
+        .save(&path)
+        .unwrap();
+        let written: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(
+            written,
+            serde_json::json!({
+                "provider": "aws",
+                "connection": "team",
+                "scopes": ["eu-west-1"],
+            })
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn workspace_context_rejects_non_aws_or_multi_scope_contexts() {
+        assert!(
+            WorkspaceContext::decode(
+                br#"{"provider":"gcp","connection":"team","scopes":["eu-west-1"]}"#
+            )
+            .is_none()
+        );
+        assert!(
+            WorkspaceContext::decode(
+                br#"{"provider":"aws","connection":"team","scopes":["eu-west-1","us-east-1"]}"#
+            )
+            .is_none()
+        );
+        assert!(
+            WorkspaceContext::decode(br#"{"provider":"aws","connection":"team","scopes":[]}"#)
+                .is_none()
+        );
     }
 }
