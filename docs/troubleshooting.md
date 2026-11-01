@@ -23,9 +23,8 @@ Sign in from CloudDeck:
 2. Select the profile and choose `Sign in with browser`.
 3. Retry the load.
 
-Some expired sessions reach the fleet as a generic `EC2 DescribeInstances
-failed.` message instead of the sign-in message above. If a profile that
-worked earlier fails that way, sign in from the Connect screen first.
+If a profile that worked earlier fails with a generic `EC2 DescribeInstances
+failed.` message, sign in from the Connect screen first.
 
 ## AccessDenied or permission errors
 

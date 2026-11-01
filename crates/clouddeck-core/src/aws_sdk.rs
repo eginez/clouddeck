@@ -9,6 +9,7 @@ use crate::{
     EC2Instance, EC2InstanceTag, EC2SecurityGroup,
 };
 use aws_config::BehaviorVersion;
+use aws_sdk_ec2::operation::describe_instances::DescribeInstancesError;
 use aws_types::region::Region;
 use std::{collections::HashSet, sync::Arc, time::Duration};
 
@@ -44,16 +45,7 @@ impl Ec2PageSource for SdkEc2PageSource {
 
         let output = match result {
             Ok(output) => output,
-            Err(error) => {
-                let code = error
-                    .as_service_error()
-                    .and_then(|service_error| service_error.meta().code());
-                return Err(aws_request_error(
-                    "EC2 DescribeInstances",
-                    code,
-                    &error.to_string(),
-                ));
-            }
+            Err(error) => return Err(sdk_request_error("EC2 DescribeInstances", &error)),
         };
 
         let instances = output
@@ -190,6 +182,35 @@ fn validate_context(profile: &str, region: &str) -> std::io::Result<()> {
         ));
     }
     Ok(())
+}
+
+fn sdk_request_error<R: std::fmt::Debug + 'static>(
+    operation: &str,
+    error: &aws_sdk_ec2::error::SdkError<DescribeInstancesError, R>,
+) -> BoxError {
+    let code = error
+        .as_service_error()
+        .and_then(|service_error| service_error.meta().code());
+    let detail = if error.as_service_error().is_some() {
+        error.to_string()
+    } else {
+        error_chain_text(error)
+    };
+    aws_request_error(operation, code, &detail)
+}
+
+/// Transport and credential SDK errors display only their outer layer ("dispatch
+/// failure", "failed to construct request"); the real reason is in the source chain.
+/// Service errors keep their own message so unrelated text cannot match a keyword.
+fn error_chain_text(error: &(dyn std::error::Error + 'static)) -> String {
+    let mut text = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        text.push_str(": ");
+        text.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    text
 }
 
 fn aws_request_error(operation: &str, code: Option<&str>, detail: &str) -> BoxError {
@@ -338,6 +359,58 @@ mod tests {
         assert_eq!(
             network.downcast_ref::<CloudDeckError>(),
             Some(&CloudDeckError::Network)
+        );
+    }
+
+    #[test]
+    fn expired_sso_token_in_sdk_source_chain_is_auth() {
+        #[derive(Debug)]
+        struct CredentialsFailure(std::io::Error);
+
+        impl std::fmt::Display for CredentialsFailure {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("failed to load credentials")
+            }
+        }
+
+        impl std::error::Error for CredentialsFailure {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                Some(&self.0)
+            }
+        }
+
+        let sdk_error =
+            aws_sdk_ec2::error::SdkError::<DescribeInstancesError>::construction_failure(Box::new(
+                CredentialsFailure(std::io::Error::other(
+                    "the SSO token has expired and cannot be refreshed",
+                )),
+            ));
+        assert_eq!(sdk_error.to_string(), "failed to construct request");
+
+        let mapped = sdk_request_error("EC2 DescribeInstances", &sdk_error);
+        assert_eq!(
+            mapped.downcast_ref::<CloudDeckError>(),
+            Some(&CloudDeckError::Auth)
+        );
+    }
+
+    #[test]
+    fn service_error_text_does_not_widen_classification() {
+        let sdk_error = aws_sdk_ec2::error::SdkError::<DescribeInstancesError, ()>::service_error(
+            DescribeInstancesError::generic(
+                aws_sdk_ec2::error::ErrorMetadata::builder()
+                    .code("InvalidNextToken")
+                    .message("The token provided is invalid")
+                    .build(),
+            ),
+            (),
+        );
+
+        let mapped = sdk_request_error("EC2 DescribeInstances", &sdk_error);
+        assert_eq!(mapped.downcast_ref::<CloudDeckError>(), None);
+        assert_eq!(
+            mapped.to_string(),
+            "EC2 DescribeInstances failed (InvalidNextToken)."
         );
     }
 
