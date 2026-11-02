@@ -1,9 +1,12 @@
+use std::sync::Arc;
+use std::time::Duration;
+
 use clouddeck_extension_api::conformance::check_provider;
 use clouddeck_extension_api::{
     AuthAnswer, AuthInput, AuthMethod, AuthStatus, AuthStep, Call, CellFailure, Connection,
     ConnectionId, CoreField, DimValue, Dimension, ErrorKind, ExtrasSection, FieldDef, FieldKind,
-    FieldSource, FlowId, INSTANCES, Instance, KindId, KindInfo, ListResult, MatchMode,
-    PromptField, Provider, ProviderError, ProviderInfo, ResourceId, Selection, ValueId,
+    FieldSource, FlowId, INSTANCES, Instance, KindId, KindInfo, ListResult, MatchMode, PromptField,
+    Provider, ProviderError, ProviderInfo, ResourceId, Selection, ValueId,
 };
 
 const REGIONS: [&str; 3] = ["us", "us-east", "eu"];
@@ -13,6 +16,8 @@ struct Fake {
     duplicate_ids: bool,
     panic_on_describe: bool,
     signed_out: bool,
+    ignores_cancel: bool,
+    hangs_on_cancel: bool,
 }
 
 fn instances() -> Vec<Instance> {
@@ -83,11 +88,7 @@ impl Provider for Fake {
         }])
     }
 
-    fn dimensions(
-        &self,
-        _: &Call<'_>,
-        _: &ConnectionId,
-    ) -> Result<Vec<Dimension>, ProviderError> {
+    fn dimensions(&self, _: &Call<'_>, _: &ConnectionId) -> Result<Vec<Dimension>, ProviderError> {
         Ok(vec![Dimension {
             id: "region".into(),
             label: "Region".into(),
@@ -108,7 +109,15 @@ impl Provider for Fake {
         }]
     }
 
-    fn list(&self, _: &Call<'_>, _: &ConnectionId, kind: &KindId, sel: &Selection) -> ListResult {
+    fn list(&self, cx: &Call<'_>, _: &ConnectionId, kind: &KindId, sel: &Selection) -> ListResult {
+        if self.hangs_on_cancel && cx.host.cancelled() {
+            loop {
+                std::thread::park();
+            }
+        }
+        if self.ignores_cancel && cx.host.cancelled() {
+            std::thread::sleep(Duration::from_secs(6));
+        }
         if kind.as_str() != INSTANCES {
             return ListResult::default();
         }
@@ -219,7 +228,7 @@ impl Provider for Fake {
 
 #[test]
 fn fake_provider_conforms_to_contract_v1() {
-    let violations = check_provider(&Fake::default());
+    let violations = check_provider(Arc::new(Fake::default()));
     assert!(
         violations.is_empty(),
         "contract v1 violations:\n{}",
@@ -233,7 +242,7 @@ fn signed_out_fake_with_auth_error_conforms() {
         signed_out: true,
         ..Fake::default()
     };
-    let violations = check_provider(&fake);
+    let violations = check_provider(Arc::new(fake));
     assert!(violations.is_empty(), "{violations:?}");
 }
 
@@ -243,9 +252,39 @@ fn checker_reports_duplicate_resource_ids() {
         duplicate_ids: true,
         ..Fake::default()
     };
-    let violations = check_provider(&fake);
+    let violations = check_provider(Arc::new(fake));
     assert!(
         violations.iter().any(|v| v.contains("duplicate")),
+        "{violations:?}"
+    );
+}
+
+#[test]
+fn checker_reports_list_that_ignores_cancellation() {
+    let fake = Fake {
+        ignores_cancel: true,
+        ..Fake::default()
+    };
+    let violations = check_provider(Arc::new(fake));
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("after the host cancelled")),
+        "{violations:?}"
+    );
+}
+
+#[test]
+fn checker_reports_list_that_hangs_after_cancellation() {
+    let fake = Fake {
+        hangs_on_cancel: true,
+        ..Fake::default()
+    };
+    let violations = check_provider(Arc::new(fake));
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("did not return") && v.contains("after the host cancelled")),
         "{violations:?}"
     );
 }
@@ -256,7 +295,7 @@ fn checker_reports_panics_instead_of_unwinding() {
         panic_on_describe: true,
         ..Fake::default()
     };
-    let violations = check_provider(&fake);
+    let violations = check_provider(Arc::new(fake));
     assert!(
         violations
             .iter()
