@@ -5,6 +5,24 @@ Extensions are native libraries (`.so` on Linux, `.dylib` on macOS) loaded at ru
 extension runs with the user's permissions. Capabilities in the manifest are declarations the
 user must also grant; they limit what the host's helpers do, not what the library can do itself.
 
+## Writing an extension
+
+Extension crates depend on `clouddeck-extension-api` from git, pinned to the tag for the API version
+you build against:
+
+```toml
+[dependencies]
+clouddeck-extension-api = { git = "https://github.com/eginez/clouddeck", tag = "extension-api-v1" }
+```
+
+- There is one tag per API version: `extension-api-v<N>`, where `<N>` is `API_VERSION` in
+  `crates/clouddeck-extension-api/src/lib.rs`. `scripts/extension-api-tag.sh` prints the expected tag,
+  and given a tag it fails unless the tag matches.
+- The API is not published to crates.io. Only the latest API version is supported, so an extension
+  built against an older tag is refused with a rebuild message.
+- Build the crate as a `cdylib` with `panic = "unwind"`. A library that reports `panic=abort` is
+  refused at load.
+
 ## Loading
 
 - Discovery reads `extension.toml` and the host state file only. Host state (enabled, grants,
