@@ -91,6 +91,14 @@ fn entry(key: &str, value: &Option<String>) -> (String, String) {
     (key.to_string(), value.clone().unwrap_or_default())
 }
 
+/// The provider's own id: the part after the last colon, or the whole id.
+pub fn native_id(instance: &Instance) -> &str {
+    instance
+        .id
+        .rsplit_once(':')
+        .map_or(instance.id.as_str(), |(_, native)| native)
+}
+
 fn aws_state_kind(state: Option<&str>) -> StateKind {
     match state.unwrap_or_default().to_ascii_lowercase().as_str() {
         "running" => StateKind::Running,
@@ -156,6 +164,14 @@ mod tests {
             assert_eq!(aws_state_kind(Some(raw)), kind, "state {raw:?}");
         }
         assert_eq!(aws_state_kind(None), StateKind::Unknown);
+    }
+
+    #[test]
+    fn native_id_is_the_part_after_the_last_colon() {
+        let mut instance = Instance::from(&fleet()[0]);
+        assert_eq!(native_id(&instance), "i-0000000000000001");
+        instance.id = "plain".to_string();
+        assert_eq!(native_id(&instance), "plain");
     }
 
     #[test]

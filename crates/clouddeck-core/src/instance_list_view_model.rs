@@ -1,9 +1,10 @@
 use std::collections::{HashMap, HashSet};
 use std::time::SystemTime;
 
+use crate::instance::{Instance, native_id};
 use crate::{
-    CloudDeckError, CompiledQuery, ComputeInstanceFilters, ComputeService,
-    ComputeServicePartialFailure, EC2Instance, QueryError, merge_with_previous,
+    CloudDeckError, CompiledQuery, ComputeService, ComputeServicePartialFailure, QueryError,
+    merge_with_previous,
 };
 
 /// Rust port of the Swift oracle's `InstanceListViewModel`
@@ -16,7 +17,7 @@ use crate::{
 /// `crate::compile`).
 pub struct InstanceListViewModel {
     service: std::sync::Arc<dyn ComputeService + Send + Sync>,
-    instances: Vec<EC2Instance>,
+    instances: Vec<Instance>,
     is_loading: bool,
     error: Option<CloudDeckError>,
     error_message: Option<String>,
@@ -51,7 +52,7 @@ impl InstanceListViewModel {
         }
     }
 
-    pub fn instances(&self) -> &[EC2Instance] {
+    pub fn instances(&self) -> &[Instance] {
         &self.instances
     }
 
@@ -138,7 +139,7 @@ impl InstanceListViewModel {
 
     /// Distinct, non-empty instance states, sorted case-insensitively.
     pub fn available_states(&self) -> Vec<String> {
-        Self::distinct_sorted(self.instances.iter().filter_map(|i| i.state.clone()))
+        Self::distinct_sorted(self.instances.iter().map(|i| i.state.raw.clone()))
     }
 
     /// Distinct, non-empty instance types, sorted case-insensitively.
@@ -152,28 +153,28 @@ impl InstanceListViewModel {
 
     /// The current instance list with search/state/type filters applied,
     /// sorted by instance ID case-insensitively.
-    pub fn filtered_instances(&self) -> Vec<EC2Instance> {
-        let filters = ComputeInstanceFilters {
-            name_contains: None,
-            states: if self.selected_state.is_empty() {
-                vec![]
-            } else {
-                vec![self.selected_state.clone()]
-            },
-            instance_types: if self.selected_instance_type.is_empty() {
-                vec![]
-            } else {
-                vec![self.selected_instance_type.clone()]
-            },
-        };
+    pub fn filtered_instances(&self) -> Vec<Instance> {
+        let states = normalized_selection(&self.selected_state);
+        let instance_types = normalized_selection(&self.selected_instance_type);
 
-        let matched = self.compile_search().filter_instances(&self.instances);
-        let mut filtered = filters.apply(&matched);
+        let mut filtered: Vec<Instance> = self
+            .compile_search()
+            .filter_instances(&self.instances)
+            .into_iter()
+            .filter(|instance| states.is_empty() || states.contains(&instance.state.raw.to_lowercase()))
+            .filter(|instance| {
+                instance_types.is_empty()
+                    || instance
+                        .instance_type
+                        .as_deref()
+                        .is_some_and(|value| instance_types.contains(&value.to_lowercase()))
+            })
+            .collect();
         filtered.sort_by(|a, b| {
-            a.instance_id
+            native_id(a)
                 .to_lowercase()
-                .cmp(&b.instance_id.to_lowercase())
-                .then_with(|| a.instance_id.cmp(&b.instance_id))
+                .cmp(&native_id(b).to_lowercase())
+                .then_with(|| native_id(a).cmp(native_id(b)))
         });
         filtered
     }
@@ -193,9 +194,9 @@ impl InstanceListViewModel {
     }
 
     /// The instance matching `selected_instance_id`, if any.
-    pub fn selected_instance(&self) -> Option<&EC2Instance> {
+    pub fn selected_instance(&self) -> Option<&Instance> {
         let selected_id = self.selected_instance_id.as_deref()?;
-        self.instances.iter().find(|i| i.id() == selected_id)
+        self.instances.iter().find(|i| i.id == selected_id)
     }
 
     /// A user-facing summary of partial failures, or `None` if there are
@@ -253,17 +254,18 @@ impl InstanceListViewModel {
             Ok(result) => {
                 self.error = None;
                 self.error_message = None;
-                let merged = merge_with_previous(&self.instances, &result);
+                let fresh: Vec<Instance> = result.instances.iter().map(Instance::from).collect();
+                for instance in &fresh {
+                    if let Some(region) = instance.region.as_deref() {
+                        self.region_loaded_at.insert(region.to_string(), now);
+                    }
+                }
+                let merged = merge_with_previous(&self.instances, fresh, &result.partial_failures);
                 self.instances = merged.instances;
                 self.stale_regions = merged.stale_regions;
                 self.known_tag_keys = crate::known_tag_keys(&self.instances);
                 self.partial_failures = result.partial_failures;
                 self.last_success = Some(now);
-                for instance in &result.instances {
-                    if let Some(region) = instance.region.as_deref() {
-                        self.region_loaded_at.insert(region.to_string(), now);
-                    }
-                }
                 self.reconcile_selected_filters();
                 self.reconcile_selection_with_filtered_instances();
             }
@@ -327,7 +329,7 @@ impl InstanceListViewModel {
             return;
         };
         let filtered_ids: HashSet<String> =
-            self.filtered_instances().iter().map(|i| i.id()).collect();
+            self.filtered_instances().into_iter().map(|i| i.id).collect();
         if !filtered_ids.contains(selected_id) {
             self.selected_instance_id = None;
         }
@@ -347,10 +349,21 @@ impl InstanceListViewModel {
     }
 }
 
+/// The selected filter value as a lowercase set; empty when nothing is selected.
+fn normalized_selection(selected: &str) -> HashSet<String> {
+    let value = selected.trim().to_lowercase();
+    if value.is_empty() {
+        HashSet::new()
+    } else {
+        HashSet::from([value])
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DirectoryScenarioCatalog, ScenarioService, TestScenarioKind};
+    use crate::query::fixtures::bare_ec2;
+    use crate::{ComputeInstanceFilters, DirectoryScenarioCatalog, ScenarioService, TestScenarioKind};
     use std::time::{Duration, UNIX_EPOCH};
 
     const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/testdata/ec2-scenarios");
@@ -391,7 +404,7 @@ mod tests {
     fn load_failure_keeps_last_good_instances_and_sets_error_message() {
         let mut vm =
             InstanceListViewModel::new(Box::new(crate::MockComputeService::new(vec![], None)));
-        vm.finish_load_at(loaded(vec![in_region("us-east-1", "a")], &[]), at(T1_SECS));
+        vm.finish_load_at(loaded(vec![("us-east-1", "a")], &[]), at(T1_SECS));
         vm.set_search_text("keep-me");
         vm.set_selected_instance_id(Some("us-east-1:a".into()));
 
@@ -525,7 +538,7 @@ mod tests {
     /// used to exercise the failure-then-success load transition below.
     struct FailsOnceThenSucceeds {
         failed_once: std::sync::atomic::AtomicBool,
-        instances: Vec<EC2Instance>,
+        result: crate::ComputeInstanceLoadResult,
     }
 
     #[derive(Debug)]
@@ -551,10 +564,7 @@ mod tests {
             {
                 return Err(Box::new(StubError));
             }
-            Ok(crate::ComputeInstanceLoadResult {
-                instances: self.instances.clone(),
-                partial_failures: vec![],
-            })
+            Ok(self.result.clone())
         }
     }
 
@@ -562,27 +572,7 @@ mod tests {
     async fn a_successful_load_after_a_prior_failure_clears_the_stale_error() {
         let mut vm = InstanceListViewModel::new(Box::new(FailsOnceThenSucceeds {
             failed_once: std::sync::atomic::AtomicBool::new(false),
-            instances: vec![EC2Instance {
-                instance_id: "i-recovered".to_string(),
-                region: None,
-                instance_type: None,
-                state: None,
-                launch_time: None,
-                public_ip_address: None,
-                private_ip_address: None,
-                vpc_id: None,
-                subnet_id: None,
-                security_groups: vec![],
-                tags: vec![],
-                availability_zone: None,
-                image_id: None,
-                key_name: None,
-                architecture: None,
-                state_transition_reason: None,
-                iam_instance_profile_arn: None,
-                private_dns_name: None,
-                public_dns_name: None,
-            }],
+            result: load_result(vec![("us-east-1", "i-recovered")], &[]),
         }));
 
         vm.load_instances().await;
@@ -595,7 +585,7 @@ mod tests {
             "a successful load must clear the stale error from the prior failure"
         );
         assert_eq!(vm.instances().len(), 1);
-        assert_eq!(vm.instances()[0].instance_id, "i-recovered");
+        assert_eq!(native_id(&vm.instances()[0]), "i-recovered");
     }
 
     #[tokio::test]
@@ -615,7 +605,7 @@ mod tests {
         vm.set_search_text("bastion");
         let filtered = vm.filtered_instances();
         assert_eq!(filtered.len(), 1);
-        assert_eq!(filtered[0].name(), Some("bastion-east-1"));
+        assert_eq!(filtered[0].name.as_deref(), Some("bastion-east-1"));
     }
 
     #[tokio::test]
@@ -625,7 +615,7 @@ mod tests {
 
         vm.set_selected_state("running");
         let filtered = vm.filtered_instances();
-        let ids: Vec<&str> = filtered.iter().map(|i| i.instance_id.as_str()).collect();
+        let ids: Vec<&str> = filtered.iter().map(native_id).collect();
         assert_eq!(ids, vec!["i-scenario-001", "i-scenario-003"]);
     }
 
@@ -636,7 +626,7 @@ mod tests {
 
         vm.set_selected_instance_type("t3.medium");
         let filtered = vm.filtered_instances();
-        let ids: Vec<&str> = filtered.iter().map(|i| i.instance_id.as_str()).collect();
+        let ids: Vec<&str> = filtered.iter().map(native_id).collect();
         assert_eq!(ids, vec!["i-scenario-001"]);
     }
 
@@ -650,7 +640,7 @@ mod tests {
         vm.set_selected_instance_type("t3.small");
         let filtered = vm.filtered_instances();
         assert_eq!(filtered.len(), 1);
-        assert_eq!(filtered[0].instance_id, "i-scenario-003");
+        assert_eq!(native_id(&filtered[0]), "i-scenario-003");
 
         // A constraint that matches nothing in combination excludes everything.
         vm.set_selected_instance_type("m6i.large");
@@ -663,7 +653,7 @@ mod tests {
         vm.load_instances().await;
 
         let filtered = vm.filtered_instances();
-        let ids: Vec<&str> = filtered.iter().map(|i| i.instance_id.as_str()).collect();
+        let ids: Vec<&str> = filtered.iter().map(native_id).collect();
         let mut expected = ids.clone();
         expected.sort_by_key(|a| a.to_lowercase());
         assert_eq!(ids, expected);
@@ -673,7 +663,7 @@ mod tests {
     fn filtered_ids(vm: &InstanceListViewModel) -> Vec<String> {
         vm.filtered_instances()
             .into_iter()
-            .map(|i| i.instance_id)
+            .map(|i| native_id(&i).to_string())
             .collect()
     }
 
@@ -796,7 +786,7 @@ mod tests {
     async fn setting_search_text_clears_selection_no_longer_in_filtered_list() {
         let mut vm = view_model_for(TestScenarioKind::SmallHappyPath);
         vm.load_instances().await;
-        let first_id = vm.instances()[0].id();
+        let first_id = vm.instances()[0].id.clone();
         vm.set_selected_instance_id(Some(first_id.clone()));
         assert_eq!(vm.selected_instance_id(), Some(first_id.as_str()));
 
@@ -813,9 +803,9 @@ mod tests {
         let stopped_id = vm
             .instances()
             .iter()
-            .find(|i| i.instance_id == "i-scenario-002")
+            .find(|i| native_id(i) == "i-scenario-002")
             .unwrap()
-            .id();
+            .id.clone();
         vm.set_selected_instance_id(Some(stopped_id.clone()));
         assert_eq!(vm.selected_instance_id(), Some(stopped_id.as_str()));
 
@@ -832,9 +822,9 @@ mod tests {
         let large_id = vm
             .instances()
             .iter()
-            .find(|i| i.instance_id == "i-scenario-002")
+            .find(|i| native_id(i) == "i-scenario-002")
             .unwrap()
-            .id();
+            .id.clone();
         vm.set_selected_instance_id(Some(large_id.clone()));
         assert_eq!(vm.selected_instance_id(), Some(large_id.as_str()));
 
@@ -848,7 +838,7 @@ mod tests {
         let mut vm = view_model_for(TestScenarioKind::SmallHappyPath);
         vm.load_instances().await;
         let target = vm.instances()[0].clone();
-        vm.set_selected_instance_id(Some(target.id()));
+        vm.set_selected_instance_id(Some(target.id.clone()));
 
         assert_eq!(vm.selected_instance(), Some(&target));
     }
@@ -908,36 +898,22 @@ mod tests {
         UNIX_EPOCH + Duration::from_secs(secs)
     }
 
-    fn in_region(region: &str, instance_id: &str) -> EC2Instance {
-        EC2Instance {
-            instance_id: instance_id.to_string(),
-            region: Some(region.to_string()),
-            instance_type: None,
-            state: None,
-            launch_time: None,
-            public_ip_address: None,
-            private_ip_address: None,
-            vpc_id: None,
-            subnet_id: None,
-            security_groups: vec![],
-            tags: vec![],
-            availability_zone: None,
-            image_id: None,
-            key_name: None,
-            architecture: None,
-            state_transition_reason: None,
-            iam_instance_profile_arn: None,
-            private_dns_name: None,
-            public_dns_name: None,
-        }
-    }
-
     fn loaded(
-        instances: Vec<EC2Instance>,
+        records: Vec<(&str, &str)>,
         failed_regions: &[&str],
     ) -> Result<crate::ComputeInstanceLoadResult, crate::BoxError> {
-        Ok(crate::ComputeInstanceLoadResult {
-            instances,
+        Ok(load_result(records, failed_regions))
+    }
+
+    fn load_result(
+        records: Vec<(&str, &str)>,
+        failed_regions: &[&str],
+    ) -> crate::ComputeInstanceLoadResult {
+        crate::ComputeInstanceLoadResult {
+            instances: records
+                .into_iter()
+                .map(|(region, instance_id)| bare_ec2(region, instance_id))
+                .collect(),
             partial_failures: failed_regions
                 .iter()
                 .map(|region| ComputeServicePartialFailure {
@@ -946,13 +922,13 @@ mod tests {
                     error: CloudDeckError::Unknown("request failed".to_string()),
                 })
                 .collect(),
-        })
+        }
     }
 
     fn loaded_ids(vm: &InstanceListViewModel) -> Vec<&str> {
         vm.instances()
             .iter()
-            .map(|i| i.instance_id.as_str())
+            .map(native_id)
             .collect()
     }
 
@@ -962,14 +938,14 @@ mod tests {
             InstanceListViewModel::new(Box::new(crate::MockComputeService::new(vec![], None)));
         vm.finish_load_at(
             loaded(
-                vec![in_region("us-east-1", "a"), in_region("eu-central-1", "b")],
+                vec![("us-east-1", "a"), ("eu-central-1", "b")],
                 &[],
             ),
             at(T1_SECS),
         );
 
         vm.finish_load_at(
-            loaded(vec![in_region("us-east-1", "a")], &["eu-central-1"]),
+            loaded(vec![("us-east-1", "a")], &["eu-central-1"]),
             at(T2_SECS),
         );
 
@@ -986,19 +962,19 @@ mod tests {
             InstanceListViewModel::new(Box::new(crate::MockComputeService::new(vec![], None)));
         vm.finish_load_at(
             loaded(
-                vec![in_region("us-east-1", "a"), in_region("eu-central-1", "b")],
+                vec![("us-east-1", "a"), ("eu-central-1", "b")],
                 &[],
             ),
             at(T1_SECS),
         );
         vm.finish_load_at(
-            loaded(vec![in_region("us-east-1", "a")], &["eu-central-1"]),
+            loaded(vec![("us-east-1", "a")], &["eu-central-1"]),
             at(T2_SECS),
         );
 
         vm.finish_load_at(
             loaded(
-                vec![in_region("us-east-1", "a"), in_region("eu-central-1", "b")],
+                vec![("us-east-1", "a"), ("eu-central-1", "b")],
                 &[],
             ),
             at(T2_SECS),
@@ -1015,13 +991,13 @@ mod tests {
             InstanceListViewModel::new(Box::new(crate::MockComputeService::new(vec![], None)));
         vm.finish_load_at(
             loaded(
-                vec![in_region("us-east-1", "a"), in_region("eu-central-1", "b")],
+                vec![("us-east-1", "a"), ("eu-central-1", "b")],
                 &[],
             ),
             at(T1_SECS),
         );
         vm.finish_load_at(
-            loaded(vec![in_region("us-east-1", "a")], &["eu-central-1"]),
+            loaded(vec![("us-east-1", "a")], &["eu-central-1"]),
             at(T2_SECS),
         );
 
@@ -1040,7 +1016,7 @@ mod tests {
         let mut vm =
             InstanceListViewModel::new(Box::new(crate::MockComputeService::new(vec![], None)));
 
-        vm.finish_load(loaded(vec![in_region("us-east-1", "a")], &[]));
+        vm.finish_load(loaded(vec![("us-east-1", "a")], &[]));
 
         assert!(vm.last_success().is_some());
     }

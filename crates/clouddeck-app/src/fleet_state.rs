@@ -7,7 +7,7 @@ use std::time::Instant;
 use std::time::{Duration, SystemTime};
 
 use clouddeck_core::{
-    CloudDeckError, Column, EC2Instance, RECENT_INSTANCE_LIMIT, SortState, push_recent,
+    CloudDeckError, Column, Instance, RECENT_INSTANCE_LIMIT, SortState, push_recent,
     sort_instances, throttle_retry_delay,
 };
 use gpui::{App, Context};
@@ -22,7 +22,7 @@ pub struct FleetState {
     pub view_model: InstanceListViewModel,
     /// Column sort applied to the visible rows.
     pub sort: SortState,
-    /// `EC2Instance::id()` of the selected row.
+    /// `Instance::id` of the selected row.
     pub selected: Option<String>,
     pub sidebar_open: bool,
     pub inspector_open: bool,
@@ -101,7 +101,7 @@ impl FleetState {
     }
 
     /// Instances passing the query and filters, in the current sort order.
-    pub fn visible_rows(&self) -> Vec<EC2Instance> {
+    pub fn visible_rows(&self) -> Vec<Instance> {
         let mut rows = self.view_model.filtered_instances();
         sort_instances(&mut rows, self.sort);
         rows
@@ -127,15 +127,15 @@ impl FleetState {
 
     /// Moves the selection to the previous or next visible row.
     pub fn move_selection(&mut self, down: bool, cx: &mut Context<Self>) {
-        let keys: Vec<String> = self.visible_rows().iter().map(|i| i.id()).collect();
+        let keys: Vec<String> = self.visible_rows().into_iter().map(|i| i.id).collect();
         let next = clouddeck_core::move_selection(&keys, self.selected.as_deref(), down);
         self.select(next, cx);
     }
 
     /// The selected instance, if it is still among the visible rows.
-    pub fn selected_instance(&self) -> Option<EC2Instance> {
+    pub fn selected_instance(&self) -> Option<Instance> {
         let key = self.selected.as_deref()?;
-        self.visible_rows().into_iter().find(|i| i.id() == key)
+        self.visible_rows().into_iter().find(|i| i.id == key)
     }
 
     /// Shows `text` in the status bar until `FLASH_DURATION` has passed.
@@ -222,7 +222,7 @@ impl FleetState {
 
     fn reconcile_selection(&mut self) {
         if let Some(key) = self.selected.as_deref() {
-            let visible = self.visible_rows().iter().any(|i| i.id() == key);
+            let visible = self.visible_rows().iter().any(|i| i.id == key);
             if !visible {
                 self.selected = None;
             }
@@ -235,48 +235,18 @@ impl FleetState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clouddeck_core::{EC2InstanceTag, MockComputeService};
+    use crate::test_support::ec2_fleet;
+    use clouddeck_core::{MockComputeService, native_id};
     use gpui::{AppContext, Entity, TestAppContext};
-
-    fn instance(id: &str, name: &str, state: &str) -> EC2Instance {
-        EC2Instance {
-            instance_id: id.to_string(),
-            region: Some("us-east-1".to_string()),
-            instance_type: Some("t3.medium".to_string()),
-            state: Some(state.to_string()),
-            launch_time: None,
-            public_ip_address: None,
-            private_ip_address: None,
-            vpc_id: None,
-            subnet_id: None,
-            security_groups: vec![],
-            tags: vec![EC2InstanceTag {
-                key: "Name".to_string(),
-                value: name.to_string(),
-            }],
-            iam_instance_profile_arn: None,
-            private_dns_name: None,
-            public_dns_name: None,
-            availability_zone: None,
-            image_id: None,
-            key_name: None,
-            architecture: None,
-            state_transition_reason: None,
-        }
-    }
-
-    fn fixture_instances() -> Vec<EC2Instance> {
-        vec![
-            instance("i-1", "api-server", "running"),
-            instance("i-2", "bastion", "stopped"),
-            instance("i-3", "worker", "stopped"),
-            instance("i-4", "cache", "running"),
-        ]
-    }
 
     fn new_state(cx: &mut TestAppContext) -> Entity<FleetState> {
         let vm = InstanceListViewModel::new(Box::new(MockComputeService::new(
-            fixture_instances(),
+            ec2_fleet(&[
+                ("i-1", "api-server", "running", "t3.medium"),
+                ("i-2", "bastion", "stopped", "t3.medium"),
+                ("i-3", "worker", "stopped", "t3.medium"),
+                ("i-4", "cache", "running", "t3.medium"),
+            ]),
             None,
         )));
         cx.new(|_| FleetState::new(vm, "default".to_string(), true))
@@ -306,7 +276,7 @@ mod tests {
 
     fn visible_ids(state: &Entity<FleetState>, cx: &mut TestAppContext) -> Vec<String> {
         state.read_with(cx, |state, _| {
-            state.visible_rows().iter().map(|i| i.id()).collect()
+            state.visible_rows().iter().map(|i| i.id.clone()).collect()
         })
     }
 
@@ -327,7 +297,7 @@ mod tests {
         state.update(cx, |state, cx| state.set_query("state:stopped", cx));
         let rows = state.read_with(cx, |state, _| state.visible_rows());
         assert_eq!(rows.len(), 2);
-        assert!(rows.iter().all(|i| i.state.as_deref() == Some("stopped")));
+        assert!(rows.iter().all(|i| i.state.raw == "stopped"));
 
         state.update(cx, |state, cx| state.set_query("", cx));
         assert_eq!(visible_ids(&state, cx).len(), 4);
@@ -367,7 +337,7 @@ mod tests {
                 ascending: false,
             },
         );
-        let expected_ids: Vec<String> = expected.iter().map(|i| i.id()).collect();
+        let expected_ids: Vec<String> = expected.iter().map(|i| i.id.clone()).collect();
         assert_eq!(visible_ids(&state, cx), expected_ids);
         assert_eq!(
             visible_ids(&state, cx),
@@ -438,7 +408,10 @@ mod tests {
         });
 
         let selected = state.read_with(cx, |state, _| state.selected_instance());
-        assert_eq!(selected.map(|i| i.instance_id), Some("i-2".to_string()));
+        assert_eq!(
+            selected.map(|i| native_id(&i).to_string()),
+            Some("i-2".to_string())
+        );
     }
 
     #[gpui::test]

@@ -48,7 +48,7 @@ pub struct UiState {
     pub pinned_searches: Vec<String>,
     /// Recent search queries, most recent first.
     pub recent_searches: Vec<String>,
-    /// `EC2Instance::id()` keys, most recent first.
+    /// `Instance::id` keys, most recent first.
     pub recent_instances: Vec<String>,
     /// Whether the sidebar is shown.
     pub sidebar_open: bool,

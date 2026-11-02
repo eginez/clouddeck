@@ -8,9 +8,9 @@ use clouddeck_core::{
     TermKind, apply_suggestion, compile, known_tag_keys, layout_rules, push_recent, suggest,
 };
 use gpui::{
-    AnyWindowHandle, App, ClickEvent, Context, Entity, Focusable, Font, Global, Hsla, IntoElement,
-    KeyBinding, Render, SharedString, StyledText, TextRun, UnderlineStyle, WeakEntity, Window,
-    actions, anchored, deferred, div, prelude::*, px, rems, Corner,
+    AnyWindowHandle, App, ClickEvent, Context, Corner, Entity, Focusable, Font, Global, Hsla,
+    IntoElement, KeyBinding, Render, SharedString, StyledText, TextRun, UnderlineStyle, WeakEntity,
+    Window, actions, anchored, deferred, div, prelude::*, px, rems,
 };
 use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::{Sizable, Size};
@@ -770,7 +770,8 @@ mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    use clouddeck_core::{EC2Instance, EC2InstanceTag, MockComputeService};
+    use crate::test_support::{ec2_record, ec2_tag};
+    use clouddeck_core::MockComputeService;
     use gpui::{Entity, TestAppContext, VisualTestContext};
 
     use super::*;
@@ -778,38 +779,11 @@ mod tests {
     use crate::ui_record::recorded;
     use crate::view_models::InstanceListViewModel;
 
-    fn instance(id: &str, name: &str, state: &str) -> EC2Instance {
-        EC2Instance {
-            instance_id: id.to_string(),
-            region: Some("us-east-1".to_string()),
-            instance_type: Some("t3.medium".to_string()),
-            state: Some(state.to_string()),
-            launch_time: None,
-            public_ip_address: None,
-            private_ip_address: None,
-            vpc_id: None,
-            subnet_id: None,
-            security_groups: vec![],
-            tags: vec![EC2InstanceTag {
-                key: "Name".to_string(),
-                value: name.to_string(),
-            }],
-            iam_instance_profile_arn: None,
-            private_dns_name: None,
-            public_dns_name: None,
-            availability_zone: None,
-            image_id: None,
-            key_name: None,
-            architecture: None,
-            state_transition_reason: None,
-        }
-    }
-
     fn loaded_view_model() -> InstanceListViewModel {
         let instances = vec![
-            instance("i-1", "api-server", "running"),
-            instance("i-2", "bastion", "stopped"),
-            instance("i-3", "worker", "stopped"),
+            ec2_record("i-1", "api-server", "running", "t3.medium"),
+            ec2_record("i-2", "bastion", "stopped", "t3.medium"),
+            ec2_record("i-3", "worker", "stopped", "t3.medium"),
         ];
         let mut vm = InstanceListViewModel::new(Box::new(MockComputeService::new(instances, None)));
         let rt = tokio::runtime::Builder::new_current_thread()
@@ -821,9 +795,9 @@ mod tests {
 
     fn three_state_view_model() -> InstanceListViewModel {
         let instances = vec![
-            instance("i-1", "api-server", "running"),
-            instance("i-2", "bastion", "stopped"),
-            instance("i-3", "batcher", "pending"),
+            ec2_record("i-1", "api-server", "running", "t3.medium"),
+            ec2_record("i-2", "bastion", "stopped", "t3.medium"),
+            ec2_record("i-3", "batcher", "pending", "t3.medium"),
         ];
         let mut vm = InstanceListViewModel::new(Box::new(MockComputeService::new(instances, None)));
         let rt = tokio::runtime::Builder::new_current_thread()
@@ -1111,11 +1085,8 @@ mod tests {
     }
 
     fn owner_view_model() -> InstanceListViewModel {
-        let mut tagged = instance("i-1", "api-server", "running");
-        tagged.tags.push(EC2InstanceTag {
-            key: "Owner".to_string(),
-            value: "platform".to_string(),
-        });
+        let mut tagged = ec2_record("i-1", "api-server", "running", "t3.medium");
+        tagged.tags.push(ec2_tag("Owner", "platform"));
         let mut vm =
             InstanceListViewModel::new(Box::new(MockComputeService::new(vec![tagged], None)));
         let rt = tokio::runtime::Builder::new_current_thread()

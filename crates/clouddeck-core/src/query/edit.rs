@@ -136,7 +136,7 @@ mod tests {
     use crate::query::{fixtures, known_tag_keys};
 
     fn known() -> Vec<String> {
-        known_tag_keys(&fixtures::fleet())
+        known_tag_keys(&fixtures::fleet_instances())
     }
 
     #[test]

@@ -1,6 +1,6 @@
 use std::fmt;
 
-use crate::models::EC2Instance;
+use crate::instance::{Instance, native_id};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Partition {
@@ -83,9 +83,9 @@ pub fn console_url_for_instance(
     ))
 }
 
-pub fn console_url_for(instance: &EC2Instance) -> Result<String, ConsoleUrlError> {
+pub fn console_url_for(instance: &Instance) -> Result<String, ConsoleUrlError> {
     let region = instance.region.as_deref().unwrap_or_default();
-    console_url_for_instance(region, &instance.instance_id)
+    console_url_for_instance(region, native_id(instance))
 }
 
 fn is_valid_region(region: &str) -> bool {
@@ -107,9 +107,10 @@ fn is_valid_instance_id(instance_id: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::EC2Instance;
 
-    fn instance_in(region: Option<&str>) -> EC2Instance {
-        EC2Instance {
+    fn instance_in(region: Option<&str>) -> Instance {
+        Instance::from(&EC2Instance {
             instance_id: "i-0123456789abcdef0".to_string(),
             region: region.map(str::to_string),
             instance_type: None,
@@ -129,7 +130,7 @@ mod tests {
             iam_instance_profile_arn: None,
             private_dns_name: None,
             public_dns_name: None,
-        }
+        })
     }
 
     #[test]

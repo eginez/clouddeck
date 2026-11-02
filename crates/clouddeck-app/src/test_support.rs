@@ -6,8 +6,126 @@
 //! under `#[cfg(test)]` in `main.rs`).
 
 use clouddeck_core::{
-    ComputeInstanceFilters, ComputeInstanceLoadResult, ComputeService, EC2Instance,
+    ComputeInstanceFilters, ComputeInstanceLoadResult, ComputeService, EC2Instance, EC2InstanceTag,
+    EC2SecurityGroup,
 };
+
+/// A provider record in us-east-1 with a `Name` tag, for fleets fed to a fake compute service.
+pub fn ec2_record(instance_id: &str, name: &str, state: &str, instance_type: &str) -> EC2Instance {
+    EC2Instance {
+        instance_id: instance_id.to_string(),
+        region: Some("us-east-1".to_string()),
+        instance_type: Some(instance_type.to_string()),
+        state: Some(state.to_string()),
+        launch_time: None,
+        public_ip_address: None,
+        private_ip_address: None,
+        vpc_id: None,
+        subnet_id: None,
+        security_groups: vec![],
+        tags: vec![ec2_tag("Name", name)],
+        availability_zone: None,
+        image_id: None,
+        key_name: None,
+        architecture: None,
+        state_transition_reason: None,
+        iam_instance_profile_arn: None,
+        private_dns_name: None,
+        public_dns_name: None,
+    }
+}
+
+/// Provider records as a fake compute service returns them.
+pub type ProviderRecords = Vec<EC2Instance>;
+
+/// A record like [`ec2_record`] with an optional `Owner` tag.
+pub fn ec2_owned(instance_id: &str, name: &str, state: &str, owner: Option<&str>) -> EC2Instance {
+    let mut record = ec2_record(instance_id, name, state, "t3.medium");
+    if let Some(owner) = owner {
+        record.tags.push(ec2_tag("Owner", owner));
+    }
+    record
+}
+
+/// Provider records for `(instance id, Name tag, state, instance type)` rows.
+pub fn ec2_fleet(rows: &[(&str, &str, &str, &str)]) -> Vec<EC2Instance> {
+    rows.iter()
+        .map(|(id, name, state, instance_type)| ec2_record(id, name, state, instance_type))
+        .collect()
+}
+
+/// The inspector fixture: one richly tagged running record and one untagged stopped record.
+pub fn ec2_inspector_fixture() -> Vec<EC2Instance> {
+    vec![ec2_running_with_ten_tags(), ec2_untagged_stopped()]
+}
+
+fn ec2_blank(id: &str) -> EC2Instance {
+    EC2Instance {
+        instance_id: id.to_string(),
+        region: Some("us-east-1".to_string()),
+        instance_type: None,
+        state: None,
+        launch_time: None,
+        public_ip_address: None,
+        private_ip_address: None,
+        vpc_id: None,
+        subnet_id: None,
+        security_groups: vec![],
+        tags: vec![],
+        iam_instance_profile_arn: None,
+        private_dns_name: None,
+        public_dns_name: None,
+        availability_zone: None,
+        image_id: None,
+        key_name: None,
+        architecture: None,
+        state_transition_reason: None,
+    }
+}
+
+fn ec2_running_with_ten_tags() -> EC2Instance {
+    let mut tags = vec![ec2_tag("Name", "api-gateway-01")];
+    tags.extend((1..=9).map(|n| ec2_tag(&format!("k{n}"), &n.to_string())));
+    EC2Instance {
+        state: Some("running".to_string()),
+        instance_type: Some("t3.medium".to_string()),
+        availability_zone: Some("us-east-1a".to_string()),
+        private_ip_address: Some("10.0.4.3".to_string()),
+        private_dns_name: Some("ip-10-0-4-3.ec2.internal".to_string()),
+        vpc_id: Some("vpc-098f0fdb8".to_string()),
+        subnet_id: Some("subnet-0d99b9061".to_string()),
+        image_id: Some("ami-027d083c0".to_string()),
+        key_name: Some("ops-ed25519".to_string()),
+        security_groups: vec![
+            ec2_security_group("web-sg", "sg-0d2fc5662"),
+            ec2_security_group("monitoring-sg", "sg-074bb5deb"),
+        ],
+        tags,
+        ..ec2_blank("i-0123456789abcdef0")
+    }
+}
+
+fn ec2_untagged_stopped() -> EC2Instance {
+    EC2Instance {
+        state: Some("stopped".to_string()),
+        instance_type: Some("m6i.large".to_string()),
+        ..ec2_blank("i-0d2fc5662eb309e50")
+    }
+}
+
+pub fn ec2_tag(key: &str, value: &str) -> EC2InstanceTag {
+    EC2InstanceTag {
+        key: key.to_string(),
+        value: value.to_string(),
+    }
+}
+
+pub fn ec2_security_group(group_name: &str, group_id: &str) -> EC2SecurityGroup {
+    EC2SecurityGroup {
+        group_name: Some(group_name.to_string()),
+        group_id: Some(group_id.to_string()),
+    }
+}
 
 /// A [`ComputeService`] whose `list_instances` call blocks on an
 /// externally-held [`tokio::sync::Notify`] until the test releases it.

@@ -1,4 +1,4 @@
-use crate::EC2Instance;
+use crate::Instance;
 
 /// Recent searches shown in the empty search field.
 pub const RECENT_SEARCHES_SHOWN: usize = 4;
@@ -41,46 +41,28 @@ pub fn is_pinned(pins: &[String], query: &str) -> bool {
     pins.iter().any(|pin| pin == trimmed)
 }
 
-/// Looks up instances by `EC2Instance::id()` keys, in key order, skipping unknown keys.
+/// Looks up instances by `Instance::id` keys, in key order, skipping unknown keys.
 pub fn resolve_recent_instances<'a>(
     keys: &[String],
-    instances: &'a [EC2Instance],
-) -> Vec<&'a EC2Instance> {
+    instances: &'a [Instance],
+) -> Vec<&'a Instance> {
     keys.iter()
-        .filter_map(|key| instances.iter().find(|instance| instance.id() == *key))
+        .filter_map(|key| instances.iter().find(|instance| instance.id == *key))
         .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::instance::native_id;
+    use crate::query::fixtures::bare_instance;
 
     fn strings(items: &[&str]) -> Vec<String> {
         items.iter().map(|item| item.to_string()).collect()
     }
 
-    fn instance(region: &str, instance_id: &str) -> EC2Instance {
-        EC2Instance {
-            instance_id: instance_id.to_string(),
-            region: Some(region.to_string()),
-            instance_type: None,
-            state: Some("running".to_string()),
-            launch_time: None,
-            public_ip_address: None,
-            private_ip_address: None,
-            vpc_id: None,
-            subnet_id: None,
-            security_groups: vec![],
-            tags: vec![],
-            availability_zone: None,
-            image_id: None,
-            key_name: None,
-            architecture: None,
-            state_transition_reason: None,
-            iam_instance_profile_arn: None,
-            private_dns_name: None,
-            public_dns_name: None,
-        }
+    fn instance(region: &str, instance_id: &str) -> Instance {
+        bare_instance(region, instance_id)
     }
 
     #[test]
@@ -147,8 +129,8 @@ mod tests {
         ];
         let keys = strings(&["eu-west-1:i-3", "missing:i-9", "us-east-1:i-1"]);
         let ids: Vec<&str> = resolve_recent_instances(&keys, &instances)
-            .iter()
-            .map(|instance| instance.instance_id.as_str())
+            .into_iter()
+            .map(native_id)
             .collect();
         assert_eq!(ids, ["i-3", "i-1"]);
     }

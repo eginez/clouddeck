@@ -2,7 +2,9 @@ mod error;
 mod fault_injecting;
 mod fleet_compute;
 mod instance;
-pub use instance::{Address, AddressKind, ExtrasSection, Instance, Label, State, StateKind};
+pub use instance::{
+    Address, AddressKind, ExtrasSection, Instance, Label, State, StateKind, native_id,
+};
 mod aws_inspector;
 mod provider;
 pub use clouddeck_provider_api::{

@@ -1,5 +1,6 @@
 //! Shared fixture for the query engine beads. Later beads compute expected
 //! values against exactly this data: do not change it.
+use crate::instance::Instance;
 use crate::models::{EC2Instance, EC2InstanceTag, EC2SecurityGroup};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -138,10 +139,7 @@ pub(crate) fn fleet() -> Vec<EC2Instance> {
             vpc_id: None,
             subnet_id: None,
             security_groups: Vec::new(),
-            tags: tags(
-                "ml-trainer-01",
-                &[("Team", "data"), ("Owner", "esteban")],
-            ),
+            tags: tags("ml-trainer-01", &[("Team", "data"), ("Owner", "esteban")]),
             availability_zone: Some("eu-west-1b".to_string()),
             image_id: None,
             key_name: None,
@@ -152,6 +150,114 @@ pub(crate) fn fleet() -> Vec<EC2Instance> {
             public_dns_name: None,
         },
     ]
+}
+
+/// The shared fixture fleet in the neutral model.
+pub(crate) fn fleet_instances() -> Vec<Instance> {
+    fleet().iter().map(Instance::from).collect()
+}
+
+/// A provider record with only its region and id set.
+pub(crate) fn bare_ec2(region: &str, instance_id: &str) -> EC2Instance {
+    EC2Instance {
+        instance_id: instance_id.to_string(),
+        region: Some(region.to_string()),
+        instance_type: None,
+        state: None,
+        launch_time: None,
+        public_ip_address: None,
+        private_ip_address: None,
+        vpc_id: None,
+        subnet_id: None,
+        security_groups: Vec::new(),
+        tags: Vec::new(),
+        availability_zone: None,
+        image_id: None,
+        key_name: None,
+        architecture: None,
+        state_transition_reason: None,
+        iam_instance_profile_arn: None,
+        private_dns_name: None,
+        public_dns_name: None,
+    }
+}
+
+/// The neutral form of [`bare_ec2`].
+pub(crate) fn bare_instance(region: &str, instance_id: &str) -> Instance {
+    Instance::from(&bare_ec2(region, instance_id))
+}
+
+/// A tag record with the given key and value.
+pub(crate) fn tag(key: &str, value: &str) -> EC2InstanceTag {
+    EC2InstanceTag {
+        key: key.to_string(),
+        value: value.to_string(),
+    }
+}
+
+/// A running sample instance in us-east-1a, with `edit` applied before conversion.
+pub(crate) fn running_with(edit: impl FnOnce(&mut EC2Instance)) -> Instance {
+    let mut record = EC2Instance {
+        availability_zone: Some("us-east-1a".to_string()),
+        state: Some("running".to_string()),
+        instance_type: Some("t3.medium".to_string()),
+        launch_time: Some(rfc3339("2026-10-07T07:00:00Z")),
+        private_ip_address: Some("10.0.4.3".to_string()),
+        private_dns_name: Some("ip-10-0-4-3.ec2.internal".to_string()),
+        vpc_id: Some("vpc-098f0fdb8".to_string()),
+        subnet_id: Some("subnet-0d99b9061".to_string()),
+        image_id: Some("ami-027d083c0".to_string()),
+        key_name: Some("ops-ed25519".to_string()),
+        security_groups: vec![
+            EC2SecurityGroup {
+                group_id: Some("sg-0d2fc5662".to_string()),
+                group_name: Some("web-sg".to_string()),
+            },
+            EC2SecurityGroup {
+                group_id: Some("sg-074bb5deb".to_string()),
+                group_name: Some("monitoring-sg".to_string()),
+            },
+        ],
+        tags: vec![
+            tag("Team", "platform"),
+            tag("Name", "api-gateway-01"),
+            tag("aws:cloudformation:stack", "api-gateway-stack"),
+        ],
+        ..bare_ec2("us-east-1", "i-0123456789abcdef0")
+    };
+    edit(&mut record);
+    Instance::from(&record)
+}
+
+/// A stopped sample instance in us-east-1b, with `edit` applied before conversion.
+pub(crate) fn stopped_with(edit: impl FnOnce(&mut EC2Instance)) -> Instance {
+    let mut record = EC2Instance {
+        instance_id: "i-0d2fc5662eb309e50".to_string(),
+        availability_zone: Some("us-east-1b".to_string()),
+        state: Some("stopped".to_string()),
+        instance_type: Some("m6i.large".to_string()),
+        launch_time: Some(rfc3339("2026-09-06T15:00:00Z")),
+        private_ip_address: Some("10.0.32.55".to_string()),
+        state_transition_reason: Some("User initiated (2026-10-01 09:12:15 GMT)".to_string()),
+        tags: vec![tag("Name", "billing-worker-01")],
+        ..bare_ec2("us-east-1", "i-0d2fc5662eb309e50")
+    };
+    edit(&mut record);
+    Instance::from(&record)
+}
+
+/// A sample instance with no attributes, with `edit` applied before conversion.
+pub(crate) fn blank_with(edit: impl FnOnce(&mut EC2Instance)) -> Instance {
+    let mut record = bare_ec2("us-east-1", "i-0123456789abcdef0");
+    edit(&mut record);
+    Instance::from(&record)
+}
+
+fn rfc3339(text: &str) -> SystemTime {
+    chrono::DateTime::parse_from_rfc3339(text)
+        .unwrap()
+        .with_timezone(&chrono::Utc)
+        .into()
 }
 
 /// UNIX_EPOCH + `secs` seconds.
@@ -188,6 +294,9 @@ mod tests {
     fn now_is_2026_10_08t12_04_00z() {
         assert_eq!(now(), UNIX_EPOCH + Duration::from_secs(1_791_461_040));
         let moment: DateTime<Utc> = now().into();
-        assert_eq!(moment.format("%Y-%m-%dT%H:%M:%SZ").to_string(), "2026-10-08T12:04:00Z");
+        assert_eq!(
+            moment.format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+            "2026-10-08T12:04:00Z"
+        );
     }
 }

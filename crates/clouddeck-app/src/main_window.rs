@@ -3,12 +3,13 @@
 use std::time::Duration;
 
 use clouddeck_core::{
-    CenterContext, CenterInput, CenterState, CenterText, CloudDeckError, CommandContext, CommandId,
-    ComputeServicePartialFailure, EC2Instance, EscapeAction, EscapeContext, MAIN_WINDOW_MIN_WIDTH,
-    OPEN_IN_CONSOLE_FLASH, ProfileInput, RegionScope, Settings, Theme, center_state, center_text,
-    clock_text, console_url_for, copied_flash, escape_action, filter_command_query, known_tag_keys,
-    layout_rules, region_failure_reason, region_scope_label, settings_path, should_auto_refresh,
-    should_refresh_on_focus, stale_count, updated_text,
+    AddressKind, CenterContext, CenterInput, CenterState, CenterText, CloudDeckError,
+    CommandContext, CommandId, ComputeServicePartialFailure, EscapeAction, EscapeContext, Instance,
+    MAIN_WINDOW_MIN_WIDTH, OPEN_IN_CONSOLE_FLASH, ProfileInput, RegionScope, Settings, Theme,
+    center_state, center_text, clock_text, console_url_for, copied_flash, escape_action,
+    filter_command_query, known_tag_keys, layout_rules, native_id, region_failure_reason,
+    region_scope_label, settings_path, should_auto_refresh, should_refresh_on_focus, stale_count,
+    updated_text,
 };
 use gpui::{
     AnyElement, AnyView, App, Bounds, ClickEvent, ClipboardItem, Context, Corner, Div, Entity,
@@ -533,10 +534,10 @@ impl MainWindow {
             has_selection: selected.is_some(),
             selection_has_private_ip: selected
                 .as_ref()
-                .is_some_and(|instance| instance.private_ip_address.is_some()),
+                .is_some_and(|instance| instance.address(AddressKind::Private).is_some()),
             selection_has_public_ip: selected
                 .as_ref()
-                .is_some_and(|instance| instance.public_ip_address.is_some()),
+                .is_some_and(|instance| instance.address(AddressKind::Public).is_some()),
             query_is_empty: fleet.query().is_empty(),
             has_failed_region: !self.failures.is_empty(),
         }
@@ -620,14 +621,16 @@ impl MainWindow {
                 }
             }
             CommandId::CopyId => {
-                self.copy_selected(|instance| Some(instance.instance_id.clone()), cx)
+                self.copy_selected(|instance| Some(native_id(instance).to_string()), cx)
             }
-            CommandId::CopyPrivateIp => {
-                self.copy_selected(|instance| instance.private_ip_address.clone(), cx)
-            }
-            CommandId::CopyPublicIp => {
-                self.copy_selected(|instance| instance.public_ip_address.clone(), cx)
-            }
+            CommandId::CopyPrivateIp => self.copy_selected(
+                |instance| instance.address(AddressKind::Private).map(str::to_string),
+                cx,
+            ),
+            CommandId::CopyPublicIp => self.copy_selected(
+                |instance| instance.address(AddressKind::Public).map(str::to_string),
+                cx,
+            ),
             CommandId::OpenInConsole => self.open_selected_in_console(cx),
             CommandId::RetryFailedRegion => cx.emit(MainWindowEvent::Retry(None)),
             CommandId::ConnectToAws => cx.emit(MainWindowEvent::ConnectToAws),
@@ -635,7 +638,7 @@ impl MainWindow {
         }
     }
 
-    fn copy_selected(&self, value: fn(&EC2Instance) -> Option<String>, cx: &mut Context<Self>) {
+    fn copy_selected(&self, value: fn(&Instance) -> Option<String>, cx: &mut Context<Self>) {
         let Some(instance) = self.fleet.read(cx).selected_instance() else {
             return;
         };
@@ -1003,7 +1006,7 @@ impl Render for MainWindow {
             )
             .on_action(cx.listener(|this, _: &app_menus::RefreshFleet, _, cx| this.refresh(cx)))
             .on_action(cx.listener(|this, _: &app_menus::CopyInstanceId, _, cx| {
-                this.copy_selected(|instance| Some(instance.instance_id.clone()), cx)
+                this.copy_selected(|instance| Some(native_id(instance).to_string()), cx)
             }))
             .on_action(cx.listener(|this, _: &app_menus::OpenInConsole, _, cx| {
                 this.open_selected_in_console(cx)
@@ -1073,48 +1076,22 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
 
+    use crate::test_support::{ProviderRecords, ec2_fleet};
     use clouddeck_core::{
-        BoxError, ComputeInstanceFilters, ComputeInstanceLoadResult, ComputeService, EC2Instance,
-        EC2InstanceTag, MockComputeService,
+        BoxError, ComputeInstanceFilters, ComputeInstanceLoadResult, ComputeService,
+        MockComputeService,
     };
     use gpui::{Bounds, Entity, MouseButton, TestAppContext, VisualTestContext, point, size};
 
     use super::*;
     use crate::view_models::InstanceListViewModel;
 
-    fn instance(id: &str, name: &str, state: &str) -> EC2Instance {
-        EC2Instance {
-            instance_id: id.to_string(),
-            region: Some("us-east-1".to_string()),
-            instance_type: Some("t3.medium".to_string()),
-            state: Some(state.to_string()),
-            launch_time: None,
-            public_ip_address: None,
-            private_ip_address: None,
-            vpc_id: None,
-            subnet_id: None,
-            security_groups: vec![],
-            tags: vec![EC2InstanceTag {
-                key: "Name".to_string(),
-                value: name.to_string(),
-            }],
-            iam_instance_profile_arn: None,
-            private_dns_name: None,
-            public_dns_name: None,
-            availability_zone: None,
-            image_id: None,
-            key_name: None,
-            architecture: None,
-            state_transition_reason: None,
-        }
-    }
-
-    fn three_instances() -> Vec<EC2Instance> {
-        vec![
-            instance("i-1", "api-server", "running"),
-            instance("i-2", "bastion", "stopped"),
-            instance("i-3", "worker", "stopped"),
-        ]
+    fn three_instances() -> ProviderRecords {
+        ec2_fleet(&[
+            ("i-1", "api-server", "running", "t3.medium"),
+            ("i-2", "bastion", "stopped", "t3.medium"),
+            ("i-3", "worker", "stopped", "t3.medium"),
+        ])
     }
 
     fn wait_until(cx: &mut TestAppContext, mut condition: impl FnMut(&mut TestAppContext) -> bool) {
@@ -1131,7 +1108,7 @@ mod tests {
     /// Opens the main window at the given size with a refreshed fleet of `instances`.
     fn rooted_main_window(
         cx: &mut TestAppContext,
-        instances: Vec<EC2Instance>,
+        instances: ProviderRecords,
         width: f32,
         height: f32,
     ) -> (

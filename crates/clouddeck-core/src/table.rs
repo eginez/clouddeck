@@ -5,7 +5,8 @@ use std::net::Ipv4Addr;
 
 use chrono::{DateTime, Utc};
 
-use crate::models::EC2Instance;
+use crate::instance::native_id;
+use crate::{AddressKind, Instance};
 
 /// Instance table column, in display order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -80,9 +81,9 @@ pub struct CellText {
 }
 
 /// Text for one instance's cell in the given column.
-pub fn cell_text(instance: &EC2Instance, column: Column) -> CellText {
+pub fn cell_text(instance: &Instance, column: Column) -> CellText {
     match column {
-        Column::Name => match instance.name().filter(|name| !name.is_empty()) {
+        Column::Name => match instance.name.as_deref().filter(|name| !name.is_empty()) {
             Some(name) => CellText {
                 text: name.to_string(),
                 muted: false,
@@ -92,13 +93,17 @@ pub fn cell_text(instance: &EC2Instance, column: Column) -> CellText {
                 muted: true,
             },
         },
-        Column::InstanceId => plain_or_dash(Some(instance.instance_id.clone())),
-        Column::State => plain_or_dash(instance.state.as_deref().map(capitalize_first)),
+        Column::InstanceId => plain_or_dash(Some(native_id(instance).to_string())),
+        Column::State => plain_or_dash(Some(capitalize_first(&instance.state.raw))),
         Column::Type => plain_or_dash(instance.instance_type.clone()),
-        Column::Az => plain_or_dash(instance.availability_zone.clone()),
-        Column::PrivateIp => plain_or_dash(instance.private_ip_address.clone()),
-        Column::PublicIp => plain_or_dash(instance.public_ip_address.clone()),
-        Column::Launched => plain_or_dash(instance.launch_time.map(|time| {
+        Column::Az => plain_or_dash(instance.location.clone()),
+        Column::PrivateIp => {
+            plain_or_dash(instance.address(AddressKind::Private).map(str::to_string))
+        }
+        Column::PublicIp => {
+            plain_or_dash(instance.address(AddressKind::Public).map(str::to_string))
+        }
+        Column::Launched => plain_or_dash(instance.created.map(|time| {
             DateTime::<Utc>::from(time)
                 .format("%Y-%m-%d %H:%M")
                 .to_string()
@@ -172,7 +177,7 @@ impl SortState {
 }
 
 /// Sorts instances by the sort column; instances missing that value always go last.
-pub fn sort_instances(instances: &mut [EC2Instance], sort: SortState) {
+pub fn sort_instances(instances: &mut [Instance], sort: SortState) {
     instances.sort_by(|left, right| {
         match (
             has_sort_key(left, sort.column),
@@ -185,40 +190,40 @@ pub fn sort_instances(instances: &mut [EC2Instance], sort: SortState) {
                 } else {
                     ordering.reverse()
                 };
-                ordering.then_with(|| left.instance_id.cmp(&right.instance_id))
+                ordering.then_with(|| native_id(left).cmp(native_id(right)))
             }
             (true, false) => Ordering::Less,
             (false, true) => Ordering::Greater,
-            (false, false) => left.instance_id.cmp(&right.instance_id),
+            (false, false) => native_id(left).cmp(native_id(right)),
         }
     });
 }
 
-fn has_sort_key(instance: &EC2Instance, column: Column) -> bool {
+fn has_sort_key(instance: &Instance, column: Column) -> bool {
     match column {
-        Column::Launched => instance.launch_time.is_some(),
+        Column::Launched => instance.created.is_some(),
         _ => !sort_text(instance, column).is_empty(),
     }
 }
 
-fn sort_text(instance: &EC2Instance, column: Column) -> &str {
+fn sort_text(instance: &Instance, column: Column) -> &str {
     let value = match column {
-        Column::Name => instance.name(),
-        Column::InstanceId => Some(instance.instance_id.as_str()),
-        Column::State => instance.state.as_deref(),
+        Column::Name => instance.name.as_deref(),
+        Column::InstanceId => Some(native_id(instance)),
+        Column::State => Some(instance.state.raw.as_str()),
         Column::Type => instance.instance_type.as_deref(),
-        Column::Az => instance.availability_zone.as_deref(),
-        Column::PrivateIp => instance.private_ip_address.as_deref(),
-        Column::PublicIp => instance.public_ip_address.as_deref(),
+        Column::Az => instance.location.as_deref(),
+        Column::PrivateIp => instance.address(AddressKind::Private),
+        Column::PublicIp => instance.address(AddressKind::Public),
         Column::Launched => None,
     };
     value.unwrap_or_default()
 }
 
 /// Compares two instances that both have a sort key for the column.
-fn compare_present(left: &EC2Instance, right: &EC2Instance, column: Column) -> Ordering {
+fn compare_present(left: &Instance, right: &Instance, column: Column) -> Ordering {
     match column {
-        Column::Launched => left.launch_time.cmp(&right.launch_time),
+        Column::Launched => left.created.cmp(&right.created),
         Column::PrivateIp | Column::PublicIp => {
             compare_addresses(sort_text(left, column), sort_text(right, column))
         }
@@ -296,7 +301,7 @@ mod tests {
 
     #[test]
     fn name_cell_uses_tag_or_muted_unnamed() {
-        let fleet = fixtures::fleet();
+        let fleet = fixtures::fleet_instances();
         assert_eq!(
             cell_text(&fleet[0], Column::Name),
             CellText {
@@ -315,14 +320,14 @@ mod tests {
 
     #[test]
     fn state_is_capitalized() {
-        let fleet = fixtures::fleet();
+        let fleet = fixtures::fleet_instances();
         assert_eq!(cell_text(&fleet[0], Column::State).text, "Running");
         assert_eq!(cell_text(&fleet[2], Column::State).text, "Pending");
     }
 
     #[test]
     fn missing_values_show_dash() {
-        let fleet = fixtures::fleet();
+        let fleet = fixtures::fleet_instances();
         assert_eq!(
             cell_text(&fleet[1], Column::PublicIp),
             CellText {
@@ -336,7 +341,7 @@ mod tests {
 
     #[test]
     fn present_values_are_shown_as_is() {
-        let fleet = fixtures::fleet();
+        let fleet = fixtures::fleet_instances();
         assert_eq!(cell_text(&fleet[0], Column::PublicIp).text, "54.80.2.5");
         assert_eq!(
             cell_text(&fleet[0], Column::Launched).text,
@@ -410,13 +415,12 @@ mod tests {
     }
 
     fn sorted_ids(column: Column, ascending: bool) -> Vec<u32> {
-        let mut fleet = fixtures::fleet();
+        let mut fleet = fixtures::fleet_instances();
         sort_instances(&mut fleet, SortState { column, ascending });
         fleet
             .iter()
             .map(|instance| {
-                instance
-                    .instance_id
+                native_id(instance)
                     .chars()
                     .last()
                     .unwrap()

@@ -1,4 +1,4 @@
-use crate::{EC2Instance, EC2InstanceTag};
+use crate::instance::{Instance, Label, native_id};
 use chrono::{DateTime, Utc};
 
 /// Rust port of the Swift oracle's `InstanceDetailViewModel`
@@ -8,15 +8,15 @@ use chrono::{DateTime, Utc};
 /// class's computed properties. No gpui types are referenced here; a gpui
 /// view owns one of these and reads its accessors when rendering.
 pub struct InstanceDetailViewModel {
-    instance: EC2Instance,
+    instance: Instance,
 }
 
 impl InstanceDetailViewModel {
-    pub fn new(instance: EC2Instance) -> Self {
+    pub fn new(instance: Instance) -> Self {
         Self { instance }
     }
 
-    pub fn instance(&self) -> &EC2Instance {
+    pub fn instance(&self) -> &Instance {
         &self.instance
     }
 
@@ -24,9 +24,9 @@ impl InstanceDetailViewModel {
     /// `displayName`).
     pub fn display_name(&self) -> String {
         self.instance
-            .name()
-            .map(str::to_string)
-            .unwrap_or_else(|| self.instance.instance_id.clone())
+            .name
+            .clone()
+            .unwrap_or_else(|| native_id(&self.instance).to_string())
     }
 
     /// A human-readable launch time, or `"—"` when absent (Swift:
@@ -41,7 +41,7 @@ impl InstanceDetailViewModel {
     /// local-timezone display. Locale/timezone-aware rendering, if needed,
     /// belongs in the gpui view layer, not here.
     pub fn launch_time_description(&self) -> String {
-        match self.instance.launch_time {
+        match self.instance.created {
             Some(launch_time) => {
                 let datetime: DateTime<Utc> = launch_time.into();
                 format!(
@@ -56,38 +56,39 @@ impl InstanceDetailViewModel {
 
     /// The instance's tags sorted case-insensitively by key, then by value
     /// (Swift: `sortedTags`).
-    pub fn sorted_tags(&self) -> Vec<EC2InstanceTag> {
-        let mut tags = self.instance.tags.clone();
-        tags.sort_by(|a, b| {
+    pub fn sorted_tags(&self) -> Vec<Label> {
+        let mut labels = self.instance.labels.clone();
+        labels.sort_by(|a, b| {
             let key_cmp = a.key.to_lowercase().cmp(&b.key.to_lowercase());
             if key_cmp == std::cmp::Ordering::Equal {
-                a.value.to_lowercase().cmp(&b.value.to_lowercase())
+                a.value
+                    .as_deref()
+                    .unwrap_or_default()
+                    .to_lowercase()
+                    .cmp(&b.value.as_deref().unwrap_or_default().to_lowercase())
             } else {
                 key_cmp
             }
         });
-        tags
+        labels
     }
 
     /// Human-readable descriptions of the instance's security groups, or
     /// `["None"]` when there are none to describe (Swift:
     /// `securityGroupDescriptions`).
     pub fn security_group_descriptions(&self) -> Vec<String> {
-        let rows: Vec<String> = self
+        let groups = self
             .instance
-            .security_groups
+            .extras
             .iter()
-            .filter_map(|group| {
-                let id = group
-                    .group_id
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty());
-                let name = group
-                    .group_name
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty());
+            .find(|section| section.title == "Security groups")
+            .map(|section| section.entries.as_slice())
+            .unwrap_or_default();
+        let rows: Vec<String> = groups
+            .iter()
+            .filter_map(|(name, id)| {
+                let id = Some(id.trim()).filter(|s| !s.is_empty());
+                let name = Some(name.trim()).filter(|s| !s.is_empty());
 
                 match (name, id) {
                     (Some(name), Some(id)) => Some(format!("{name} ({id})")),
@@ -117,40 +118,41 @@ impl InstanceDetailViewModel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::EC2SecurityGroup;
+    use crate::instance::{ExtrasSection, State, StateKind};
     use std::time::{Duration, UNIX_EPOCH};
 
-    fn base_instance() -> EC2Instance {
-        EC2Instance {
-            instance_id: "i-1234567890abcdef0".to_string(),
-            region: Some("us-east-1".to_string()),
+    fn base_instance() -> Instance {
+        Instance {
+            id: "us-east-1:i-1234567890abcdef0".to_string(),
             instance_type: Some("t3.medium".to_string()),
-            state: Some("running".to_string()),
-            launch_time: None,
-            public_ip_address: None,
-            private_ip_address: None,
-            vpc_id: None,
-            subnet_id: None,
-            security_groups: vec![],
-            tags: vec![],
-            availability_zone: None,
-            image_id: None,
-            key_name: None,
-            architecture: None,
-            state_transition_reason: None,
-            iam_instance_profile_arn: None,
-            private_dns_name: None,
-            public_dns_name: None,
+            state: State {
+                kind: StateKind::Running,
+                raw: "running".to_string(),
+            },
+            region: Some("us-east-1".to_string()),
+            ..Instance::default()
+        }
+    }
+
+    fn with_groups(groups: &[(&str, &str)]) -> Instance {
+        Instance {
+            extras: vec![ExtrasSection {
+                title: "Security groups".to_string(),
+                entries: groups
+                    .iter()
+                    .map(|(name, id)| (name.to_string(), id.to_string()))
+                    .collect(),
+            }],
+            ..base_instance()
         }
     }
 
     #[test]
     fn display_name_uses_name_tag_when_present() {
-        let mut instance = base_instance();
-        instance.tags = vec![EC2InstanceTag {
-            key: "Name".to_string(),
-            value: "api-server".to_string(),
-        }];
+        let instance = Instance {
+            name: Some("api-server".to_string()),
+            ..base_instance()
+        };
         let vm = InstanceDetailViewModel::new(instance);
         assert_eq!(vm.display_name(), "api-server");
     }
@@ -169,36 +171,40 @@ mod tests {
 
     #[test]
     fn launch_time_description_formats_present_launch_time() {
-        let mut instance = base_instance();
         // 2026-04-20T12:34:00Z
-        instance.launch_time = Some(UNIX_EPOCH + Duration::from_secs(1776688440));
+        let instance = Instance {
+            created: Some(UNIX_EPOCH + Duration::from_secs(1776688440)),
+            ..base_instance()
+        };
         let vm = InstanceDetailViewModel::new(instance);
         assert_eq!(vm.launch_time_description(), "Apr 20, 2026 at 12:34 PM");
     }
 
     #[test]
     fn sorted_tags_orders_by_key_then_value_case_insensitively() {
-        let mut instance = base_instance();
-        instance.tags = vec![
-            EC2InstanceTag {
-                key: "env".to_string(),
-                value: "prod".to_string(),
-            },
-            EC2InstanceTag {
-                key: "Name".to_string(),
-                value: "z-server".to_string(),
-            },
-            EC2InstanceTag {
-                key: "name".to_string(),
-                value: "a-server".to_string(),
-            },
-        ];
+        let label = |key: &str, value: &str| Label {
+            key: key.to_string(),
+            value: Some(value.to_string()),
+        };
+        let instance = Instance {
+            labels: vec![
+                label("env", "prod"),
+                label("Name", "z-server"),
+                label("name", "a-server"),
+            ],
+            ..base_instance()
+        };
         let vm = InstanceDetailViewModel::new(instance);
 
         let sorted = vm.sorted_tags();
         let pairs: Vec<(&str, &str)> = sorted
             .iter()
-            .map(|t| (t.key.as_str(), t.value.as_str()))
+            .map(|label| {
+                (
+                    label.key.as_str(),
+                    label.value.as_deref().unwrap_or_default(),
+                )
+            })
             .collect();
         assert_eq!(
             pairs,
@@ -214,45 +220,25 @@ mod tests {
 
     #[test]
     fn security_group_descriptions_combines_name_and_id() {
-        let mut instance = base_instance();
-        instance.security_groups = vec![EC2SecurityGroup {
-            group_id: Some(" sg-123 ".to_string()),
-            group_name: Some(" web ".to_string()),
-        }];
-        let vm = InstanceDetailViewModel::new(instance);
+        let vm = InstanceDetailViewModel::new(with_groups(&[(" web ", " sg-123 ")]));
         assert_eq!(vm.security_group_descriptions(), vec!["web (sg-123)"]);
     }
 
     #[test]
     fn security_group_descriptions_falls_back_to_name_only() {
-        let mut instance = base_instance();
-        instance.security_groups = vec![EC2SecurityGroup {
-            group_id: None,
-            group_name: Some("web".to_string()),
-        }];
-        let vm = InstanceDetailViewModel::new(instance);
+        let vm = InstanceDetailViewModel::new(with_groups(&[("web", "")]));
         assert_eq!(vm.security_group_descriptions(), vec!["web"]);
     }
 
     #[test]
     fn security_group_descriptions_falls_back_to_id_only() {
-        let mut instance = base_instance();
-        instance.security_groups = vec![EC2SecurityGroup {
-            group_id: Some("sg-123".to_string()),
-            group_name: None,
-        }];
-        let vm = InstanceDetailViewModel::new(instance);
+        let vm = InstanceDetailViewModel::new(with_groups(&[("", "sg-123")]));
         assert_eq!(vm.security_group_descriptions(), vec!["sg-123"]);
     }
 
     #[test]
     fn security_group_descriptions_skips_blank_entries() {
-        let mut instance = base_instance();
-        instance.security_groups = vec![EC2SecurityGroup {
-            group_id: Some("   ".to_string()),
-            group_name: Some("".to_string()),
-        }];
-        let vm = InstanceDetailViewModel::new(instance);
+        let vm = InstanceDetailViewModel::new(with_groups(&[("", "   ")]));
         assert_eq!(vm.security_group_descriptions(), vec!["None"]);
     }
 
@@ -264,18 +250,7 @@ mod tests {
 
     #[test]
     fn security_group_descriptions_lists_multiple_groups_in_order() {
-        let mut instance = base_instance();
-        instance.security_groups = vec![
-            EC2SecurityGroup {
-                group_id: Some("sg-1".to_string()),
-                group_name: Some("web".to_string()),
-            },
-            EC2SecurityGroup {
-                group_id: Some("sg-2".to_string()),
-                group_name: None,
-            },
-        ];
-        let vm = InstanceDetailViewModel::new(instance);
+        let vm = InstanceDetailViewModel::new(with_groups(&[("web", "sg-1"), ("", "sg-2")]));
         assert_eq!(vm.security_group_descriptions(), vec!["web (sg-1)", "sg-2"]);
     }
 

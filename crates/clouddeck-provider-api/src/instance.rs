@@ -43,7 +43,7 @@ pub struct ExtrasSection {
     pub entries: Vec<(String, String)>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Instance {
     pub id: String,
     pub name: Option<String>,
