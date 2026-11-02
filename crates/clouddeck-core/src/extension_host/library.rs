@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use clouddeck_extension_api::abi::{Buffer, HostTable, INIT_OK, Slice};
+use clouddeck_provider_api::{ErrorKind, ProviderError};
 
 use super::manifest::Capability;
 use super::state::StateStore;
@@ -21,6 +22,8 @@ type CallFn = unsafe extern "C" fn(u32, Slice) -> Buffer;
 type FreeFn = unsafe extern "C" fn(*mut u8, usize);
 
 const LEVEL_NAMES: [&str; 4] = ["debug", "info", "warn", "error"];
+const MAX_REQUEST_BYTES: usize = 1 << 20;
+const MAX_RESPONSE_BYTES: usize = 16 << 20;
 
 /// Per-extension state the host hands to an extension through [`HostTable`].
 pub struct HostContext {
@@ -109,15 +112,39 @@ impl Library {
         }
     }
 
-    pub fn call(&self, method: u32, request: &[u8]) -> Vec<u8> {
+    pub fn call(&self, method: u32, request: &[u8]) -> Result<Vec<u8>, ProviderError> {
+        check_request(request)?;
         let buffer = unsafe { (self.call)(method, Slice::of(request)) };
-        if buffer.ptr.is_null() {
-            return Vec::new();
-        }
-        let response = unsafe { buffer.bytes() }.to_vec();
-        unsafe { (self.free)(buffer.ptr, buffer.len) };
-        response
+        take_response(buffer, self.free)
     }
+}
+
+fn check_request(request: &[u8]) -> Result<(), ProviderError> {
+    if request.len() > MAX_REQUEST_BYTES {
+        return Err(ProviderError::new(
+            ErrorKind::Other,
+            "extension request too large",
+        ));
+    }
+    Ok(())
+}
+
+/// The length comes from the extension, so it is checked before any copy. An oversized buffer is
+/// handed back to the extension's `free` without being read.
+fn take_response(buffer: Buffer, free: FreeFn) -> Result<Vec<u8>, ProviderError> {
+    if buffer.ptr.is_null() {
+        return Ok(Vec::new());
+    }
+    if buffer.len > MAX_RESPONSE_BYTES {
+        unsafe { free(buffer.ptr, buffer.len) };
+        return Err(ProviderError::new(
+            ErrorKind::Other,
+            "extension response too large",
+        ));
+    }
+    let response = unsafe { buffer.bytes() }.to_vec();
+    unsafe { free(buffer.ptr, buffer.len) };
+    Ok(response)
 }
 
 /// `path` is canonical and must lie under `root`. Every folder from `root` down to the library and
@@ -310,6 +337,7 @@ extern "C" fn free(ptr: *mut u8, len: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::AtomicUsize;
 
     #[test]
     fn capability_needs_both_declaration_and_grant() {
@@ -334,5 +362,45 @@ mod tests {
     fn only_http_links_open() {
         assert!(open_in_browser("file:///etc/passwd").is_err());
         assert!(open_in_browser("javascript:alert(1)").is_err());
+    }
+
+    static OVERSIZED_FREES: AtomicUsize = AtomicUsize::new(0);
+    static OVERSIZED_FREED_LEN: AtomicUsize = AtomicUsize::new(0);
+
+    unsafe extern "C" fn record_free(_ptr: *mut u8, len: usize) {
+        OVERSIZED_FREES.fetch_add(1, Ordering::SeqCst);
+        OVERSIZED_FREED_LEN.store(len, Ordering::SeqCst);
+    }
+
+    #[test]
+    fn oversized_response_is_freed_without_copying() {
+        let claimed = MAX_RESPONSE_BYTES + 1;
+        let buffer = Buffer {
+            ptr: std::ptr::NonNull::<u8>::dangling().as_ptr(),
+            len: claimed,
+        };
+        let error = take_response(buffer, record_free).unwrap_err();
+        assert_eq!(error.kind, ErrorKind::Other);
+        assert_eq!(error.message, "extension response too large");
+        assert_eq!(OVERSIZED_FREES.load(Ordering::SeqCst), 1);
+        assert_eq!(OVERSIZED_FREED_LEN.load(Ordering::SeqCst), claimed);
+    }
+
+    #[test]
+    fn response_at_the_cap_is_returned() {
+        let bytes = vec![7u8; MAX_RESPONSE_BYTES];
+        let buffer = Buffer::from_vec(bytes);
+        let response = take_response(buffer, free).unwrap();
+        assert_eq!(response.len(), MAX_RESPONSE_BYTES);
+        assert!(response.iter().all(|&b| b == 7));
+    }
+
+    #[test]
+    fn request_over_the_cap_is_refused() {
+        let request = vec![0u8; MAX_REQUEST_BYTES + 1];
+        let error = check_request(&request).unwrap_err();
+        assert_eq!(error.kind, ErrorKind::Other);
+        assert_eq!(error.message, "extension request too large");
+        assert!(check_request(&request[..MAX_REQUEST_BYTES]).is_ok());
     }
 }

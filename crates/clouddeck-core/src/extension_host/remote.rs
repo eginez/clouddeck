@@ -103,7 +103,7 @@ impl Plugin {
         cancel: Arc<AtomicBool>,
     ) -> Result<Vec<u8>, ProviderError> {
         let library = self.load()?;
-        Ok(with_cancel_flag(cancel, || library.call(method, request)))
+        with_cancel_flag(cancel, || library.call(method, request))
     }
 
     /// Runs one call on a worker thread. On deadline the worker is told to cancel and the caller
