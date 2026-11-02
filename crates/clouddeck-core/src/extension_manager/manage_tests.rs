@@ -169,6 +169,25 @@ fn remove_is_refused_while_another_operation_holds_the_lock() {
 }
 
 #[test]
+fn disable_is_refused_while_another_operation_holds_the_lock() {
+    let fx = fixture();
+    fx.install_v1();
+    let manager = fx.manager();
+    manager.enable_with("toy", true).unwrap();
+    let held = hold_install_lock(&fx);
+    let err = manager.disable("toy").unwrap_err();
+    assert!(
+        err.contains("another extension operation is running"),
+        "{err}"
+    );
+    assert!(fx.state_enabled());
+
+    drop(held);
+    manager.disable("toy").unwrap();
+    assert!(!fx.state_enabled());
+}
+
+#[test]
 fn dev_install_is_refused_while_another_operation_holds_the_lock() {
     let fx = fixture();
     let source = tempfile::tempdir().unwrap();

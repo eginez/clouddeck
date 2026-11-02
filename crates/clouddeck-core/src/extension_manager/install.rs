@@ -252,6 +252,7 @@ impl Manager {
     }
 
     pub fn disable(&self, id: &str) -> Result<(), String> {
+        let _lock = self.lock()?;
         require_installed(&self.dirs, id)?;
         state(&self.dirs, id)?
             .update(|s| s.enabled = false)
