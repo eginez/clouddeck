@@ -63,6 +63,13 @@ impl ProviderRegistry {
         &self.providers
     }
 
+    pub fn provider(&self, id: &str) -> Option<Arc<dyn Provider>> {
+        self.providers
+            .iter()
+            .find(|provider| provider.info().id == id)
+            .cloned()
+    }
+
     /// Records a clean shutdown for every extension whose library was loaded this session.
     /// The app quit path must call this, or each loaded extension counts a crash next launch.
     pub fn shutdown(&self) {
@@ -436,6 +443,50 @@ mod tests {
 
         assert_eq!(error, "provider demo is already registered");
         assert_eq!(registry.providers().len(), 1);
+    }
+
+    #[test]
+    fn register_builtin_adds_a_provider() {
+        let mut registry = ProviderRegistry::default();
+        registry.register_builtin(Arc::new(crate::demo_provider())).unwrap();
+
+        assert!(registry.provider("demo").is_some());
+        assert!(registry.provider("aws").is_none());
+    }
+
+    #[test]
+    fn with_builtins_matches_builtin_providers() {
+        let ids = |providers: Vec<Arc<dyn Provider>>| -> Vec<String> {
+            providers.iter().map(|provider| provider.info().id).collect()
+        };
+        for demo in [true, false] {
+            let registry = ProviderRegistry::with_builtins(demo);
+            assert_eq!(
+                ids(registry.providers().to_vec()),
+                ids(builtin_providers(demo))
+            );
+        }
+    }
+
+    #[test]
+    fn extension_claiming_aws_is_refused_and_the_builtin_stays() {
+        let root = tempfile::tempdir().unwrap();
+        let state_root = tempfile::tempdir().unwrap();
+        install(root.path(), "aws", &manifest_text("aws", API_VERSION));
+        enable(state_root.path(), "aws", |s| s.enabled = true);
+
+        let builtin = crate::aws_provider();
+        let mut registry = ProviderRegistry::default().with_external(true);
+        registry.register_builtin(Arc::clone(&builtin)).unwrap();
+        registry.discover(root.path(), state_root.path()).unwrap();
+
+        assert_eq!(registry.providers().len(), 1);
+        assert!(
+            registry.refusals()[0]
+                .message
+                .contains("provider aws is already registered")
+        );
+        assert!(Arc::ptr_eq(&registry.provider("aws").unwrap(), &builtin));
     }
 
     #[test]

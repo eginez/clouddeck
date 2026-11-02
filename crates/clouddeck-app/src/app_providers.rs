@@ -1,16 +1,43 @@
 use std::sync::Arc;
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
 
+use clouddeck_core::Provider;
 use clouddeck_core::extension_host::{
     ProviderRegistry, app_registry, extension_state_root, extensions_root,
 };
-use clouddeck_core::Provider;
 use gpui::{App, Global};
 
-pub struct AppProviders(ProviderRegistry);
+pub struct AppProviders {
+    registry: ProviderRegistry,
+    #[cfg(test)]
+    shutdowns: AtomicUsize,
+}
+
+impl AppProviders {
+    pub(crate) fn new(registry: ProviderRegistry) -> Self {
+        Self {
+            registry,
+            #[cfg(test)]
+            shutdowns: AtomicUsize::new(0),
+        }
+    }
+
+    fn shutdown(&self) {
+        self.registry.shutdown();
+        #[cfg(test)]
+        self.shutdowns.fetch_add(1, Ordering::SeqCst);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn shutdowns(&self) -> usize {
+        self.shutdowns.load(Ordering::SeqCst)
+    }
+}
 
 impl Default for AppProviders {
     fn default() -> Self {
-        Self(app_registry(&extensions_root(), &extension_state_root()))
+        Self::new(app_registry(&extensions_root(), &extension_state_root()))
     }
 }
 
@@ -19,6 +46,10 @@ impl Global for AppProviders {}
 /// Built once at launch; quit covers every `cx.quit()` path, and process signals are not handled.
 pub fn install(cx: &mut App) {
     cx.set_global(AppProviders::default());
+    observe_quit(cx);
+}
+
+pub(crate) fn observe_quit(cx: &mut App) {
     cx.on_app_quit(|cx: &mut App| {
         shutdown(cx);
         std::future::ready(())
@@ -27,11 +58,15 @@ pub fn install(cx: &mut App) {
 }
 
 pub fn providers(cx: &mut App) -> Vec<Arc<dyn Provider>> {
-    cx.default_global::<AppProviders>().0.providers().to_vec()
+    cx.default_global::<AppProviders>()
+        .registry
+        .providers()
+        .to_vec()
 }
 
-fn shutdown(cx: &App) {
+/// Safe to call more than once; the window-close path on Linux calls it because no quit runs.
+pub(crate) fn shutdown(cx: &App) {
     if let Some(providers) = cx.try_global::<AppProviders>() {
-        providers.0.shutdown();
+        providers.shutdown();
     }
 }

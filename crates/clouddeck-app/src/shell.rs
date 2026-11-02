@@ -522,6 +522,9 @@ impl AppShell {
         let weak = cx.weak_entity();
         window.on_window_should_close(cx, move |_, cx| {
             let _ = weak.update(cx, |this, cx| this.save_ui_state(cx));
+            if cfg!(target_os = "linux") {
+                app_providers::shutdown(cx);
+            }
             true
         });
         fleet.update(cx, |fleet, cx| fleet.refresh(cx));
@@ -1529,6 +1532,39 @@ mod tests {
         if let Some(dir) = path.parent() {
             let _ = std::fs::remove_dir_all(dir);
         }
+    }
+
+    fn install_test_providers(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let registry = clouddeck_core::extension_host::app_registry(
+                std::path::Path::new("/nonexistent-clouddeck-extensions"),
+                std::path::Path::new("/nonexistent-clouddeck-state"),
+            );
+            cx.set_global(crate::app_providers::AppProviders::new(registry));
+            crate::app_providers::observe_quit(cx);
+        });
+    }
+
+    fn provider_shutdowns(cx: &TestAppContext) -> usize {
+        cx.read(|cx| cx.global::<crate::app_providers::AppProviders>().shutdowns())
+    }
+
+    #[gpui::test]
+    fn quit_shuts_the_providers_down_once(cx: &mut TestAppContext) {
+        install_test_providers(cx);
+        cx.update(|cx| cx.shutdown());
+        assert_eq!(provider_shutdowns(cx), 1);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[gpui::test]
+    fn closing_the_main_window_shuts_the_providers_down(cx: &mut TestAppContext) {
+        install_test_providers(cx);
+        let (_shell, cx) = add_rooted_shell(cx, |window, cx| {
+            AppShell::build(window, true, DemoFleet::Happy, None, cx)
+        });
+        assert!(cx.simulate_close());
+        assert_eq!(provider_shutdowns(&cx.cx), 1);
     }
 
     #[gpui::test]
