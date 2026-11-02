@@ -1,5 +1,13 @@
-//! Requests and responses crossing `clouddeck_call` are JSON. Both sides are built from the same
-//! API version, so JSON is used for debuggability and to avoid a second codec crate.
+//! Requests and responses crossing `clouddeck_call` are JSON (serde_json).
+//!
+//! JSON is used because both sides are built against the same API_VERSION, payloads are
+//! debuggable, and no second codec crate is needed.
+//!
+//! Revisit trigger: switch to a compact binary format (e.g. postcard) if payload size or
+//! per-call latency becomes a measured problem, and decide before any second-party
+//! (out-of-repo) extension ships.
+//!
+//! Changing the wire format is a boundary break and must bump API_VERSION in lib.rs.
 
 use std::time::{Duration, Instant};
 
