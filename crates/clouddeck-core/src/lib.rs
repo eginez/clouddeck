@@ -65,9 +65,13 @@ pub use aws_auth::aws_provider;
 pub use extension_host::{LoadError, LoadedExtension};
 #[cfg(feature = "test-support")]
 pub use extension_host::load_extension;
+mod bound_provider;
+pub use bound_provider::{BoundProvider, bound_provider};
 mod demo_provider;
 #[cfg(test)]
 mod demo_provider_tests;
+#[cfg(test)]
+mod workspace_provider_tests;
 pub use demo_provider::{DemoProvider, builtin_providers, demo_provider};
 mod console_url;
 mod context;

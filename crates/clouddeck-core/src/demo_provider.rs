@@ -37,7 +37,15 @@ impl DemoProvider {
                     .map(|region| {
                         (
                             region.name.clone(),
-                            region.instances.iter().map(Instance::from).collect(),
+                            region
+                                .instances
+                                .iter()
+                                .map(|instance| {
+                                    let mut instance = Instance::from(instance);
+                                    instance.region = Some(region.name.clone());
+                                    instance
+                                })
+                                .collect(),
                         )
                     })
                     .collect(),

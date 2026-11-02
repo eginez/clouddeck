@@ -1,16 +1,17 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use clouddeck_provider_api::Provider;
+use clouddeck_provider_api::{ConnectionId, Provider, Selection, ValueId};
 
 use crate::aws_sdk::AwsSdkComputeService;
+use crate::bound_provider::bound_provider;
 use crate::context::AwsProfile;
 use crate::fleet_compute::FleetComputeService;
 use crate::mock::MockComputeService;
 use crate::models::EC2Instance;
 use crate::scenario::{EC2Scenario, parse_scenario};
 use crate::service::{BoxError, ComputeService};
-use crate::service_provider::service_provider;
+use crate::service_provider::{REGION, service_provider};
 use crate::settings::fleet_region_timeout;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,18 +52,40 @@ pub async fn verify_instance_access(profile: String, region: String) -> Result<(
 }
 
 pub fn workspace_provider(
+    providers: &[Arc<dyn Provider>],
     profile: &str,
     region: &str,
     demo: Option<DemoFleet>,
     fleet_regions: &[String],
     request_timeout: Duration,
 ) -> Arc<dyn Provider> {
-    service_provider(service(
-        profile,
-        region,
-        demo,
-        fleet_regions,
-        request_timeout,
+    demo_routed(providers, profile, region, demo).unwrap_or_else(|| {
+        service_provider(service(
+            profile,
+            region,
+            demo,
+            fleet_regions,
+            request_timeout,
+        ))
+    })
+}
+
+fn demo_routed(
+    providers: &[Arc<dyn Provider>],
+    profile: &str,
+    region: &str,
+    demo: Option<DemoFleet>,
+) -> Option<Arc<dyn Provider>> {
+    if demo != Some(DemoFleet::Happy) || region == "fleet" || profile.is_empty() {
+        return None;
+    }
+    let demo_provider = providers
+        .iter()
+        .find(|provider| provider.info().id == "demo")?;
+    Some(bound_provider(
+        Arc::clone(demo_provider),
+        ConnectionId::from(profile),
+        Selection::new().with(REGION, vec![ValueId::from(region)]),
     ))
 }
 

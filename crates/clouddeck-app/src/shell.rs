@@ -397,6 +397,7 @@ impl AppShell {
         request_timeout: Duration,
     ) -> std::sync::Arc<dyn Provider> {
         workspace_provider(
+            &clouddeck_core::builtin_providers(demo),
             &context.profile,
             &context.region,
             demo.then_some(demo_fleet),
