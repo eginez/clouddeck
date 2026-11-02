@@ -62,7 +62,9 @@ mod aws_identity;
 mod aws_sdk;
 mod aws_sso_login;
 pub use aws_auth::aws_provider;
-pub use extension_host::{LoadError, LoadedExtension, load_extension};
+pub use extension_host::{LoadError, LoadedExtension};
+#[cfg(feature = "test-support")]
+pub use extension_host::load_extension;
 mod demo_provider;
 #[cfg(test)]
 mod demo_provider_tests;

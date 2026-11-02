@@ -1376,6 +1376,7 @@ dependencies = [
  "aws-types",
  "base64",
  "chrono",
+ "clouddeck-core",
  "clouddeck-extension-api",
  "clouddeck-provider-api",
  "ed25519-dalek",

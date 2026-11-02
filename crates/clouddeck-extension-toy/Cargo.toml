@@ -13,6 +13,6 @@ crate-type = ["cdylib", "rlib"]
 clouddeck-extension-api = { path = "../clouddeck-extension-api" }
 
 [dev-dependencies]
-clouddeck-core = { path = "../clouddeck-core" }
+clouddeck-core = { path = "../clouddeck-core", features = ["test-support"] }
 serde_json = "1"
 tempfile = "3"
