@@ -3,12 +3,15 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::mpsc::{self, RecvTimeoutError};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use clouddeck_provider_api::{
-    AuthAnswer, AuthInput, AuthMethod, AuthStep, Call, ConnectionId, DimensionId,
-    ErrorKind, FlowId, Host, Instance, KindId, LogLevel, Provider, ProviderError, ResourceId,
-    Selection, ValueId,
+    AuthAnswer, AuthInput, AuthMethod, AuthStep, Call, ConnectionId, DimensionId, ErrorKind,
+    FlowId, Host, Instance, KindId, LogLevel, Provider, ProviderError, ResourceId, Selection,
+    ValueId,
 };
 
 const MISSING: &str = "conformance-no-such-value";
@@ -76,7 +79,8 @@ impl Report {
 }
 
 /// Runs every contract v1 obligation against `p` and returns the violations; empty means conformant.
-pub fn check_provider(p: &dyn Provider) -> Vec<String> {
+pub fn check_provider(shared: Arc<dyn Provider>) -> Vec<String> {
+    let p: &dyn Provider = &*shared;
     let host = KitHost { cancelled: false };
     let cx = Call {
         deadline: None,
@@ -97,7 +101,7 @@ pub fn check_provider(p: &dyn Provider) -> Vec<String> {
     if let Some(conn) = connections.first() {
         check_resource_views(p, &cx, &mut r, conn, &kinds, &listing);
         if let Some(kind) = kinds.first() {
-            check_deadline(p, &mut r, conn, kind);
+            check_deadline(Arc::clone(&shared), &mut r, conn, kind);
         }
     }
     check_auth(p, &cx, &mut r);
@@ -205,21 +209,29 @@ fn check_bad_selection(
     }
 }
 
-fn check_deadline(p: &dyn Provider, r: &mut Report, conn: &ConnectionId, kind: &KindId) {
-    let host = KitHost { cancelled: true };
-    let cx = Call {
-        deadline: Some(Instant::now()),
-        host: &host,
-    };
-    let started = Instant::now();
-    r.guard("list() after cancellation", || {
-        p.list(&cx, conn, kind, &Selection::new())
+fn check_deadline(p: Arc<dyn Provider>, r: &mut Report, conn: &ConnectionId, kind: &KindId) {
+    let (conn, kind) = (conn.clone(), kind.clone());
+    let (tx, rx) = mpsc::channel();
+    // A provider that never returns leaves this thread running; the check still reports it and finishes.
+    thread::spawn(move || {
+        let host = KitHost { cancelled: true };
+        let cx = Call {
+            deadline: Some(Instant::now()),
+            host: &host,
+        };
+        let finished = catch_unwind(AssertUnwindSafe(|| {
+            p.list(&cx, &conn, &kind, &Selection::new())
+        }));
+        let _ = tx.send(finished.is_ok());
     });
-    let elapsed = started.elapsed();
-    if elapsed > CANCELLED_LIST_LIMIT {
-        r.fail(format!(
-            "list() took {elapsed:?} after the host cancelled; it must check cancelled() and return promptly"
-        ));
+    match rx.recv_timeout(CANCELLED_LIST_LIMIT) {
+        Ok(true) => {}
+        Ok(false) | Err(RecvTimeoutError::Disconnected) => {
+            r.fail("list() after cancellation panicked");
+        }
+        Err(RecvTimeoutError::Timeout) => r.fail(format!(
+            "list() did not return within {CANCELLED_LIST_LIMIT:?} after the host cancelled; it must check cancelled() and return promptly"
+        )),
     }
 }
 
