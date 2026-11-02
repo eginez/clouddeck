@@ -110,28 +110,25 @@ mod tests {
         );
     }
 
-    #[test]
-    fn wrong_length_public_key_is_rejected() {
+    fn assert_key_rejected(public_key: &[u8], error: &str) {
         let (signing, _) = keypair();
         let manifest = b"manifest";
         let sig = sign_b64(&signing, manifest);
-        let short_key = STANDARD.encode([7u8; 31]);
+        let key = STANDARD.encode(public_key);
         assert_eq!(
-            verify_manifest(manifest, &sig, &short_key),
-            Err("bad public key".to_string())
+            verify_manifest(manifest, &sig, &key),
+            Err(error.to_string())
         );
     }
 
     #[test]
+    fn wrong_length_public_key_is_rejected() {
+        assert_key_rejected(&[7u8; 31], "bad public key");
+    }
+
+    #[test]
     fn zero_release_key_is_not_configured() {
-        let (signing, _) = keypair();
-        let manifest = b"manifest";
-        let sig = sign_b64(&signing, manifest);
-        let zero_key = STANDARD.encode([0u8; 32]);
-        assert_eq!(
-            verify_manifest(manifest, &sig, &zero_key),
-            Err("release key not configured".to_string())
-        );
+        assert_key_rejected(&[0u8; 32], "release key not configured");
     }
 
     #[test]
