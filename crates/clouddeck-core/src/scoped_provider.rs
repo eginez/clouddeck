@@ -1,5 +1,7 @@
+use std::collections::hash_map::RandomState;
+use std::hash::{BuildHasher, Hasher};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use clouddeck_provider_api::{
@@ -14,6 +16,19 @@ use crate::workspace_provider::DemoFleet;
 const REQUEST_TIMEOUT_KEY: &str = "clouddeck.request_timeout_ms";
 const FLEET_KEY: &str = "clouddeck.fleet";
 const DEMO_SCENARIO_KEY: &str = "clouddeck.demo_scenario";
+const SCOPE_TOKEN_KEY: &str = "clouddeck.scope_token";
+
+fn scope_token() -> &'static str {
+    static TOKEN: OnceLock<String> = OnceLock::new();
+    TOKEN.get_or_init(|| format!("{:016x}", RandomState::new().build_hasher().finish()))
+}
+
+fn is_scope_key(key: &str) -> bool {
+    matches!(
+        key,
+        REQUEST_TIMEOUT_KEY | FLEET_KEY | DEMO_SCENARIO_KEY | SCOPE_TOKEN_KEY
+    )
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ScopeSettings {
@@ -28,11 +43,16 @@ impl ScopeSettings {
             REQUEST_TIMEOUT_KEY => Some(self.request_timeout.as_millis().to_string()),
             FLEET_KEY => Some(self.fleet.to_string()),
             DEMO_SCENARIO_KEY => self.demo.map(|demo| demo.key().to_string()),
+            SCOPE_TOKEN_KEY => Some(scope_token().to_string()),
             _ => None,
         }
     }
 
+    /// Only a ScopeHost holds the per-process scope token, so a host without it cannot reroute listing.
     pub(crate) fn from_host(host: &dyn Host) -> Option<Self> {
+        if host.setting(SCOPE_TOKEN_KEY).as_deref() != Some(scope_token()) {
+            return None;
+        }
         Some(Self {
             request_timeout: Duration::from_millis(
                 host.setting(REQUEST_TIMEOUT_KEY)?.parse().ok()?,
@@ -67,9 +87,10 @@ impl Host for ScopeHost<'_> {
     }
 
     fn setting(&self, key: &str) -> Option<String> {
-        self.settings
-            .setting(key)
-            .or_else(|| self.inner.setting(key))
+        if is_scope_key(key) {
+            return self.settings.setting(key);
+        }
+        self.inner.setting(key)
     }
 
     fn secret(&self, key: &str) -> Option<String> {

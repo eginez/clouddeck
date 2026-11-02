@@ -218,6 +218,129 @@ fn scope_settings_round_trip_through_the_host() {
     assert_eq!(ScopeSettings::from_host(&HOST), None);
 }
 
+struct ForgingHost {
+    token: Option<&'static str>,
+}
+
+impl Host for ForgingHost {
+    fn log(&self, _level: LogLevel, _message: &str) {}
+
+    fn data_dir(&self) -> PathBuf {
+        PathBuf::new()
+    }
+
+    fn setting(&self, key: &str) -> Option<String> {
+        match key {
+            "clouddeck.request_timeout_ms" => Some("7000".to_string()),
+            "clouddeck.fleet" => Some("true".to_string()),
+            "clouddeck.demo_scenario" => Some("partial".to_string()),
+            "clouddeck.scope_token" => self.token.map(str::to_string),
+            _ => None,
+        }
+    }
+
+    fn secret(&self, _key: &str) -> Option<String> {
+        None
+    }
+
+    fn set_secret(&self, _key: &str, _value: Option<&str>) -> Result<(), ProviderError> {
+        Ok(())
+    }
+
+    fn open_url(&self, _url: &str) -> Result<(), ProviderError> {
+        Ok(())
+    }
+
+    fn cancelled(&self) -> bool {
+        false
+    }
+}
+
+#[test]
+fn forged_scope_keys_are_ignored() {
+    assert_eq!(ScopeSettings::from_host(&ForgingHost { token: None }), None);
+    assert_eq!(
+        ScopeSettings::from_host(&ForgingHost {
+            token: Some("not-the-token")
+        }),
+        None
+    );
+}
+
+#[test]
+fn forged_keys_do_not_reroute_the_demo_entry() {
+    let forging = ForgingHost { token: None };
+    let forged = Call {
+        deadline: None,
+        host: &forging,
+    };
+    let selection = region_selection(&["us-east-1"]);
+    assert_eq!(
+        demo_provider().list(
+            &forged,
+            &ConnectionId::from("scenario-default"),
+            &KindId::instances(),
+            &selection,
+        ),
+        demo_provider().list(
+            &call(),
+            &ConnectionId::from("scenario-default"),
+            &KindId::instances(),
+            &selection,
+        )
+    );
+}
+
+#[test]
+fn scope_keys_are_not_delegated_to_the_inner_host() {
+    let settings = ScopeSettings {
+        request_timeout: Duration::from_millis(5000),
+        fleet: false,
+        demo: None,
+    };
+    let forging = ForgingHost { token: None };
+    assert_eq!(
+        ScopeSettings::from_host(&ScopeHost::new(&forging, settings)),
+        Some(settings)
+    );
+    let forged_demo = Call {
+        deadline: None,
+        host: &ScopeHost::new(&forging, settings),
+    };
+    let selection = region_selection(&["us-east-1"]);
+    assert_eq!(
+        demo_provider().list(
+            &forged_demo,
+            &ConnectionId::from("scenario-default"),
+            &KindId::instances(),
+            &selection,
+        ),
+        demo_provider().list(
+            &call(),
+            &ConnectionId::from("scenario-default"),
+            &KindId::instances(),
+            &selection,
+        )
+    );
+}
+
+#[test]
+fn scope_token_is_stable_within_the_process() {
+    let settings = ScopeSettings {
+        request_timeout: Duration::from_millis(5000),
+        fleet: false,
+        demo: None,
+    };
+    assert_eq!(
+        ScopeSettings::from_host(&ScopeHost::new(&HOST, settings)),
+        Some(settings)
+    );
+    assert_eq!(
+        ScopeSettings::from_host(&ScopeHost::new(&HOST, settings)),
+        Some(settings)
+    );
+}
+
 fn list_demo(demo: DemoFleet, region: &str, fleet_regions: &[String]) -> ListResult {
     let providers = builtin_providers(true);
     workspace_provider(
