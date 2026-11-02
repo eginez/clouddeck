@@ -14,7 +14,7 @@ use clouddeck_provider_api::{
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use super::library::{HostContext, Library, with_cancel_flag};
+use super::library::{HostContext, Library, with_cancel_flag, with_sign_in_scope};
 use super::manifest::Manifest;
 use super::state::{CRASH_LIMIT, State, StateStore};
 
@@ -129,9 +129,17 @@ impl Plugin {
         method: u32,
         request: &[u8],
         cancel: Arc<AtomicBool>,
+        sign_in: bool,
     ) -> Result<Vec<u8>, ProviderError> {
         let library = self.load()?;
-        with_cancel_flag(cancel, || library.call(method, request))
+        let call = || library.call(method, request);
+        with_cancel_flag(cancel, || {
+            if sign_in {
+                with_sign_in_scope(call)
+            } else {
+                call()
+            }
+        })
     }
 
     fn run(
@@ -139,10 +147,11 @@ impl Plugin {
         method: u32,
         request: Vec<u8>,
         budget: Duration,
+        sign_in: bool,
     ) -> Result<Vec<u8>, ProviderError> {
         let worker = Arc::clone(self);
         self.guarded(budget, move |cancel| {
-            worker.execute(method, &request, cancel)
+            worker.execute(method, &request, cancel, sign_in)
         })
     }
 
@@ -255,7 +264,8 @@ impl RemoteProvider {
                 format!("request could not be encoded: {error}"),
             )
         })?;
-        let response = self.plugin.run(method as u32, body, budget)?;
+        let sign_in = matches!(method, Method::BeginAuth | Method::ContinueAuth);
+        let response = self.plugin.run(method as u32, body, budget, sign_in)?;
         let outcome: Result<R, ProviderError> =
             serde_json::from_slice(&response).map_err(|error| {
                 ProviderError::new(

@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::ffi::c_void;
 #[cfg(unix)]
 use std::fs;
@@ -70,6 +70,7 @@ impl HostContext {
 
 thread_local! {
     static CANCEL: RefCell<Option<Arc<AtomicBool>>> = const { RefCell::new(None) };
+    static SIGN_IN: Cell<bool> = const { Cell::new(false) };
 }
 
 /// Runs `body` on this thread with `flag` answering the extension's `cancelled()` queries.
@@ -78,6 +79,18 @@ pub fn with_cancel_flag<T>(flag: Arc<AtomicBool>, body: impl FnOnce() -> T) -> T
     let value = body();
     CANCEL.with(|slot| *slot.borrow_mut() = None);
     value
+}
+
+/// Runs `body` on this thread with sign-in calls allowed to open browser links.
+pub fn with_sign_in_scope<T>(body: impl FnOnce() -> T) -> T {
+    SIGN_IN.with(|flag| flag.set(true));
+    let value = body();
+    SIGN_IN.with(|flag| flag.set(false));
+    value
+}
+
+fn signing_in() -> bool {
+    SIGN_IN.with(Cell::get)
 }
 
 /// A loaded extension library. Libraries are never unloaded: the extension keeps pointers into
@@ -295,7 +308,7 @@ extern "C" fn set_secret(
 
 extern "C" fn open_url(_ctx: *mut c_void, url: Slice, error: *mut Buffer) -> bool {
     let url = unsafe { text(url) };
-    match open_in_browser(&url) {
+    match open_for_sign_in(signing_in(), &url, open_in_browser) {
         Ok(()) => true,
         Err(message) => {
             write_error(error, message);
@@ -304,12 +317,23 @@ extern "C" fn open_url(_ctx: *mut c_void, url: Slice, error: *mut Buffer) -> boo
     }
 }
 
-fn open_in_browser(url: &str) -> Result<(), String> {
+fn open_for_sign_in(
+    signing_in: bool,
+    url: &str,
+    open: impl FnOnce(&str) -> Result<(), String>,
+) -> Result<(), String> {
+    if !signing_in {
+        return Err("open_url is only allowed during sign-in".into());
+    }
     if !(url.starts_with("https://") || url.starts_with("http://")) {
         return Err(format!(
             "refusing to open {url}: only http and https links open"
         ));
     }
+    open(url)
+}
+
+fn open_in_browser(url: &str) -> Result<(), String> {
     let opener = if cfg!(target_os = "macos") {
         "open"
     } else {
@@ -359,9 +383,25 @@ mod tests {
     }
 
     #[test]
-    fn only_http_links_open() {
-        assert!(open_in_browser("file:///etc/passwd").is_err());
-        assert!(open_in_browser("javascript:alert(1)").is_err());
+    fn links_open_only_during_sign_in() {
+        let opened = std::cell::RefCell::new(Vec::new());
+        let record = |url: &str| {
+            opened.borrow_mut().push(url.to_string());
+            Ok(())
+        };
+        let refused = open_for_sign_in(false, "https://example.com/login", record);
+        assert!(refused.unwrap_err().contains("only allowed during sign-in"));
+        assert!(opened.borrow().is_empty());
+
+        with_sign_in_scope(|| {
+            open_for_sign_in(true, "https://example.com/login", record).unwrap();
+            assert!(open_for_sign_in(true, "file:///etc/passwd", record).is_err());
+        });
+        assert_eq!(
+            *opened.borrow(),
+            vec!["https://example.com/login".to_string()]
+        );
+        assert!(!signing_in());
     }
 
     static OVERSIZED_FREES: AtomicUsize = AtomicUsize::new(0);
