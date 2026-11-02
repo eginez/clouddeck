@@ -160,6 +160,37 @@ pub(crate) fn launch_options() -> LaunchOptions {
     options
 }
 
+fn scope_changed(scope: &RegionScope, applied: &RegionScope) -> bool {
+    scope != applied
+}
+
+fn setup_mode(profile: &str) -> crate::account_window::AccountWindowMode {
+    if profile.is_empty() {
+        crate::account_window::AccountWindowMode::SetupRequired
+    } else {
+        crate::account_window::AccountWindowMode::ManageContext
+    }
+}
+
+fn restore_ui_state(
+    path: PathBuf,
+    loaded: std::io::Result<UiState>,
+) -> (UiState, Option<PathBuf>, Option<String>) {
+    loaded.map_or_else(
+        |error| {
+            eprintln!("Could not read UI state; leaving it unchanged: {error}");
+            (
+                UiState::default(),
+                None,
+                Some(format!(
+                    "Could not read UI state, so it will not be saved this session: {error}"
+                )),
+            )
+        },
+        |state| (state, Some(path), None),
+    )
+}
+
 fn scenario_for(kind: DemoScenario) -> EC2Scenario {
     let fixture = match kind {
         DemoScenario::Empty => {
@@ -427,16 +458,32 @@ impl AppShell {
         demo_scenario: DemoScenario,
         fleet_regions: &[String],
     ) -> Box<dyn ComputeService + Send + Sync> {
-        let data = scenario_for(demo_scenario);
-        if demo_scenario == DemoScenario::Failure {
-            return Box::new(MockComputeService::new(
+        Self::failure_demo_service(demo_scenario)
+            .or_else(|| Self::partial_demo_service(context, demo_scenario, fleet_regions))
+            .or_else(|| Self::large_demo_service(context, demo_scenario))
+            .unwrap_or_else(|| Self::plain_demo_service(context, demo_scenario))
+    }
+
+    fn failure_demo_service(
+        demo_scenario: DemoScenario,
+    ) -> Option<Box<dyn ComputeService + Send + Sync>> {
+        (demo_scenario == DemoScenario::Failure).then(|| {
+            Box::new(MockComputeService::new(
                 vec![],
                 Some(std::io::Error::other("Simulated demo load failure").into()),
-            ));
-        }
-        if context.region == "fleet" && demo_scenario == DemoScenario::Partial {
+            )) as _
+        })
+    }
+
+    fn partial_demo_service(
+        context: &WorkspaceContext,
+        demo_scenario: DemoScenario,
+        fleet_regions: &[String],
+    ) -> Option<Box<dyn ComputeService + Send + Sync>> {
+        (context.region == "fleet" && demo_scenario == DemoScenario::Partial).then(|| {
+            let data = scenario_for(demo_scenario);
             let profile = context.profile.clone();
-            return Box::new(FleetComputeService::new(
+            Box::new(FleetComputeService::new(
                 fleet_regions.to_vec(),
                 move |region| {
                     if region == "us-east-1" {
@@ -454,12 +501,36 @@ impl AppShell {
                         ))
                     }
                 },
-            ));
-        }
-        let mut instances = Self::instances_for(&data, &context.profile, &context.region);
-        if demo_scenario == DemoScenario::Large {
-            instances = Self::large_instances(instances);
-        }
+            )) as _
+        })
+    }
+
+    fn large_demo_service(
+        context: &WorkspaceContext,
+        demo_scenario: DemoScenario,
+    ) -> Option<Box<dyn ComputeService + Send + Sync>> {
+        (demo_scenario == DemoScenario::Large).then(|| {
+            let instances = Self::instances_for(
+                &scenario_for(demo_scenario),
+                &context.profile,
+                &context.region,
+            );
+            Box::new(MockComputeService::new(
+                Self::large_instances(instances),
+                None,
+            )) as _
+        })
+    }
+
+    fn plain_demo_service(
+        context: &WorkspaceContext,
+        demo_scenario: DemoScenario,
+    ) -> Box<dyn ComputeService + Send + Sync> {
+        let instances = Self::instances_for(
+            &scenario_for(demo_scenario),
+            &context.profile,
+            &context.region,
+        );
         Box::new(MockComputeService::new(instances, None))
     }
 
@@ -470,30 +541,45 @@ impl AppShell {
         fleet_regions: &[String],
         request_timeout: Duration,
     ) -> Box<dyn ComputeService + Send + Sync> {
-        if demo {
-            return Self::demo_service(context, demo_scenario, fleet_regions);
-        }
-        if context.profile.is_empty() {
-            return Box::new(MockComputeService::new(vec![], Some(std::io::Error::other("No AWS profile selected. Use “Connect to AWS” to sign in and choose a profile, or explore the demo without credentials.").into())));
-        }
-        if context.region == "fleet" {
-            let profile = context.profile.clone();
-            Box::new(FleetComputeService::with_timeout(
-                fleet_regions.to_vec(),
-                move |region| {
-                    Box::new(
-                        AwsSdkComputeService::new(profile.clone(), region)
-                            .with_timeout(request_timeout),
-                    )
-                },
-                fleet_region_timeout(request_timeout),
-            ))
-        } else {
-            Box::new(
-                AwsSdkComputeService::new(context.profile.clone(), context.region.clone())
-                    .with_timeout(request_timeout),
-            )
-        }
+        demo.then(|| Self::demo_service(context, demo_scenario, fleet_regions))
+            .or_else(|| context.profile.is_empty().then(Self::no_profile_service))
+            .or_else(|| {
+                (context.region == "fleet")
+                    .then(|| Self::fleet_aws_service(context, fleet_regions, request_timeout))
+            })
+            .unwrap_or_else(|| Self::aws_service(context, request_timeout))
+    }
+
+    fn no_profile_service() -> Box<dyn ComputeService + Send + Sync> {
+        Box::new(MockComputeService::new(vec![], Some(std::io::Error::other("No AWS profile selected. Use “Connect to AWS” to sign in and choose a profile, or explore the demo without credentials.").into())))
+    }
+
+    fn fleet_aws_service(
+        context: &WorkspaceContext,
+        fleet_regions: &[String],
+        request_timeout: Duration,
+    ) -> Box<dyn ComputeService + Send + Sync> {
+        let profile = context.profile.clone();
+        Box::new(FleetComputeService::with_timeout(
+            fleet_regions.to_vec(),
+            move |region| {
+                Box::new(
+                    AwsSdkComputeService::new(profile.clone(), region)
+                        .with_timeout(request_timeout),
+                )
+            },
+            fleet_region_timeout(request_timeout),
+        ))
+    }
+
+    fn aws_service(
+        context: &WorkspaceContext,
+        request_timeout: Duration,
+    ) -> Box<dyn ComputeService + Send + Sync> {
+        Box::new(
+            AwsSdkComputeService::new(context.profile.clone(), context.region.clone())
+                .with_timeout(request_timeout),
+        )
     }
 
     fn build_with_scenario(
@@ -530,27 +616,16 @@ impl AppShell {
             .err()
             .map(|e| format!("Could not read AWS profiles: {e}"));
         let profiles = loaded.unwrap_or_default();
-        let saved = if demo {
-            None
-        } else {
-            WorkspaceContext::load(&clouddeck_core::context_path())
-        };
-        let (ui_state, ui_state_path, ui_state_message) = match ui_state_path {
-            Some(path) => match UiState::try_load(&path) {
-                Ok(state) => (state, Some(path), None),
-                Err(error) => {
-                    eprintln!("Could not read UI state; leaving it unchanged: {error}");
-                    (
-                        UiState::default(),
-                        None,
-                        Some(format!(
-                            "Could not read UI state, so it will not be saved this session: {error}"
-                        )),
-                    )
-                }
+        let saved = (!demo)
+            .then(|| WorkspaceContext::load(&clouddeck_core::context_path()))
+            .flatten();
+        let (ui_state, ui_state_path, ui_state_message) = ui_state_path.map_or_else(
+            || (UiState::default(), None, None),
+            |path| {
+                let loaded = UiState::try_load(&path);
+                restore_ui_state(path, loaded)
             },
-            None => (UiState::default(), None, None),
-        };
+        );
         let message = message.or(ui_state_message);
         let available = Self::available_regions(demo, demo_scenario);
         let mut context = saved
@@ -567,12 +642,13 @@ impl AppShell {
                 },
             });
         let restored = RegionScope::from_selected(&ui_state.selected_regions, &available);
-        let scope = if restored.is_all(&available) {
-            Self::scope_for_region(&context.region, restored, &available)
-        } else {
-            context.region = Self::region_for_scope(&restored, &available);
-            restored
-        };
+        let scope = restored
+            .is_all(&available)
+            .then(|| Self::scope_for_region(&context.region, restored.clone(), &available))
+            .unwrap_or_else(|| {
+                context.region = Self::region_for_scope(&restored, &available);
+                restored
+            });
         let fleet_regions = Self::fleet_regions(&scope, &available);
         let request_timeout = Settings::load(&settings_path()).request_timeout();
         let view_model = InstanceListViewModel::new(Self::service(
@@ -827,9 +903,8 @@ impl AppShell {
         let available = Self::available_regions(self.demo, self.demo_scenario);
         let scope = Self::scope_for_region(&self.context.region, scope, &available);
         let fleet_regions = Self::fleet_regions(&scope, &available);
-        if scope != self.applied_scope {
-            self.remembered_scope = Self::remembered_regions(&scope, &available);
-        }
+        scope_changed(&scope, &self.applied_scope)
+            .then(|| self.remembered_scope = Self::remembered_regions(&scope, &available));
         self.applied_scope = scope.clone();
         #[cfg(test)]
         let service: Box<dyn ComputeService + Send + Sync> = self
@@ -894,13 +969,13 @@ impl AppShell {
         );
         self.fleet = fleet;
         self.fleet.update(cx, |fleet, cx| fleet.refresh(cx));
-        if !self.demo {
+        (!self.demo).then(|| {
             self.message = self
                 .context
                 .save(&clouddeck_core::context_path())
                 .err()
-                .map(|e| format!("Could not remember this context: {e}"));
-        }
+                .map(|e| format!("Could not remember this context: {e}"))
+        });
         self.schedule_ui_state_save(cx);
         cx.notify();
     }
@@ -910,21 +985,14 @@ impl AppShell {
     }
 
     fn open_setup(&mut self, cx: &mut Context<Self>) {
-        use crate::account_window::{AccountWindowMode, AccountWindowView};
-        let profiles = match Self::profiles(self.demo, self.demo_scenario) {
-            Ok(profiles) => profiles,
-            Err(error) => {
-                self.message = Some(format!("Could not read AWS profiles: {error}"));
-                vec![]
-            }
-        };
+        use crate::account_window::AccountWindowView;
+        let profiles = Self::profiles(self.demo, self.demo_scenario).unwrap_or_else(|error| {
+            self.message = Some(format!("Could not read AWS profiles: {error}"));
+            vec![]
+        });
         let profile = self.context.profile.clone();
         let region = self.context.region.clone();
-        let mode = if profile.is_empty() {
-            AccountWindowMode::SetupRequired
-        } else {
-            AccountWindowMode::ManageContext
-        };
+        let mode = setup_mode(&profile);
         let demo = self.demo;
         let demo_scenario = self.demo_scenario;
         let shell = cx.weak_entity();
@@ -987,14 +1055,13 @@ impl AppShell {
                 wizard
             },
         );
-        match result {
-            Ok(handle) => {
+        result
+            .map(|handle| {
                 self.wizard = handle.update(cx, |_, _, cx| cx.entity()).ok();
-            }
-            Err(error) => {
+            })
+            .unwrap_or_else(|error| {
                 self.message = Some(format!("Could not open setup: {error}"));
-            }
-        }
+            });
     }
 }
 

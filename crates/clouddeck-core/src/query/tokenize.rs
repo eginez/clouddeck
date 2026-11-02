@@ -88,10 +88,9 @@ impl QueryField {
     /// Case-insensitive lookup of a field by name; `zone` is an alias for `az`.
     pub fn from_name(s: &str) -> Option<QueryField> {
         let lower = s.to_ascii_lowercase();
-        if lower == "zone" {
-            return Some(QueryField::Az);
-        }
-        Self::all().into_iter().find(|f| f.name() == lower)
+        (lower == "zone")
+            .then_some(QueryField::Az)
+            .or_else(|| Self::all().into_iter().find(|f| f.name() == lower))
     }
 }
 

@@ -30,6 +30,20 @@ impl MockComputeService {
         &self.instances
     }
 
+    fn check_error(&self) -> Result<(), BoxError> {
+        match &self.list_instances_error {
+            Some(error) => Err(Box::new(error.clone())),
+            None => Ok(()),
+        }
+    }
+
+    fn filtered_instances(&self, filters: Option<ComputeInstanceFilters>) -> Vec<EC2Instance> {
+        filters.as_ref().map_or_else(
+            || self.instances.clone(),
+            |filters| filters.apply(&self.instances),
+        )
+    }
+
     /// Sorts by instance ID ascending with a case-insensitive comparison
     /// (Swift: `localizedCaseInsensitiveCompare`).
     fn sort_by_instance_id(instances: &mut [EC2Instance]) {
@@ -48,18 +62,12 @@ impl ComputeService for MockComputeService {
         &self,
         filters: Option<ComputeInstanceFilters>,
     ) -> Result<ComputeInstanceLoadResult, BoxError> {
-        if let Some(error) = &self.list_instances_error {
-            return Err(Box::new(error.clone()));
-        }
-
-        let mut filtered_instances = match &filters {
-            Some(filters) => filters.apply(&self.instances),
-            None => self.instances.clone(),
-        };
-        Self::sort_by_instance_id(&mut filtered_instances);
+        self.check_error()?;
+        let mut instances = self.filtered_instances(filters);
+        Self::sort_by_instance_id(&mut instances);
 
         Ok(ComputeInstanceLoadResult {
-            instances: filtered_instances,
+            instances,
             partial_failures: vec![],
         })
     }

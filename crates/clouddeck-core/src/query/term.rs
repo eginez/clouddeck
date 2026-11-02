@@ -62,62 +62,36 @@ impl Term {
 
 /// Classifies a single token into a term.
 pub fn classify(token: &Token, known_tag_keys: &[String]) -> Term {
-    let raw: &str = &token.raw;
-    let (negated, body) = if raw.len() > 1 && raw.starts_with('-') {
+    let (negated, body) = split_negation(&token.raw);
+    field_name_end(body).map_or_else(
+        || word_term(token, negated, body),
+        |name_end| field_term(token, negated, body, name_end, known_tag_keys),
+    )
+}
+
+fn split_negation(raw: &str) -> (bool, &str) {
+    if raw.len() > 1 && raw.starts_with('-') {
         (true, &raw[1..])
     } else {
         (false, raw)
-    };
-
-    // name = one ASCII letter, then zero or more ASCII letters/digits/'_'/'-', then ':'
-    let bytes = body.as_bytes();
-    let name_end = match bytes.first() {
-        Some(b) if b.is_ascii_alphabetic() => match bytes.iter().position(|b| *b == b':') {
-            Some(pos)
-                if pos > 0
-                    && bytes[1..pos]
-                        .iter()
-                        .all(|b| b.is_ascii_alphanumeric() || *b == b'_' || *b == b'-') =>
-            {
-                pos
-            }
-            _ => 0,
-        },
-        _ => 0,
-    };
-
-    if name_end > 0 {
-        let name = &body[..name_end];
-        let value = body[name_end + 1..].trim_matches(|c| c == '"');
-        return Term {
-            token: token.clone(),
-            negated,
-            kind: match QueryField::from_name(name) {
-                Some(field) => TermKind::Field {
-                    field,
-                    name: name.to_string(),
-                    value: value.to_string(),
-                },
-                None => {
-                    match known_tag_keys
-                        .iter()
-                        .find(|k| k.eq_ignore_ascii_case(name))
-                    {
-                        Some(key) => TermKind::TagShorthand {
-                            key: key.clone(),
-                            name: name.to_string(),
-                            value: value.to_string(),
-                        },
-                        None => TermKind::Unknown {
-                            name: name.to_string(),
-                            text: body.replace('"', ""),
-                        },
-                    }
-                }
-            },
-        };
     }
+}
 
+/// Byte index of the `:` that ends a field name: one ASCII letter, then ASCII letters, digits, `_` or `-`.
+fn field_name_end(body: &str) -> Option<usize> {
+    let bytes = body.as_bytes();
+    let first = bytes.first()?;
+    if !first.is_ascii_alphabetic() {
+        return None;
+    }
+    let colon = bytes.iter().position(|b| *b == b':')?;
+    bytes[1..colon]
+        .iter()
+        .all(|b| b.is_ascii_alphanumeric() || *b == b'_' || *b == b'-')
+        .then_some(colon)
+}
+
+fn word_term(token: &Token, negated: bool, body: &str) -> Term {
     Term {
         token: token.clone(),
         negated,
@@ -125,6 +99,50 @@ pub fn classify(token: &Token, known_tag_keys: &[String]) -> Term {
             text: body.replace('"', ""),
         },
     }
+}
+
+fn field_term(
+    token: &Token,
+    negated: bool,
+    body: &str,
+    name_end: usize,
+    known_tag_keys: &[String],
+) -> Term {
+    let name = &body[..name_end];
+    let value = body[name_end + 1..].trim_matches(|c| c == '"');
+    Term {
+        token: token.clone(),
+        negated,
+        kind: field_kind(name, value, body, known_tag_keys),
+    }
+}
+
+fn field_kind(name: &str, value: &str, body: &str, known_tag_keys: &[String]) -> TermKind {
+    QueryField::from_name(name).map_or_else(
+        || tag_or_unknown_kind(name, value, body, known_tag_keys),
+        |field| TermKind::Field {
+            field,
+            name: name.to_string(),
+            value: value.to_string(),
+        },
+    )
+}
+
+fn tag_or_unknown_kind(name: &str, value: &str, body: &str, known_tag_keys: &[String]) -> TermKind {
+    known_tag_keys
+        .iter()
+        .find(|k| k.eq_ignore_ascii_case(name))
+        .map_or_else(
+            || TermKind::Unknown {
+                name: name.to_string(),
+                text: body.replace('"', ""),
+            },
+            |key| TermKind::TagShorthand {
+                key: key.clone(),
+                name: name.to_string(),
+                value: value.to_string(),
+            },
+        )
 }
 
 /// Tokenizes a query and classifies each token into a term.

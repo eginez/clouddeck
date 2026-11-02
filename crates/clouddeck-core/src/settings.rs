@@ -402,39 +402,65 @@ impl SettingId {
     /// Restores this setting's field to its default value.
     pub fn reset(self, settings: &mut Settings) {
         let defaults = Settings::default();
-        match self {
-            Self::Theme => settings.theme = defaults.theme,
-            Self::Density => settings.density = defaults.density,
-            Self::ShowSidebarOnLaunch => {
-                settings.show_sidebar_on_launch = defaults.show_sidebar_on_launch
-            }
-            Self::OpenInspectorOnSelect => {
-                settings.open_inspector_on_select = defaults.open_inspector_on_select
-            }
-            Self::ShowUpdatedTime => settings.show_updated_time = defaults.show_updated_time,
-            Self::AutoRefresh => settings.auto_refresh = defaults.auto_refresh,
-            Self::RefreshInterval => {
-                settings.refresh_interval_minutes = defaults.refresh_interval_minutes
-            }
-            Self::RefreshOnFocus => settings.refresh_on_focus = defaults.refresh_on_focus,
-            Self::OnLaunch => settings.on_launch = defaults.on_launch,
-            Self::Regions => settings.regions = defaults.regions,
-            Self::DefaultSort => settings.default_sort = defaults.default_sort,
-            Self::ShowUnnamedLabel => settings.show_unnamed_label = defaults.show_unnamed_label,
-            Self::RecentSearchLimit => settings.recent_search_limit = defaults.recent_search_limit,
-            Self::MatchTags => settings.match_tags = defaults.match_tags,
-            Self::AwsConfigFile => settings.aws_config_file = defaults.aws_config_file,
-            Self::RequestTimeout => {
-                settings.request_timeout_seconds = defaults.request_timeout_seconds
-            }
-            Self::CheckForUpdates => settings.check_for_updates = defaults.check_for_updates,
-            Self::DemoMode => settings.demo_mode = defaults.demo_mode,
-        }
+        reset_appearance(self, settings, &defaults);
+        reset_fleet(self, settings, &defaults);
+        reset_table_and_search(self, settings, &defaults);
+        reset_aws_and_advanced(self, settings, &defaults);
     }
 
     /// Whether this setting is greyed out in `settings`.
     pub fn is_disabled(self, settings: &Settings) -> bool {
         matches!(self, Self::RefreshInterval) && !settings.auto_refresh
+    }
+}
+
+fn reset_appearance(id: SettingId, settings: &mut Settings, defaults: &Settings) {
+    match id {
+        SettingId::Theme => settings.theme = defaults.theme,
+        SettingId::Density => settings.density = defaults.density,
+        SettingId::ShowSidebarOnLaunch => {
+            settings.show_sidebar_on_launch = defaults.show_sidebar_on_launch
+        }
+        SettingId::OpenInspectorOnSelect => {
+            settings.open_inspector_on_select = defaults.open_inspector_on_select
+        }
+        SettingId::ShowUpdatedTime => settings.show_updated_time = defaults.show_updated_time,
+        _ => {}
+    }
+}
+
+fn reset_fleet(id: SettingId, settings: &mut Settings, defaults: &Settings) {
+    match id {
+        SettingId::AutoRefresh => settings.auto_refresh = defaults.auto_refresh,
+        SettingId::RefreshInterval => {
+            settings.refresh_interval_minutes = defaults.refresh_interval_minutes
+        }
+        SettingId::RefreshOnFocus => settings.refresh_on_focus = defaults.refresh_on_focus,
+        SettingId::OnLaunch => settings.on_launch = defaults.on_launch,
+        SettingId::Regions => settings.regions = defaults.regions.clone(),
+        _ => {}
+    }
+}
+
+fn reset_table_and_search(id: SettingId, settings: &mut Settings, defaults: &Settings) {
+    match id {
+        SettingId::DefaultSort => settings.default_sort = defaults.default_sort,
+        SettingId::ShowUnnamedLabel => settings.show_unnamed_label = defaults.show_unnamed_label,
+        SettingId::RecentSearchLimit => settings.recent_search_limit = defaults.recent_search_limit,
+        SettingId::MatchTags => settings.match_tags = defaults.match_tags,
+        _ => {}
+    }
+}
+
+fn reset_aws_and_advanced(id: SettingId, settings: &mut Settings, defaults: &Settings) {
+    match id {
+        SettingId::AwsConfigFile => settings.aws_config_file = defaults.aws_config_file.clone(),
+        SettingId::RequestTimeout => {
+            settings.request_timeout_seconds = defaults.request_timeout_seconds
+        }
+        SettingId::CheckForUpdates => settings.check_for_updates = defaults.check_for_updates,
+        SettingId::DemoMode => settings.demo_mode = defaults.demo_mode,
+        _ => {}
     }
 }
 
@@ -835,6 +861,44 @@ mod tests {
         SettingId::Regions.reset(&mut settings);
         assert_eq!(settings.regions, Settings::default().regions);
         assert_eq!(settings.regions.len(), 4);
+    }
+
+    #[test]
+    fn every_setting_resets_only_its_own_field() {
+        let changed = Settings {
+            theme: Theme::Dark,
+            density: Density::Comfortable,
+            show_sidebar_on_launch: false,
+            open_inspector_on_select: false,
+            show_updated_time: false,
+            auto_refresh: false,
+            refresh_interval_minutes: 15,
+            refresh_on_focus: false,
+            on_launch: LaunchBehavior::AlwaysAsk,
+            regions: vec!["us-east-1".into()],
+            default_sort: DefaultSort::State,
+            show_unnamed_label: false,
+            recent_search_limit: 0,
+            match_tags: false,
+            aws_config_file: "/tmp/config".into(),
+            request_timeout_seconds: 60,
+            demo_mode: true,
+            check_for_updates: false,
+        };
+        for id in SettingId::ALL {
+            assert!(id.is_changed(&changed), "{id:?} starts unchanged");
+            let mut settings = changed.clone();
+            id.reset(&mut settings);
+            assert!(!id.is_changed(&settings), "{id:?} did not reset");
+            for other in SettingId::ALL.into_iter().filter(|other| *other != id) {
+                assert!(other.is_changed(&settings), "{id:?} also reset {other:?}");
+            }
+        }
+        let mut settings = changed.clone();
+        for id in SettingId::ALL {
+            id.reset(&mut settings);
+        }
+        assert_eq!(settings, Settings::default());
     }
 
     #[test]

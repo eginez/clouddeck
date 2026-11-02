@@ -88,7 +88,7 @@ impl Palette {
     }
 
     pub fn for_dark(dark: bool) -> Self {
-        if dark { Self::dark() } else { Self::light() }
+        dark.then(Self::dark).unwrap_or_else(Self::light)
     }
 
     pub fn state_dot(&self, state: &str) -> Hsla {

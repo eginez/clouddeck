@@ -21,7 +21,9 @@ impl RegionScope {
             }
         }
         if kept.is_empty() {
-            Self::all(available)
+            Self {
+                selected: available.to_vec(),
+            }
         } else {
             Self { selected: kept }
         }

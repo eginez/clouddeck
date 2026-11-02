@@ -123,22 +123,34 @@ struct RenderedPanes {
 }
 
 fn apply_appearance(theme: Theme, window: &mut Window, cx: &mut App) {
-    let system_dark = matches!(
+    let dark = is_dark(theme, system_is_dark(window));
+    cx.set_global(ActivePalette(Palette::for_dark(dark)));
+    gpui_component::Theme::change(theme_mode(dark), Some(window), cx);
+    cx.refresh_windows();
+}
+
+fn system_is_dark(window: &Window) -> bool {
+    matches!(
         window.appearance(),
         WindowAppearance::Dark | WindowAppearance::VibrantDark
-    );
-    let dark = is_dark(theme, system_dark);
-    cx.set_global(ActivePalette(Palette::for_dark(dark)));
-    gpui_component::Theme::change(
-        if dark {
-            gpui_component::ThemeMode::Dark
-        } else {
-            gpui_component::ThemeMode::Light
-        },
-        Some(window),
-        cx,
-    );
-    cx.refresh_windows();
+    )
+}
+
+fn install_menus(cx: &mut App) {
+    app_menus::install(cx);
+    cx.bind_keys(table_key_bindings());
+    cx.bind_keys(search_key_bindings());
+    cx.bind_keys([KeyBinding::new("escape", EscapePressed, Some("MainWindow"))]);
+    cx.bind_keys(crate::linux_titlebar::key_bindings());
+    cx.set_global(MenusInstalled);
+}
+
+fn theme_mode(dark: bool) -> gpui_component::ThemeMode {
+    if dark {
+        gpui_component::ThemeMode::Dark
+    } else {
+        gpui_component::ThemeMode::Light
+    }
 }
 
 impl MainWindow {
@@ -166,14 +178,7 @@ impl MainWindow {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        if !cx.has_global::<MenusInstalled>() {
-            app_menus::install(cx);
-            cx.bind_keys(table_key_bindings());
-            cx.bind_keys(search_key_bindings());
-            cx.bind_keys([KeyBinding::new("escape", EscapePressed, Some("MainWindow"))]);
-            cx.bind_keys(crate::linux_titlebar::key_bindings());
-            cx.set_global(MenusInstalled);
-        }
+        (!cx.has_global::<MenusInstalled>()).then(|| install_menus(cx));
         let focus_handle = cx.focus_handle();
         focus_handle.focus(window);
         let viewport = window.viewport_size();
