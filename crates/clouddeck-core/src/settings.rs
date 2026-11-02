@@ -324,55 +324,71 @@ impl SettingId {
 
     /// Row label shown in the settings window.
     pub fn label(self) -> &'static str {
-        match self {
-            Self::Theme => "Theme",
-            Self::Density => "Table density",
-            Self::ShowSidebarOnLaunch => "Show sidebar on launch",
-            Self::OpenInspectorOnSelect => "Open the inspector when selecting an instance",
-            Self::ShowUpdatedTime => "Show “Updated” time in the status bar",
-            Self::AutoRefresh => "Refresh automatically",
-            Self::RefreshInterval => "Refresh interval",
-            Self::RefreshOnFocus => "Refresh when the window regains focus",
-            Self::OnLaunch => "On launch",
-            Self::Regions => "Regions to load",
-            Self::DefaultSort => "Default sort",
-            Self::ShowUnnamedLabel => "Show instances without a Name tag as “unnamed”",
-            Self::RecentSearchLimit => "Remember recent searches",
-            Self::MatchTags => "Match tag keys and values",
-            Self::AwsConfigFile => "AWS config file",
-            Self::RequestTimeout => "Request timeout",
-            Self::CheckForUpdates => "Check for updates automatically",
-            Self::DemoMode => "Demo mode",
-        }
+        self.text().0
     }
 
     /// One-line explanation shown under the label.
     pub fn description(self) -> &'static str {
+        self.text().1
+    }
+
+    /// The `(label, description)` pair for this setting.
+    fn text(self) -> (&'static str, &'static str) {
         match self {
-            Self::Theme => "Follows macOS appearance by default.",
-            Self::Density => "Row height in the instance table.",
-            Self::ShowSidebarOnLaunch => "Facets, pinned searches and recent instances.",
-            Self::OpenInspectorOnSelect => {
-                "Turn off to keep the table full width until you ask for details (⌘⌥I)."
-            }
-            Self::ShowUpdatedTime => "Hidden automatically in narrow windows.",
-            Self::AutoRefresh => {
-                "Only while the window is active. Old rows stay visible while loading."
-            }
-            Self::RefreshInterval => "Data older than twice this interval is marked stale.",
-            Self::RefreshOnFocus => "After more than one interval away.",
-            Self::OnLaunch => "Reopen into your last profile and regions.",
-            Self::Regions => "Region list the picker offers. At least one.",
-            Self::DefaultSort => "Applied until you click a column header.",
-            Self::ShowUnnamedLabel => "Otherwise they show their instance ID in the Name column.",
-            Self::RecentSearchLimit => "Shown when you focus an empty search field.",
-            Self::MatchTags => "Search also looks at name, ID, IPs, zone and type.",
-            Self::AwsConfigFile => "Where profiles are read from.",
-            Self::RequestTimeout => "Per region, per request.",
-            Self::CheckForUpdates => {
-                "Checks on launch and about once an hour while CloudDeck runs."
-            }
-            Self::DemoMode => "Simulated fleet, no AWS calls. A DEMO tag stays in the status bar.",
+            Self::Theme => ("Theme", "Follows macOS appearance by default."),
+            Self::Density => ("Table density", "Row height in the instance table."),
+            Self::ShowSidebarOnLaunch => (
+                "Show sidebar on launch",
+                "Facets, pinned searches and recent instances.",
+            ),
+            Self::OpenInspectorOnSelect => (
+                "Open the inspector when selecting an instance",
+                "Turn off to keep the table full width until you ask for details (⌘⌥I).",
+            ),
+            Self::ShowUpdatedTime => (
+                "Show “Updated” time in the status bar",
+                "Hidden automatically in narrow windows.",
+            ),
+            Self::AutoRefresh => (
+                "Refresh automatically",
+                "Only while the window is active. Old rows stay visible while loading.",
+            ),
+            Self::RefreshInterval => (
+                "Refresh interval",
+                "Data older than twice this interval is marked stale.",
+            ),
+            Self::RefreshOnFocus => (
+                "Refresh when the window regains focus",
+                "After more than one interval away.",
+            ),
+            Self::OnLaunch => ("On launch", "Reopen into your last profile and regions."),
+            Self::Regions => (
+                "Regions to load",
+                "Region list the picker offers. At least one.",
+            ),
+            Self::DefaultSort => ("Default sort", "Applied until you click a column header."),
+            Self::ShowUnnamedLabel => (
+                "Show instances without a Name tag as “unnamed”",
+                "Otherwise they show their instance ID in the Name column.",
+            ),
+            Self::RecentSearchLimit => (
+                "Remember recent searches",
+                "Shown when you focus an empty search field.",
+            ),
+            Self::MatchTags => (
+                "Match tag keys and values",
+                "Search also looks at name, ID, IPs, zone and type.",
+            ),
+            Self::AwsConfigFile => ("AWS config file", "Where profiles are read from."),
+            Self::RequestTimeout => ("Request timeout", "Per region, per request."),
+            Self::CheckForUpdates => (
+                "Check for updates automatically",
+                "Checks on launch and about once an hour while CloudDeck runs.",
+            ),
+            Self::DemoMode => (
+                "Demo mode",
+                "Simulated fleet, no AWS calls. A DEMO tag stays in the status bar.",
+            ),
         }
     }
 
