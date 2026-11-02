@@ -22,6 +22,32 @@ user must also grant; they limit what the host's helpers do, not what the librar
   sessions in a row the extension is disabled. The app quit path must call
   `ProviderRegistry::shutdown` once it adopts the registry.
 
+## Managing extensions
+
+`clouddeck extension <command>` manages folders under `~/.config/clouddeck/extensions/`:
+
+- `install <id>` installs an extension listed in the signed extension index.
+- `install <https://github.com/owner/repo> [--trust-key <base64>]` installs from a GitHub
+  repository. A repository that is not in the index needs `--trust-key` with its author's public
+  key.
+- `update <id>` installs a newer release from the recorded repository. Nothing updates on its own.
+- `dev <path>` installs a local folder as a development extension. It is copied, not linked.
+- `list`, `enable <id>`, `disable <id>`, `remove <id>`.
+
+Install and update fetch the platform asset of the latest GitHub release, check its sha256, and
+verify the ed25519 signature of `manifest.json` against the author's key before anything is
+unpacked. The old folder is renamed aside before the new one is renamed into place, and restored if
+that second rename fails. A `state.json` in the archive is ignored.
+
+- Author keys are pinned per extension id on first install. A release signed by a different key
+  is refused. Rerun with `--accept-new-key <base64>` only after you have checked the change; that
+  disables the extension until you enable it again.
+- Installed extensions start disabled. `enable` is refused in this build: enabling external
+  extensions stays off until security review B (clouddeck-rs-7ah1) closes.
+- `remove` deletes the folder and keeps the author key pin, so a reinstall cannot silently change
+  keys. Enable, disable, install, update and remove take effect on restart.
+- Extensions are not sandboxed. Install only from authors you trust.
+
 ## Deadlines
 
 Each provider call runs on its own thread. When the deadline passes the call returns a timeout

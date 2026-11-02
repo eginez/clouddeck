@@ -92,11 +92,11 @@ fn url_outside_the_index_needs_trust_key_and_mismatched_key_is_refused() {
             .contains("--trust-key")
     );
 
-    let outcome = manager
+    let err = manager
         .install_from_url(unlisted, Some(&fx.author.1), None)
-        .unwrap();
-    assert!(matches!(outcome, Outcome::Installed(_)));
-    assert_eq!(fx.installed_pin().as_deref(), Some(fx.author.1.as_str()));
+        .unwrap_err();
+    assert!(err.contains("the index lists toy at"), "{err}");
+    assert_eq!(fx.installed_pin(), None);
 
     let other = generate_keypair().1;
     let err = manager
@@ -117,6 +117,7 @@ fn update_signed_by_a_new_key_needs_the_offered_key_to_be_accepted() {
         &standard_archive("toy", API_VERSION, "0.2.0"),
     );
     let manager = fx.manager();
+    manager.enable_with("toy", true).unwrap();
 
     let err = manager.update("toy", None).unwrap_err();
     assert!(
@@ -128,6 +129,7 @@ fn update_signed_by_a_new_key_needs_the_offered_key_to_be_accepted() {
     let outcome = manager.update("toy", Some(&new_key.1)).unwrap();
     assert!(matches!(outcome, Outcome::Installed(_)));
     assert_eq!(fx.installed_pin().as_deref(), Some(new_key.1.as_str()));
+    assert!(!fx.state_enabled());
 }
 
 #[test]

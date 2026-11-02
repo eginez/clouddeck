@@ -64,6 +64,26 @@ impl Default for GithubExtensions {
     }
 }
 
+pub(super) fn same_repository(url: &str, owner: &str, repo: &str) -> bool {
+    parse_repository(url)
+        .is_ok_and(|(o, r)| o.eq_ignore_ascii_case(owner) && r.eq_ignore_ascii_case(repo))
+}
+
+const REDIRECT_HOSTS: [&str; 2] = ["github.com", "objects.githubusercontent.com"];
+
+fn check_redirect(location: &str) -> Result<(), String> {
+    let parsed = url::Url::parse(location).map_err(|error| format!("bad redirect: {error}"))?;
+    let allowed = parsed.scheme() == "https"
+        && parsed
+            .host_str()
+            .is_some_and(|host| REDIRECT_HOSTS.contains(&host));
+    if allowed {
+        Ok(())
+    } else {
+        Err(format!("refusing redirect to {location}"))
+    }
+}
+
 impl GithubExtensions {
     fn get(&self, url: &str, max_bytes: u64) -> Result<Vec<u8>, String> {
         let response = self
@@ -77,6 +97,7 @@ impl GithubExtensions {
                 .header("Location")
                 .ok_or_else(|| format!("redirect for {url} has no Location"))?
                 .to_string();
+            check_redirect(&location)?;
             self.agent
                 .get(&location)
                 .set("User-Agent", USER_AGENT)

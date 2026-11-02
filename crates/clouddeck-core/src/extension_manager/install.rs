@@ -7,7 +7,7 @@ use crate::extension_host::{
 use crate::release::verify::RELEASE_PUBLIC_KEY;
 
 use super::fetch::Plan;
-use super::source::{ExtensionSource, GithubExtensions, parse_repository};
+use super::source::{ExtensionSource, GithubExtensions, parse_repository, same_repository};
 use super::stage::{Staging, copy_tree, io_error, read_manifest, remove_shipped_state, swap_in};
 use super::store::{
     check_id, folders, index, installed_record, is_installed, record_install, require_installed,
@@ -87,14 +87,17 @@ impl Manager {
             .find(id)
             .ok_or_else(|| format!("{id} is not in the extension index"))?;
         let (owner, repo) = parse_repository(&entry.repository)?;
+        let repository = entry.repository.clone();
+        let offered_key = entry.author_key.clone();
         self.install_release(Plan {
             owner,
             repo,
-            repository: entry.repository.clone(),
+            repository,
             expected_id: Some(id.to_string()),
-            offered_key: Some(entry.author_key.clone()),
+            offered_key: Some(offered_key),
             accept: accept.map(str::to_string),
             update: false,
+            index,
         })
     }
 
@@ -133,6 +136,7 @@ impl Manager {
             offered_key: Some(offered),
             accept: accept.map(str::to_string),
             update: false,
+            index,
         })
     }
 
@@ -169,6 +173,7 @@ impl Manager {
             offered_key: offered,
             accept: accept.map(str::to_string),
             update: true,
+            index,
         })
     }
 
@@ -195,7 +200,7 @@ impl Manager {
         self.enable_with(id, EXTERNAL_EXTENSIONS_ALLOWED)
     }
 
-    pub fn enable_with(&self, id: &str, allowed: bool) -> Result<(), String> {
+    pub(super) fn enable_with(&self, id: &str, allowed: bool) -> Result<(), String> {
         if !allowed {
             return Err(ENABLE_REFUSED.to_string());
         }
@@ -257,9 +262,4 @@ impl Manager {
         }
         Ok((listings, refusals))
     }
-}
-
-fn same_repository(url: &str, owner: &str, repo: &str) -> bool {
-    parse_repository(url)
-        .is_ok_and(|(o, r)| o.eq_ignore_ascii_case(owner) && r.eq_ignore_ascii_case(repo))
 }

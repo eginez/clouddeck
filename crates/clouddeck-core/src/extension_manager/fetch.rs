@@ -6,7 +6,9 @@ use crate::release::source::FetchedRelease;
 use crate::release::target::{current_target, is_newer};
 use crate::release::verify::{check_asset, verify_manifest};
 
+use super::index::Index;
 use super::install::{MAX_EXTENSION_ASSET, Manager, Outcome};
+use super::source::same_repository;
 use super::stage::{Staging, read_manifest, remove_shipped_state, swap_in};
 use super::store::{installed_record, is_installed, pinned_key, record_install};
 
@@ -18,6 +20,7 @@ pub(super) struct Plan {
     pub(super) offered_key: Option<String>,
     pub(super) accept: Option<String>,
     pub(super) update: bool,
+    pub(super) index: Index,
 }
 
 impl Manager {
@@ -53,10 +56,11 @@ impl Manager {
         unpack(&bytes, staging.path())?;
         let installed = read_manifest(staging.path())?;
         check_expected_id(plan.expected_id.as_deref(), &installed.id)?;
+        check_listed_repository(&plan.index, &installed.id, &plan.owner, &plan.repo)?;
         remove_shipped_state(staging.path())?;
         installed.library_path(staging.path())?;
-        self.check_pin(&installed.id, &key, plan.accept.as_deref())?;
-        let fresh = !is_installed(&self.dirs, &installed.id);
+        let rotated = self.check_pin(&installed.id, &key, plan.accept.as_deref())?;
+        let fresh = rotated || !is_installed(&self.dirs, &installed.id);
         swap_in(&self.dirs.root, &installed.id, staging.path())?;
         record_install(&self.dirs, &installed.id, fresh, |s| {
             s.author_key = Some(key.clone());
@@ -94,13 +98,15 @@ impl Manager {
         Ok(bytes)
     }
 
-    fn check_pin(&self, id: &str, key: &str, accept: Option<&str>) -> Result<(), String> {
+    /// Returns true when an accepted key change replaces an existing pin.
+    fn check_pin(&self, id: &str, key: &str, accept: Option<&str>) -> Result<bool, String> {
         match pinned_key(&self.dirs, id)? {
             Some(pin) if pin != key && accept != Some(key) => Err(format!(
                 "{id} is pinned to author key {pin}, but this release is signed by {key}. \
                  To replace the pin, rerun with --accept-new-key {key}"
             )),
-            _ => Ok(()),
+            Some(pin) => Ok(pin != key),
+            None => Ok(false),
         }
     }
 }
@@ -126,6 +132,16 @@ fn choose_key(
         (None, Some(new)) if verifies(new) => Ok(new.to_string()),
         (None, Some(new)) => Err(format!("the release is not signed by the author key {new}")),
         (None, None) => Err("no author key is known for this extension".to_string()),
+    }
+}
+
+fn check_listed_repository(index: &Index, id: &str, owner: &str, repo: &str) -> Result<(), String> {
+    match index.find(id) {
+        Some(entry) if !same_repository(&entry.repository, owner, repo) => Err(format!(
+            "the index lists {id} at {}, not this repository",
+            entry.repository
+        )),
+        _ => Ok(()),
     }
 }
 

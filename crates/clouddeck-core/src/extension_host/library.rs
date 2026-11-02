@@ -348,17 +348,25 @@ fn open_for_sign_in(
     open(url)
 }
 
-fn open_in_browser(url: &str) -> Result<(), String> {
-    let opener = if cfg!(target_os = "macos") {
+fn platform_opener() -> &'static str {
+    if cfg!(target_os = "macos") {
         "open"
     } else {
         "xdg-open"
-    };
+    }
+}
+
+fn open_in_browser(url: &str) -> Result<(), String> {
+    let opener = platform_opener();
     Command::new(opener)
         .arg(url)
         .status()
         .map(drop)
-        .map_err(|error| format!("cannot run {opener}: {error}"))
+        .map_err(|error| spawn_error(opener, &error))
+}
+
+fn spawn_error(opener: &str, error: &std::io::Error) -> String {
+    format!("cannot run {opener}: {error}")
 }
 
 extern "C" fn cancelled(_ctx: *mut c_void) -> bool {
