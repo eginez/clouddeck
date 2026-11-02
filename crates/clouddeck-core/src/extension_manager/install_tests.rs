@@ -106,6 +106,27 @@ fn url_outside_the_index_needs_trust_key_and_mismatched_key_is_refused() {
 }
 
 #[test]
+fn trust_key_installs_unlisted_url_and_pins_it() {
+    let fx = fixture();
+    fx.publish_empty_index();
+    fx.publish_release(
+        &fx.author.0,
+        "0.1.0",
+        &standard_archive("toy", API_VERSION, "0.1.0"),
+    );
+
+    let outcome = fx
+        .manager()
+        .install_from_url("https://github.com/someone/else", Some(&fx.author.1), None)
+        .unwrap();
+
+    assert!(matches!(outcome, Outcome::Installed(_)));
+    assert!(fx.root.join("toy/extension.toml").is_file());
+    assert_eq!(fx.installed_pin().as_deref(), Some(fx.author.1.as_str()));
+    assert!(!fx.state_enabled());
+}
+
+#[test]
 fn update_signed_by_a_new_key_needs_the_offered_key_to_be_accepted() {
     let fx = fixture();
     fx.install_v1();

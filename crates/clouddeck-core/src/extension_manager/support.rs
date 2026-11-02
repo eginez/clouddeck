@@ -173,6 +173,12 @@ impl Fixture {
         self.hub.lock().unwrap().index = (json.into_bytes(), sig);
     }
 
+    pub(super) fn publish_empty_index(&self) {
+        let json = serde_json::json!({"schema": INDEX_SCHEMA, "extensions": []}).to_string();
+        let sig = sign_bytes(json.as_bytes(), &self.app_key.0).unwrap();
+        self.hub.lock().unwrap().index = (json.into_bytes(), sig);
+    }
+
     pub(super) fn publish_release(&self, secret: &str, version: &str, bundle: &[u8]) {
         let target = target_now().unwrap().id();
         let name = format!("toy-{version}-{target}.tar.gz");

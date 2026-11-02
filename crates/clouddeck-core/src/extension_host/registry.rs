@@ -239,6 +239,25 @@ mod tests {
     }
 
     #[test]
+    fn discover_skips_dot_folders() {
+        let root = tempfile::tempdir().unwrap();
+        let state_root = tempfile::tempdir().unwrap();
+        let dir = install(
+            root.path(),
+            ".tmp-toy-1",
+            &manifest_text("toy", API_VERSION),
+        );
+        fs::write(dir.join("libtoy.so"), b"").unwrap();
+        enable(state_root.path(), "toy", |s| s.enabled = true);
+
+        let mut registry = ProviderRegistry::default();
+        registry.discover(root.path(), state_root.path()).unwrap();
+
+        assert!(registry.providers().is_empty());
+        assert!(registry.refusals().is_empty());
+    }
+
+    #[test]
     fn crash_disabled_extension_is_refused_at_discovery() {
         let root = tempfile::tempdir().unwrap();
         let state_root = tempfile::tempdir().unwrap();
