@@ -1,9 +1,9 @@
 {
   "version": 2,
-  "quality_score": 0.8250738552437227,
-  "iosp_score": 0.999383096853794,
-  "violations": 1,
-  "total": 2708,
+  "quality_score": 0.8256532940743462,
+  "iosp_score": 0.998769987699877,
+  "violations": 2,
+  "total": 2717,
   "complexity_warnings": 5,
   "magic_number_warnings": 0,
   "nesting_depth_warnings": 0,
@@ -28,12 +28,17 @@
   "tq_untested_logic_warnings": 0,
   "structural_srp_warnings": 9,
   "structural_coupling_warnings": 8,
-  "total_findings": 483,
+  "total_findings": 484,
   "violation_details": [
+    {
+      "name": "AppShell::build_with_profiles",
+      "file": "crates/clouddeck-app/src/shell.rs",
+      "line": 606
+    },
     {
       "name": "load_extension",
       "file": "crates/clouddeck-core/src/extension_host.rs",
-      "line": 91
+      "line": 94
     }
   ]
 }
