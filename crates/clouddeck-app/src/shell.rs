@@ -1,3 +1,4 @@
+use crate::app_providers;
 use crate::render_state::{DEFAULT_ROW_MENU_ANCHOR, State, apply_render_state, fleet_loaded};
 use crate::{
     fleet_state::FleetState,
@@ -390,6 +391,7 @@ impl AppShell {
     }
 
     fn provider_for(
+        providers: &[std::sync::Arc<dyn Provider>],
         context: &WorkspaceContext,
         demo: bool,
         demo_fleet: DemoFleet,
@@ -397,7 +399,7 @@ impl AppShell {
         request_timeout: Duration,
     ) -> std::sync::Arc<dyn Provider> {
         workspace_provider(
-            &clouddeck_core::builtin_providers(demo),
+            providers,
             &context.profile,
             &context.region,
             demo.then_some(demo_fleet),
@@ -474,7 +476,9 @@ impl AppShell {
         };
         let fleet_regions = Self::fleet_regions(&scope, &available);
         let request_timeout = Settings::load(&settings_path()).request_timeout();
+        let providers = app_providers::providers(cx);
         let view_model = InstanceListViewModel::new(Self::provider_for(
+            &providers,
             &context,
             demo,
             demo_scenario,
@@ -726,9 +730,11 @@ impl AppShell {
         scope_changed(&scope, &self.applied_scope)
             .then(|| self.remembered_scope = Self::remembered_regions(&scope, &available));
         self.applied_scope = scope.clone();
+        let providers = app_providers::providers(cx);
         #[cfg(test)]
         let provider = self.test_service_override.clone().unwrap_or_else(|| {
             Self::provider_for(
+                &providers,
                 &self.context,
                 self.demo,
                 self.demo_scenario,
@@ -738,6 +744,7 @@ impl AppShell {
         });
         #[cfg(not(test))]
         let provider = Self::provider_for(
+            &providers,
             &self.context,
             self.demo,
             self.demo_scenario,
@@ -1300,8 +1307,18 @@ mod tests {
         demo: DemoFleet,
         fleet_regions: &[String],
     ) -> InstanceListViewModel {
-        let provider =
-            AppShell::provider_for(context, true, demo, fleet_regions, Duration::from_secs(5));
+        let registry = clouddeck_core::extension_host::app_registry(
+            std::path::Path::new("/nonexistent-clouddeck-extensions"),
+            std::path::Path::new("/nonexistent-clouddeck-state"),
+        );
+        let provider = AppShell::provider_for(
+            registry.providers(),
+            context,
+            true,
+            demo,
+            fleet_regions,
+            Duration::from_secs(5),
+        );
         let mut view_model = InstanceListViewModel::new(provider);
         crate::runtime::runtime().block_on(view_model.load_instances());
         view_model

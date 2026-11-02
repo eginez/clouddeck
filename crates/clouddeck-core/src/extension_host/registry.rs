@@ -37,11 +37,21 @@ impl ProviderRegistry {
     pub fn with_builtins(demo: bool) -> Self {
         let mut registry = Self::default().with_external(EXTERNAL_EXTENSIONS_ALLOWED);
         for provider in builtin_providers(demo) {
-            let id = provider.info().id;
-            registry.provider_ids.insert(id);
-            registry.providers.push(provider);
+            registry
+                .register_builtin(provider)
+                .expect("builtin provider ids are unique");
         }
         registry
+    }
+
+    pub fn register_builtin(&mut self, provider: Arc<dyn Provider>) -> Result<(), String> {
+        let id = provider.info().id;
+        if self.provider_ids.contains(&id) {
+            return Err(format!("provider {id} is already registered"));
+        }
+        self.provider_ids.insert(id);
+        self.providers.push(provider);
+        Ok(())
     }
 
     pub fn with_external(mut self, allowed: bool) -> Self {
@@ -180,6 +190,21 @@ impl ProviderRegistry {
 fn is_hidden(path: &Path) -> bool {
     path.file_name()
         .is_some_and(|name| name.to_string_lossy().starts_with('.'))
+}
+
+/// Built-ins are registered before discovery so an extension claiming their id is refused.
+pub fn app_registry(root: &Path, state_root: &Path) -> ProviderRegistry {
+    let mut registry = ProviderRegistry::default().with_external(EXTERNAL_EXTENSIONS_ALLOWED);
+    registry
+        .register_builtin(crate::aws_provider())
+        .expect("aws is the first builtin");
+    registry
+        .register_builtin(Arc::new(crate::demo_provider()))
+        .expect("demo is distinct from aws");
+    if let Err(error) = registry.discover(root, state_root) {
+        eprintln!("Could not read installed extensions: {error}");
+    }
+    registry
 }
 
 /// Where installed extensions live, next to the rest of CloudDeck's configuration.
@@ -398,6 +423,55 @@ mod tests {
         let state_file = state_path(&state, "toy");
         assert!(!state_file.starts_with(&dir));
         assert!(!state_file.starts_with(dir.join("data")));
+    }
+
+    #[test]
+    fn register_builtin_refuses_a_duplicate_id() {
+        let mut registry = ProviderRegistry::default();
+        registry.register_builtin(Arc::new(crate::demo_provider())).unwrap();
+
+        let error = registry
+            .register_builtin(Arc::new(crate::demo_provider()))
+            .unwrap_err();
+
+        assert_eq!(error, "provider demo is already registered");
+        assert_eq!(registry.providers().len(), 1);
+    }
+
+    #[test]
+    fn extension_claiming_a_builtin_id_is_refused() {
+        let root = tempfile::tempdir().unwrap();
+        let state_root = tempfile::tempdir().unwrap();
+        install(root.path(), "demo", &manifest_text("demo", API_VERSION));
+        enable(state_root.path(), "demo", |s| s.enabled = true);
+
+        let mut registry = ProviderRegistry::default().with_external(true);
+        registry.register_builtin(Arc::new(crate::demo_provider())).unwrap();
+        registry.discover(root.path(), state_root.path()).unwrap();
+
+        assert_eq!(registry.providers().len(), 1);
+        assert_eq!(registry.refusals().len(), 1);
+        assert!(
+            registry.refusals()[0]
+                .message
+                .contains("provider demo is already registered")
+        );
+    }
+
+    #[test]
+    fn app_registry_without_extensions_holds_aws_and_demo() {
+        let root = tempfile::tempdir().unwrap();
+        let state_root = tempfile::tempdir().unwrap();
+
+        let registry = app_registry(&root.path().join("absent"), state_root.path());
+
+        let ids: Vec<String> = registry
+            .providers()
+            .iter()
+            .map(|provider| provider.info().id)
+            .collect();
+        assert_eq!(ids, ["aws", "demo"]);
+        assert!(registry.refusals().is_empty());
     }
 
     #[test]
