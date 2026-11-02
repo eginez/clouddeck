@@ -188,31 +188,8 @@ mod tests {
     use super::*;
     use crate::mock::MockComputeService;
     use crate::models::EC2Instance;
+    use crate::query::fixtures::running_ec2;
     use std::sync::Arc;
-
-    fn instance(instance_id: &str) -> EC2Instance {
-        EC2Instance {
-            instance_id: instance_id.to_string(),
-            region: None,
-            instance_type: None,
-            state: Some("running".to_string()),
-            launch_time: None,
-            public_ip_address: None,
-            private_ip_address: None,
-            vpc_id: None,
-            subnet_id: None,
-            security_groups: vec![],
-            tags: vec![],
-            availability_zone: None,
-            image_id: None,
-            key_name: None,
-            architecture: None,
-            state_transition_reason: None,
-            iam_instance_profile_arn: None,
-            private_dns_name: None,
-            public_dns_name: None,
-        }
-    }
 
     fn factory_for(
         regions_and_instances: Vec<(&'static str, Vec<EC2Instance>)>,
@@ -264,7 +241,7 @@ mod tests {
             }
             tokio::time::sleep(self.delay).await;
             Ok(ComputeInstanceLoadResult {
-                instances: vec![instance(&self.instance_id)],
+                instances: vec![running_ec2(&self.instance_id)],
                 partial_failures: vec![],
             })
         }
@@ -276,8 +253,8 @@ mod tests {
             vec!["us-east-1".to_string(), "us-west-2".to_string()],
             factory_for(
                 vec![
-                    ("us-east-1", vec![instance("i-1")]),
-                    ("us-west-2", vec![instance("i-2")]),
+                    ("us-east-1", vec![running_ec2("i-1")]),
+                    ("us-west-2", vec![running_ec2("i-2")]),
                 ],
                 vec![],
             ),
@@ -304,7 +281,7 @@ mod tests {
         let service = FleetComputeService::new(
             vec!["us-east-1".to_string(), "us-west-2".to_string()],
             factory_for(
-                vec![("us-east-1", vec![instance("i-1")])],
+                vec![("us-east-1", vec![running_ec2("i-1")])],
                 vec!["us-west-2"],
             ),
         );
@@ -337,7 +314,7 @@ mod tests {
                 if region == "us-west-2" {
                     Box::new(ThrottledService)
                 } else {
-                    Box::new(MockComputeService::new(vec![instance("i-1")], None))
+                    Box::new(MockComputeService::new(vec![running_ec2("i-1")], None))
                 }
             },
         );
@@ -383,8 +360,8 @@ mod tests {
             vec!["us-west-2".to_string(), "us-east-1".to_string()],
             factory_for(
                 vec![
-                    ("us-west-2", vec![instance("i-B"), instance("i-a")]),
-                    ("us-east-1", vec![instance("i-z")]),
+                    ("us-west-2", vec![running_ec2("i-B"), running_ec2("i-a")]),
+                    ("us-east-1", vec![running_ec2("i-z")]),
                 ],
                 vec![],
             ),
@@ -417,7 +394,7 @@ mod tests {
     async fn partial_failures_sorted_when_mixed_with_success() {
         let service = FleetComputeService::new(
             vec!["Zeta".to_string(), "alpha".to_string(), "beta".to_string()],
-            factory_for(vec![("beta", vec![instance("i-1")])], vec!["Zeta", "alpha"]),
+            factory_for(vec![("beta", vec![running_ec2("i-1")])], vec!["Zeta", "alpha"]),
         );
 
         let result = service.list_instances(None).await.unwrap();
