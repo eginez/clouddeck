@@ -12,7 +12,7 @@ use crate::builtin_providers;
 use crate::context::config_home;
 
 use super::manifest::{MANIFEST_FILE, Manifest};
-use super::remote::{Plugin, RemoteProvider};
+use super::remote::{NOT_RESPONDING, Plugin, RemoteProvider};
 use super::state::{CRASH_LIMIT, State, StateStore, state_path};
 
 const CLOUDDECK_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -54,8 +54,19 @@ impl ProviderRegistry {
         }
     }
 
-    pub fn refusals(&self) -> &[Refusal] {
-        &self.refusals
+    /// Extensions refused at discovery, plus any whose hung call has not yet returned.
+    pub fn refusals(&self) -> Vec<Refusal> {
+        let mut refusals = self.refusals.clone();
+        refusals.extend(
+            self.plugins
+                .iter()
+                .filter(|plugin| plugin.unhealthy())
+                .map(|plugin| Refusal {
+                    extension: plugin.id().to_string(),
+                    message: NOT_RESPONDING.to_string(),
+                }),
+        );
+        refusals
     }
 
     /// Reads each installed extension's manifest and host-owned state. No library is loaded here.

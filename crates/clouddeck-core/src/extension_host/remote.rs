@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -20,6 +20,7 @@ use super::state::{CRASH_LIMIT, State, StateStore};
 
 const DEFAULT_BUDGET: Duration = Duration::from_secs(30);
 const CONNECTION_LABEL: &str = "Profile";
+pub const NOT_RESPONDING: &str = "extension is not responding";
 
 /// One installed extension: its manifest, its state, and its library once loaded.
 pub struct Plugin {
@@ -30,6 +31,26 @@ pub struct Plugin {
     host: Arc<HostContext>,
     library: Mutex<Option<Arc<Library>>>,
     loaded: AtomicBool,
+    stuck_calls: Arc<AtomicUsize>,
+}
+
+/// Shared by a call's caller and its worker. Set under the lock when the caller gives up, so the
+/// worker either sends its outcome or settles the stuck count, never both nor neither.
+#[derive(Default)]
+struct Abandonment(Mutex<bool>);
+
+/// Settles a stuck call when its worker ends, including when the call panics.
+struct Settlement {
+    abandonment: Arc<Abandonment>,
+    stuck_calls: Arc<AtomicUsize>,
+}
+
+impl Drop for Settlement {
+    fn drop(&mut self) {
+        if *lock(&self.abandonment.0) {
+            self.stuck_calls.fetch_sub(1, Ordering::AcqRel);
+        }
+    }
 }
 
 impl Plugin {
@@ -48,7 +69,14 @@ impl Plugin {
             host,
             library: Mutex::new(None),
             loaded: AtomicBool::new(false),
+            stuck_calls: Arc::new(AtomicUsize::new(0)),
         }
+    }
+
+    /// True while a call that timed out has not returned. Such calls cannot be interrupted, so
+    /// new calls are refused until it finishes.
+    pub fn unhealthy(&self) -> bool {
+        self.stuck_calls.load(Ordering::Acquire) > 0
     }
 
     fn load(&self) -> Result<Arc<Library>, ProviderError> {
@@ -106,32 +134,60 @@ impl Plugin {
         with_cancel_flag(cancel, || library.call(method, request))
     }
 
-    /// Runs one call on a worker thread. On deadline the worker is told to cancel and the caller
-    /// gets a timeout; the library cannot be interrupted, so the worker finishes on its own.
     fn run(
         self: &Arc<Self>,
         method: u32,
         request: Vec<u8>,
         budget: Duration,
     ) -> Result<Vec<u8>, ProviderError> {
+        let worker = Arc::clone(self);
+        self.guarded(budget, move |cancel| {
+            worker.execute(method, &request, cancel)
+        })
+    }
+
+    /// Runs one call on a worker thread. On deadline the worker is told to cancel and the caller
+    /// gets a timeout; the library cannot be interrupted, so the worker finishes on its own and
+    /// keeps the extension unhealthy until it does.
+    fn guarded(
+        &self,
+        budget: Duration,
+        body: impl FnOnce(Arc<AtomicBool>) -> Result<Vec<u8>, ProviderError> + Send + 'static,
+    ) -> Result<Vec<u8>, ProviderError> {
         if budget.is_zero() {
             return Err(ProviderError::of(ErrorKind::Timeout));
         }
+        if self.unhealthy() {
+            return Err(ProviderError::new(ErrorKind::Timeout, NOT_RESPONDING));
+        }
         let (sender, receiver) = mpsc::channel();
         let cancel = Arc::new(AtomicBool::new(false));
-        let worker = Arc::clone(self);
+        let abandonment = Arc::new(Abandonment::default());
         let worker_cancel = Arc::clone(&cancel);
+        let settlement = Settlement {
+            abandonment: Arc::clone(&abandonment),
+            stuck_calls: Arc::clone(&self.stuck_calls),
+        };
         thread::Builder::new()
             .name(format!("extension-{}", self.manifest.id))
             .spawn(move || {
-                let outcome = worker.execute(method, &request, worker_cancel);
-                let _ = sender.send(outcome);
+                let outcome = body(worker_cancel);
+                let abandoned = lock(&settlement.abandonment.0);
+                if !*abandoned {
+                    let _ = sender.send(outcome);
+                }
             })
             .map_err(|error| self.failure(format!("cannot start a call thread: {error}")))?;
         match receiver.recv_timeout(budget) {
             Ok(outcome) => outcome,
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 cancel.store(true, Ordering::Relaxed);
+                let mut abandoned = lock(&abandonment.0);
+                if let Ok(outcome) = receiver.try_recv() {
+                    return outcome;
+                }
+                *abandoned = true;
+                self.stuck_calls.fetch_add(1, Ordering::AcqRel);
                 Err(ProviderError::of(ErrorKind::Timeout))
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
@@ -335,5 +391,78 @@ impl Provider for RemoteProvider {
 
     fn inspector(&self, kind: &KindId) -> Vec<InspectorSectionDef> {
         self.fallible(self.invoke(None, Method::Inspector, kind))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+    use std::sync::atomic::AtomicUsize;
+
+    use super::super::state::state_path;
+    use super::*;
+
+    fn plugin(state_root: &Path) -> Arc<Plugin> {
+        let text = "id = \"hung\"\nname = \"Hung\"\nversion = \"0.1.0\"\nschema_version = 1\napi_version = 1\n\n[providers.hung]\nname = \"Hung\"\n";
+        let manifest = Manifest::parse(text).unwrap();
+        let state = Arc::new(StateStore::open(&state_path(state_root, "hung")).unwrap());
+        Arc::new(Plugin::new(
+            PathBuf::from("/"),
+            state_root.join("hung"),
+            manifest,
+            state,
+        ))
+    }
+
+    #[test]
+    fn hung_call_times_out_and_the_next_call_is_refused_without_running() {
+        let state_root = tempfile::tempdir().unwrap();
+        let plugin = plugin(state_root.path());
+        let (release, hold) = mpsc::channel::<()>();
+        let started = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&started);
+        let timed_out = plugin.guarded(Duration::from_millis(50), move |_| {
+            counter.fetch_add(1, Ordering::SeqCst);
+            let _ = hold.recv();
+            Ok(b"late".to_vec())
+        });
+        assert_eq!(timed_out.unwrap_err().kind, ErrorKind::Timeout);
+        assert!(plugin.unhealthy());
+
+        let started_at = Instant::now();
+        let refused = plugin.guarded(Duration::from_secs(30), |_| Ok(b"never".to_vec()));
+        let error = refused.unwrap_err();
+        assert_eq!(error.kind, ErrorKind::Timeout);
+        assert_eq!(error.message, NOT_RESPONDING);
+        assert!(started_at.elapsed() < Duration::from_secs(1));
+        assert_eq!(started.load(Ordering::SeqCst), 1);
+
+        release.send(()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while plugin.unhealthy() {
+            assert!(Instant::now() < deadline, "the hung call never cleared");
+            thread::sleep(Duration::from_millis(5));
+        }
+        let answered = plugin.guarded(Duration::from_secs(5), |_| Ok(b"ok".to_vec()));
+        assert_eq!(answered.unwrap(), b"ok".to_vec());
+    }
+
+    #[test]
+    fn a_hung_call_that_panics_after_timing_out_still_clears_the_flag() {
+        let state_root = tempfile::tempdir().unwrap();
+        let plugin = plugin(state_root.path());
+        let (release, hold) = mpsc::channel::<()>();
+        let timed_out = plugin.guarded(Duration::from_millis(50), move |_| {
+            let _ = hold.recv();
+            panic!("hung call panicked");
+        });
+        assert_eq!(timed_out.unwrap_err().kind, ErrorKind::Timeout);
+
+        release.send(()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while plugin.unhealthy() {
+            assert!(Instant::now() < deadline, "the flag never cleared");
+            thread::sleep(Duration::from_millis(5));
+        }
     }
 }
