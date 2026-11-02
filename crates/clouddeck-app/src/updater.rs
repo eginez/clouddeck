@@ -323,7 +323,7 @@ mod tests {
     use clouddeck_core::release::manifest::{Manifest, to_canonical_json};
     use clouddeck_core::release::sign::{generate_keypair, sign_bytes};
     use clouddeck_core::release::verify::sha256_hex;
-    use crate::test_support::tar_gz_with_binary;
+    use crate::test_support::{tar_gz_with_binary, updater_sandbox};
     use gpui::TestAppContext;
 
     struct FakeSource {
@@ -420,10 +420,7 @@ mod tests {
 
     impl Scenario {
         fn new() -> Self {
-            let (secret, public) = generate_keypair();
-            let dir = tempfile::tempdir().unwrap();
-            let exe = dir.path().join("clouddeck");
-            fs::write(&exe, b"old").unwrap();
+            let (secret, public, exe, dir) = updater_sandbox();
             Self {
                 secret,
                 public,

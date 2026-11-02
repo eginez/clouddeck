@@ -1,9 +1,11 @@
 use crate::fleet_state::FleetState;
+use clouddeck_core::release::sign::generate_keypair;
 use clouddeck_core::{
     Auth, AuthInput, AuthMethod, AuthStep, Browse, Call, ComputeServiceProvider, Connection,
     MockComputeService, Provider, ProviderError,
 };
 use gpui::{Entity, TestAppContext};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -146,4 +148,13 @@ pub fn tar_gz_with_binary(content: &[u8]) -> Vec<u8> {
     plugin.set_cksum();
     builder.append(&plugin, &b"m"[..]).unwrap();
     builder.into_inner().unwrap().finish().unwrap()
+}
+
+/// A keypair plus an `old` executable in a temp dir kept alive by the returned guard.
+pub fn updater_sandbox() -> (String, String, PathBuf, tempfile::TempDir) {
+    let (secret, public) = generate_keypair();
+    let dir = tempfile::tempdir().unwrap();
+    let exe = dir.path().join("clouddeck");
+    std::fs::write(&exe, b"old").unwrap();
+    (secret, public, exe, dir)
 }
