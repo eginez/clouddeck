@@ -1,6 +1,6 @@
 use semver::Version;
 
-use crate::release::install::unpack;
+use crate::release::install::{EXTENSION_UNPACK_LIMITS, unpack};
 use crate::release::manifest::{check_tag, parse_manifest};
 use crate::release::source::FetchedRelease;
 use crate::release::target::{current_target, is_newer};
@@ -53,7 +53,7 @@ impl Manager {
             &self.dirs.root,
             plan.expected_id.as_deref().unwrap_or("release"),
         )?;
-        unpack(&bytes, staging.path())?;
+        unpack(&bytes, staging.path(), EXTENSION_UNPACK_LIMITS)?;
         let installed = read_manifest(staging.path())?;
         check_expected_id(plan.expected_id.as_deref(), &installed.id)?;
         check_listed_repository(&plan.index, &installed.id, &plan.owner, &plan.repo)?;
