@@ -422,6 +422,7 @@ mod tests {
     use crate::ComputeService;
     use crate::query::fixtures::bare_ec2;
     use crate::service_provider::{service_provider, whole_load_failure};
+    use clouddeck_provider_api::{ErrorKind, ValueId};
     use crate::{
         ComputeInstanceFilters, DirectoryScenarioCatalog, ScenarioService, TestScenarioKind,
     };
@@ -1095,5 +1096,39 @@ mod tests {
         vm.finish_load(loaded(vec![("us-east-1", "a")], &[]));
 
         assert!(vm.last_success().is_some());
+    }
+
+    #[test]
+    fn whole_load_rule_other_region_failure_with_zero_resources_is_partial() {
+        let mut vm = InstanceListViewModel::new(service_provider(Box::new(
+            crate::MockComputeService::new(vec![], None),
+        )));
+        let result = ListResult {
+            resources: Vec::new(),
+            failures: vec![CellFailure {
+                cell: Selection::new().with("region", vec![ValueId::from("eu-west-1")]),
+                error: ProviderError::new(ErrorKind::Throttled, "eu-west-1 is throttled"),
+            }],
+        };
+
+        vm.finish_load(result);
+
+        assert_eq!(vm.error_message(), None);
+        assert_eq!(vm.partial_failures().len(), 1);
+        assert_eq!(vm.partial_failures()[0].region, "eu-west-1");
+    }
+
+    #[test]
+    fn whole_load_rule_failure_on_selection_cell_is_whole_load() {
+        let mut vm = InstanceListViewModel::new(service_provider(Box::new(
+            crate::MockComputeService::new(vec![], None),
+        )));
+        vm.finish_load(whole_load_failure(
+            &CloudDeckError::Throttled,
+            &Selection::new(),
+        ));
+
+        assert!(vm.error_message().is_some());
+        assert!(vm.partial_failures().is_empty());
     }
 }

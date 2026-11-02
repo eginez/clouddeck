@@ -281,3 +281,46 @@ fn security_group(group_name: &str, group_id: &str) -> EC2SecurityGroup {
         group_id: Some(group_id.to_string()),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::service_provider::LoadHost;
+    use clouddeck_provider_api::{ErrorKind, KindId};
+
+    fn list(provider: &dyn Provider, selection: &Selection) -> ListResult {
+        let host = LoadHost;
+        let cx = Call {
+            deadline: None,
+            host: &host,
+        };
+        provider.list(&cx, &ConnectionId::from("default"), &KindId::instances(), selection)
+    }
+
+    #[test]
+    fn static_provider_lists_all_instances() {
+        let provider = static_provider(instances(&[
+            ("i-1", "a", "running", "t3.micro"),
+            ("i-2", "b", "stopped", "t3.micro"),
+        ]));
+
+        let result = list(provider.as_ref(), &Selection::new());
+
+        assert_eq!(result.resources.len(), 2);
+        assert!(result.failures.is_empty());
+    }
+
+    #[test]
+    fn failing_provider_returns_whole_load_failure() {
+        let provider = failing_provider("boom");
+        let selection = Selection::new();
+
+        let result = list(provider.as_ref(), &selection);
+
+        assert!(result.resources.is_empty());
+        assert_eq!(result.failures.len(), 1);
+        assert_eq!(result.failures[0].cell, selection);
+        assert!(result.failures[0].error.message.contains("boom"));
+        assert_eq!(result.failures[0].error.kind, ErrorKind::Other);
+    }
+}
