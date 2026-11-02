@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use clouddeck_extension_api::conformance::check_provider;
 use clouddeck_extension_api::{
     AuthAnswer, AuthInput, AuthMethod, AuthStatus, AuthStep, Call, CellFailure, Connection,
@@ -13,6 +15,7 @@ struct Fake {
     duplicate_ids: bool,
     panic_on_describe: bool,
     signed_out: bool,
+    ignores_cancel: bool,
 }
 
 fn instances() -> Vec<Instance> {
@@ -108,7 +111,16 @@ impl Provider for Fake {
         }]
     }
 
-    fn list(&self, _: &Call<'_>, _: &ConnectionId, kind: &KindId, sel: &Selection) -> ListResult {
+    fn list(
+        &self,
+        cx: &Call<'_>,
+        _: &ConnectionId,
+        kind: &KindId,
+        sel: &Selection,
+    ) -> ListResult {
+        if self.ignores_cancel && cx.host.cancelled() {
+            std::thread::sleep(Duration::from_secs(6));
+        }
         if kind.as_str() != INSTANCES {
             return ListResult::default();
         }
@@ -246,6 +258,21 @@ fn checker_reports_duplicate_resource_ids() {
     let violations = check_provider(&fake);
     assert!(
         violations.iter().any(|v| v.contains("duplicate")),
+        "{violations:?}"
+    );
+}
+
+#[test]
+fn checker_reports_list_that_ignores_cancellation() {
+    let fake = Fake {
+        ignores_cancel: true,
+        ..Fake::default()
+    };
+    let violations = check_provider(&fake);
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("after the host cancelled")),
         "{violations:?}"
     );
 }
