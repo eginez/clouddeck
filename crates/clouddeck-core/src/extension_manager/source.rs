@@ -1,6 +1,6 @@
 use crate::release::source::{FetchedRelease, http_error, read_body, release_tag};
 
-use super::index::INDEX_URL;
+use super::index::{INDEX_URL, IndexError};
 
 const SMALL_LIMIT: u64 = 64 * 1024;
 const INDEX_LIMIT: u64 = 1024 * 1024;
@@ -9,7 +9,7 @@ const USER_AGENT: &str = "clouddeck";
 /// Where extension index, release and asset bytes come from. Tests supply a fake.
 pub trait ExtensionSource {
     /// The index.json bytes and their detached base64 signature.
-    fn index(&self) -> Result<(Vec<u8>, String), String>;
+    fn index(&self) -> Result<(Vec<u8>, String), IndexError>;
     /// The latest release of the repository: its tag, manifest bytes and manifest signature.
     fn release(&self, owner: &str, repo: &str) -> Result<FetchedRelease, String>;
     fn download(
@@ -115,11 +115,15 @@ impl GithubExtensions {
 }
 
 impl ExtensionSource for GithubExtensions {
-    fn index(&self) -> Result<(Vec<u8>, String), String> {
-        let bytes = self.get(INDEX_URL, INDEX_LIMIT)?;
-        let signature = self.get(&format!("{INDEX_URL}.sig"), SMALL_LIMIT)?;
+    fn index(&self) -> Result<(Vec<u8>, String), IndexError> {
+        let bytes = self
+            .get(INDEX_URL, INDEX_LIMIT)
+            .map_err(IndexError::Unavailable)?;
+        let signature = self
+            .get(&format!("{INDEX_URL}.sig"), SMALL_LIMIT)
+            .map_err(IndexError::Unavailable)?;
         let signature = String::from_utf8(signature)
-            .map_err(|error| format!("index.json.sig is not text: {error}"))?
+            .map_err(|error| IndexError::Invalid(format!("index.json.sig is not text: {error}")))?
             .trim()
             .to_string();
         Ok((bytes, signature))

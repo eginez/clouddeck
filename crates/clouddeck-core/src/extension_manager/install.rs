@@ -7,6 +7,7 @@ use crate::extension_host::{
 use crate::release::verify::RELEASE_PUBLIC_KEY;
 
 use super::fetch::Plan;
+use super::index::IndexError;
 use super::source::{ExtensionSource, GithubExtensions, parse_repository, same_repository};
 use super::stage::{Staging, copy_tree, io_error, read_manifest, remove_shipped_state, swap_in};
 use super::store::{
@@ -82,7 +83,7 @@ impl Manager {
 
     pub fn install_from_index(&self, id: &str, accept: Option<&str>) -> Result<Outcome, String> {
         check_id(id)?;
-        let index = index(&*self.source, &self.release_key)?;
+        let index = index(&*self.source, &self.release_key).map_err(|error| error.to_string())?;
         let entry = index
             .find(id)
             .ok_or_else(|| format!("{id} is not in the extension index"))?;
@@ -97,7 +98,7 @@ impl Manager {
             offered_key: Some(offered_key),
             accept: accept.map(str::to_string),
             update: false,
-            index,
+            index: Some(index),
         })
     }
 
@@ -108,11 +109,23 @@ impl Manager {
         accept: Option<&str>,
     ) -> Result<Outcome, String> {
         let (owner, repo) = parse_repository(url)?;
-        let index = index(&*self.source, &self.release_key)?;
-        let listed = index
-            .extensions
-            .iter()
-            .find(|entry| same_repository(&entry.repository, &owner, &repo));
+        let index = match index(&*self.source, &self.release_key) {
+            Ok(index) => Some(index),
+            Err(error @ IndexError::Unavailable(_)) if trust_key.is_none() => {
+                return Err(format!(
+                    "{url} cannot be checked against the extension index: {error}. \
+                     Pass --trust-key <base64 author key> to install it without the index"
+                ));
+            }
+            Err(IndexError::Unavailable(_)) => None,
+            Err(error) => return Err(error.to_string()),
+        };
+        let listed = index.as_ref().and_then(|index| {
+            index
+                .extensions
+                .iter()
+                .find(|entry| same_repository(&entry.repository, &owner, &repo))
+        });
         let offered = match (listed, trust_key) {
             (Some(entry), Some(key)) if key != entry.author_key => {
                 return Err(format!(
@@ -152,8 +165,12 @@ impl Manager {
             format!("{id} has no recorded repository; reinstall it from the index")
         })?;
         let (owner, repo) = parse_repository(&repository)?;
-        let index = index(&*self.source, &self.release_key)?;
-        let offered = match index.find(id) {
+        let index = match index(&*self.source, &self.release_key) {
+            Ok(index) => Some(index),
+            Err(IndexError::Unavailable(_)) => None,
+            Err(error) => return Err(error.to_string()),
+        };
+        let offered = match index.as_ref().and_then(|index| index.find(id)) {
             Some(entry) if same_repository(&entry.repository, &owner, &repo) => {
                 Some(entry.author_key.clone())
             }

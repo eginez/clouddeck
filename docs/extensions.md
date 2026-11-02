@@ -26,11 +26,13 @@ user must also grant; they limit what the host's helpers do, not what the librar
 
 `clouddeck extension <command>` manages folders under `~/.config/clouddeck/extensions/`:
 
-- `install <id>` installs an extension listed in the signed extension index.
+- `install <id>` installs an extension listed in the signed extension index. It needs the index.
 - `install <https://github.com/owner/repo> [--trust-key <base64>]` installs from a GitHub
   repository. A repository that is not in the index needs `--trust-key` with its author's public
-  key.
+  key. If the index cannot be fetched (for example a 404), `--trust-key` is the only way to install
+  from a repository; without it the install is refused.
 - `update <id>` installs a newer release from the recorded repository. Nothing updates on its own.
+  If the index cannot be fetched, the update is checked against the author key pinned at install.
 - `dev <path>` installs a local folder as a development extension. It is copied, not linked.
 - `list`, `enable <id>`, `disable <id>`, `remove <id>`.
 

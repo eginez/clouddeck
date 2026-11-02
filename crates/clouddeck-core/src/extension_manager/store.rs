@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use crate::extension_host::{Manifest, State, StateStore, is_valid_id, state_path};
 
-use super::index::{Index, verify_index};
+use super::index::{Index, IndexError, verify_index};
 use super::install::{Dirs, Installed};
 use super::source::ExtensionSource;
 use super::stage::io_error;
@@ -37,9 +37,9 @@ pub(super) fn installed_record(dirs: &Dirs, manifest: &Manifest) -> Result<Insta
     })
 }
 
-pub(super) fn index(source: &dyn ExtensionSource, release_key: &str) -> Result<Index, String> {
+pub(super) fn index(source: &dyn ExtensionSource, release_key: &str) -> Result<Index, IndexError> {
     let (bytes, signature) = source.index()?;
-    verify_index(&bytes, &signature, release_key)
+    verify_index(&bytes, &signature, release_key).map_err(IndexError::Invalid)
 }
 
 pub(super) fn pinned_key(dirs: &Dirs, id: &str) -> Result<Option<String>, String> {

@@ -30,6 +30,22 @@ impl Index {
     }
 }
 
+/// `Unavailable` means the index could not be fetched; `Invalid` means it was fetched and refused.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IndexError {
+    Unavailable(String),
+    Invalid(String),
+}
+
+impl std::fmt::Display for IndexError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unavailable(reason) => write!(f, "the extension index is unavailable: {reason}"),
+            Self::Invalid(reason) => write!(f, "the extension index was refused: {reason}"),
+        }
+    }
+}
+
 /// Parses an index only after its signature checks out against the release key.
 pub fn verify_index(bytes: &[u8], signature_b64: &str, release_key: &str) -> Result<Index, String> {
     verify_manifest(bytes, signature_b64, release_key)

@@ -20,7 +20,7 @@ pub(super) struct Plan {
     pub(super) offered_key: Option<String>,
     pub(super) accept: Option<String>,
     pub(super) update: bool,
-    pub(super) index: Index,
+    pub(super) index: Option<Index>,
 }
 
 impl Manager {
@@ -56,7 +56,7 @@ impl Manager {
         unpack(&bytes, staging.path(), EXTENSION_UNPACK_LIMITS)?;
         let installed = read_manifest(staging.path())?;
         check_expected_id(plan.expected_id.as_deref(), &installed.id)?;
-        check_listed_repository(&plan.index, &installed.id, &plan.owner, &plan.repo)?;
+        check_listed_repository(plan.index.as_ref(), &installed.id, &plan.owner, &plan.repo)?;
         remove_shipped_state(staging.path())?;
         installed.library_path(staging.path())?;
         let rotated = self.check_pin(&installed.id, &key, plan.accept.as_deref())?;
@@ -135,8 +135,13 @@ fn choose_key(
     }
 }
 
-fn check_listed_repository(index: &Index, id: &str, owner: &str, repo: &str) -> Result<(), String> {
-    match index.find(id) {
+fn check_listed_repository(
+    index: Option<&Index>,
+    id: &str,
+    owner: &str,
+    repo: &str,
+) -> Result<(), String> {
+    match index.and_then(|index| index.find(id)) {
         Some(entry) if !same_repository(&entry.repository, owner, repo) => Err(format!(
             "the index lists {id} at {}, not this repository",
             entry.repository

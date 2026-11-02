@@ -224,6 +224,117 @@ fn traversal_during_update_leaves_the_previous_install_intact() {
     assert!(!fx.root.join("escape").exists());
 }
 
+const UNLISTED: &str = "https://github.com/someone/else";
+
+#[test]
+fn unavailable_index_with_trust_key_installs_and_pins() {
+    let fx = fixture();
+    fx.publish_release(
+        &fx.author.0,
+        "0.1.0",
+        &standard_archive("toy", API_VERSION, "0.1.0"),
+    );
+
+    let outcome = fx
+        .manager()
+        .install_from_url(UNLISTED, Some(&fx.author.1), None)
+        .unwrap();
+
+    assert!(matches!(outcome, Outcome::Installed(_)));
+    assert!(fx.root.join("toy/extension.toml").is_file());
+    assert_eq!(fx.installed_pin().as_deref(), Some(fx.author.1.as_str()));
+}
+
+#[test]
+fn unavailable_index_without_trust_key_refuses_and_says_how_to_proceed() {
+    let fx = fixture();
+    fx.publish_release(
+        &fx.author.0,
+        "0.1.0",
+        &standard_archive("toy", API_VERSION, "0.1.0"),
+    );
+
+    let err = fx
+        .manager()
+        .install_from_url(UNLISTED, None, None)
+        .unwrap_err();
+
+    assert!(err.contains("unavailable"), "{err}");
+    assert!(err.contains("--trust-key"), "{err}");
+    assert!(!fx.root.join("toy").exists());
+}
+
+#[test]
+fn forged_index_is_refused_even_with_trust_key() {
+    let fx = fixture();
+    fx.publish_forged_index();
+    fx.publish_release(
+        &fx.author.0,
+        "0.1.0",
+        &standard_archive("toy", API_VERSION, "0.1.0"),
+    );
+
+    let err = fx
+        .manager()
+        .install_from_url(UNLISTED, Some(&fx.author.1), None)
+        .unwrap_err();
+
+    assert!(err.contains("signature"), "{err}");
+    assert!(!err.contains("unavailable"), "{err}");
+    assert!(!fx.root.join("toy").exists());
+    assert_eq!(fx.installed_pin(), None);
+}
+
+#[test]
+fn update_uses_the_pinned_key_when_the_index_is_unavailable() {
+    let fx = fixture();
+    fx.install_v1();
+    fx.hide_index();
+    fx.publish_release(
+        &fx.author.0,
+        "0.2.0",
+        &standard_archive("toy", API_VERSION, "0.2.0"),
+    );
+
+    let outcome = fx.manager().update("toy", None).unwrap();
+
+    assert!(matches!(outcome, Outcome::Installed(_)));
+    assert_eq!(fx.installed_pin().as_deref(), Some(fx.author.1.as_str()));
+}
+
+#[test]
+fn update_refuses_a_forged_index() {
+    let fx = fixture();
+    fx.install_v1();
+    let before = read(&fx.root.join("toy/extension.toml"));
+    fx.publish_forged_index();
+    fx.publish_release(
+        &fx.author.0,
+        "0.2.0",
+        &standard_archive("toy", API_VERSION, "0.2.0"),
+    );
+
+    let err = fx.manager().update("toy", None).unwrap_err();
+
+    assert!(err.contains("signature"), "{err}");
+    assert_eq!(read(&fx.root.join("toy/extension.toml")), before);
+}
+
+#[test]
+fn install_by_id_fails_clearly_when_the_index_is_unavailable() {
+    let fx = fixture();
+    fx.publish_release(
+        &fx.author.0,
+        "0.1.0",
+        &standard_archive("toy", API_VERSION, "0.1.0"),
+    );
+
+    let err = fx.manager().install_from_index("toy", None).unwrap_err();
+
+    assert!(err.contains("unavailable"), "{err}");
+    assert!(!fx.root.join("toy").exists());
+}
+
 #[test]
 fn update_that_is_not_newer_changes_nothing() {
     let fx = fixture();

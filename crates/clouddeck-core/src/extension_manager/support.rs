@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use clouddeck_extension_api::API_VERSION;
 
 use crate::extension_host::{StateStore, state_path};
-use crate::extension_manager::index::INDEX_SCHEMA;
+use crate::extension_manager::index::{INDEX_SCHEMA, IndexError};
 use crate::extension_manager::install::Manager;
 use crate::extension_manager::source::ExtensionSource;
 use crate::release::manifest::{Asset, Manifest as ReleaseManifest, to_canonical_json};
@@ -18,7 +18,8 @@ use crate::release::verify::sha256_hex;
 
 #[derive(Default)]
 pub(super) struct Hub {
-    pub(super) index: (Vec<u8>, String),
+    /// `None` stands for an index that cannot be fetched (a 404 in production).
+    pub(super) index: Option<(Vec<u8>, String)>,
     pub(super) tag: String,
     pub(super) manifest: Vec<u8>,
     pub(super) signature: String,
@@ -34,8 +35,11 @@ impl Fake {
 }
 
 impl ExtensionSource for Fake {
-    fn index(&self) -> Result<(Vec<u8>, String), String> {
-        Ok(self.hub().index.clone())
+    fn index(&self) -> Result<(Vec<u8>, String), IndexError> {
+        self.hub()
+            .index
+            .clone()
+            .ok_or_else(|| IndexError::Unavailable("404 Not Found".to_string()))
     }
 
     fn release(&self, _owner: &str, _repo: &str) -> Result<FetchedRelease, String> {
@@ -170,13 +174,23 @@ impl Fixture {
         })
         .to_string();
         let sig = sign_bytes(json.as_bytes(), &self.app_key.0).unwrap();
-        self.hub.lock().unwrap().index = (json.into_bytes(), sig);
+        self.hub.lock().unwrap().index = Some((json.into_bytes(), sig));
     }
 
     pub(super) fn publish_empty_index(&self) {
         let json = serde_json::json!({"schema": INDEX_SCHEMA, "extensions": []}).to_string();
         let sig = sign_bytes(json.as_bytes(), &self.app_key.0).unwrap();
-        self.hub.lock().unwrap().index = (json.into_bytes(), sig);
+        self.hub.lock().unwrap().index = Some((json.into_bytes(), sig));
+    }
+
+    pub(super) fn publish_forged_index(&self) {
+        let json = serde_json::json!({"schema": INDEX_SCHEMA, "extensions": []}).to_string();
+        let sig = sign_bytes(json.as_bytes(), &generate_keypair().0).unwrap();
+        self.hub.lock().unwrap().index = Some((json.into_bytes(), sig));
+    }
+
+    pub(super) fn hide_index(&self) {
+        self.hub.lock().unwrap().index = None;
     }
 
     pub(super) fn publish_release(&self, secret: &str, version: &str, bundle: &[u8]) {
