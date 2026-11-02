@@ -4,8 +4,14 @@ use clouddeck_core::{
     Auth, AuthInput, AuthMethod, AuthStep, Browse, Call, ComputeServiceProvider, Connection,
     MockComputeService, Provider, ProviderError,
 };
-use gpui::{Entity, TestAppContext};
+use gpui::{
+    AppContext, Context, Entity, EventEmitter, Render, TestAppContext, VisualTestContext, Window,
+};
+use gpui_component::Root;
+use gpui_component::input::InputState;
+use std::cell::RefCell;
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -157,4 +163,40 @@ pub fn updater_sandbox() -> (String, String, PathBuf, tempfile::TempDir) {
     let exe = dir.path().join("clouddeck");
     std::fs::write(&exe, b"old").unwrap();
     (secret, public, exe, dir)
+}
+
+/// Opens `build`'s view in a test window with its input set to `query`, recording every event it emits.
+pub fn open_with_query<'a, V, E>(
+    cx: &'a mut TestAppContext,
+    query: &'static str,
+    build: impl FnOnce(&mut Window, &mut Context<V>) -> V + 'static,
+    input: fn(&V) -> &Entity<InputState>,
+) -> (Entity<V>, Rc<RefCell<Vec<E>>>, &'a mut VisualTestContext)
+where
+    V: Render + EventEmitter<E> + 'static,
+    E: Clone + 'static,
+{
+    let slot = Rc::new(RefCell::new(None));
+    let slot_for_window = slot.clone();
+    let (_root, cx) = cx.add_window_view(move |window, cx| {
+        gpui_component::init(cx);
+        let view = cx.new(|cx| build(window, cx));
+        view.update(cx, |view, cx| {
+            input(view).update(cx, |state, cx| state.set_value(query, window, cx));
+        });
+        *slot_for_window.borrow_mut() = Some(view.clone());
+        Root::new(view, window, cx)
+    });
+    let view = slot
+        .borrow()
+        .as_ref()
+        .expect("view entity should be created")
+        .clone();
+    let events: Rc<RefCell<Vec<E>>> = Rc::new(RefCell::new(Vec::new()));
+    let sink = events.clone();
+    cx.update(|_, cx| {
+        cx.subscribe(&view, move |_, event: &E, _| sink.borrow_mut().push(event.clone()))
+            .detach();
+    });
+    (view, events, cx)
 }

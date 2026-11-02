@@ -239,9 +239,9 @@ mod tests {
     use std::rc::Rc;
 
     use super::*;
+    use crate::test_support::open_with_query;
     use crate::ui_record::recorded;
     use gpui::{TestAppContext, VisualTestContext};
-    use gpui_component::Root;
 
     type Events = Rc<RefCell<Vec<PaletteEvent>>>;
 
@@ -260,33 +260,12 @@ mod tests {
         cx: &'a mut TestAppContext,
         query: &'static str,
     ) -> (Entity<CommandPalette>, Events, &'a mut VisualTestContext) {
-        let slot = Rc::new(RefCell::new(None));
-        let slot_for_window = slot.clone();
-        let (_root, cx) = cx.add_window_view(move |window, cx| {
-            gpui_component::init(cx);
-            let palette = cx.new(|cx| CommandPalette::new(selection_context(), window, cx));
-            palette.update(cx, |palette, cx| {
-                palette
-                    .input
-                    .update(cx, |input, cx| input.set_value(query, window, cx));
-            });
-            *slot_for_window.borrow_mut() = Some(palette.clone());
-            Root::new(palette, window, cx)
-        });
-        let palette = slot
-            .borrow()
-            .as_ref()
-            .expect("palette entity should be created")
-            .clone();
-        let events: Events = Rc::new(RefCell::new(Vec::new()));
-        let sink = events.clone();
-        cx.update(|_, cx| {
-            cx.subscribe(&palette, move |_, event: &PaletteEvent, _| {
-                sink.borrow_mut().push(*event)
-            })
-            .detach();
-        });
-        (palette, events, cx)
+        open_with_query(
+            cx,
+            query,
+            |window, cx| CommandPalette::new(selection_context(), window, cx),
+            |view| &view.input,
+        )
     }
 
     #[gpui::test]
