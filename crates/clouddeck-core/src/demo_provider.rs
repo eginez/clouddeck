@@ -9,6 +9,7 @@ use clouddeck_provider_api::{
 
 use crate::parse_scenario;
 use crate::service::BoxError;
+use crate::workspace_provider::routed_request;
 
 const REGION: &str = "region";
 const DEMO_METHOD: &str = "demo";
@@ -166,11 +167,16 @@ impl Provider for DemoProvider {
 
     fn list(
         &self,
-        _cx: &Call<'_>,
+        cx: &Call<'_>,
         connection: &ConnectionId,
         kind: &KindId,
         selection: &Selection,
     ) -> ListResult {
+        if let Some(request) = routed_request(cx, connection)
+            && !request.is_demo_fixture()
+        {
+            return request.list(cx, connection, kind);
+        }
         if kind.as_str() != INSTANCES {
             return failed(selection, ProviderError::unsupported());
         }

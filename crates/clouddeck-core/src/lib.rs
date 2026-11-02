@@ -66,6 +66,7 @@ pub use extension_host::{LoadError, LoadedExtension};
 #[cfg(feature = "test-support")]
 pub use extension_host::load_extension;
 mod bound_provider;
+mod scoped_provider;
 pub use bound_provider::{BoundProvider, bound_provider};
 mod demo_provider;
 #[cfg(test)]

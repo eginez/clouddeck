@@ -1,7 +1,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use clouddeck_provider_api::{ConnectionId, Provider, Selection, ValueId};
+use clouddeck_provider_api::{
+    Call, ConnectionId, KindId, ListResult, Provider, Selection, ValueId,
+};
 
 use crate::aws_sdk::AwsSdkComputeService;
 use crate::bound_provider::bound_provider;
@@ -10,6 +12,9 @@ use crate::fleet_compute::FleetComputeService;
 use crate::mock::MockComputeService;
 use crate::models::EC2Instance;
 use crate::scenario::{EC2Scenario, parse_scenario};
+use crate::scoped_provider::{
+    DEMO_SCENARIO_KEY, FLEET_KEY, REGIONS_KEY, REQUEST_TIMEOUT_KEY, ScopeSettings, scoped_provider,
+};
 use crate::service::{BoxError, ComputeService};
 use crate::service_provider::{REGION, service_provider};
 use crate::settings::fleet_region_timeout;
@@ -21,6 +26,30 @@ pub enum DemoFleet {
     Failure,
     Partial,
     Large,
+}
+
+impl DemoFleet {
+    pub(crate) fn key(self) -> &'static str {
+        match self {
+            DemoFleet::Happy => "happy",
+            DemoFleet::Empty => "empty",
+            DemoFleet::Failure => "failure",
+            DemoFleet::Partial => "partial",
+            DemoFleet::Large => "large",
+        }
+    }
+
+    pub(crate) fn from_key(key: &str) -> Option<Self> {
+        [
+            DemoFleet::Happy,
+            DemoFleet::Empty,
+            DemoFleet::Failure,
+            DemoFleet::Partial,
+            DemoFleet::Large,
+        ]
+        .into_iter()
+        .find(|demo| demo.key() == key)
+    }
 }
 
 type Service = Box<dyn ComputeService + Send + Sync>;
@@ -59,37 +88,101 @@ pub fn workspace_provider(
     fleet_regions: &[String],
     request_timeout: Duration,
 ) -> Arc<dyn Provider> {
-    demo_routed(providers, profile, region, demo).unwrap_or_else(|| {
-        service_provider(service(
-            profile,
-            region,
-            demo,
-            fleet_regions,
+    let id = if demo.is_some() { "demo" } else { "aws" };
+    let entry = providers
+        .iter()
+        .find(|provider| provider.info().id == id)
+        .or_else(|| {
+            providers
+                .iter()
+                .find(|provider| provider.info().id == "aws")
+        })
+        .expect("the aws provider is registered");
+    let fleet = region == "fleet";
+    let regions = if fleet {
+        fleet_regions.to_vec()
+    } else {
+        vec![region.to_string()]
+    };
+    let selection = Selection::new().with(
+        REGION,
+        regions
+            .iter()
+            .map(|region| ValueId::from(region.as_str()))
+            .collect(),
+    );
+    scoped_provider(
+        bound_provider(Arc::clone(entry), ConnectionId::from(profile), selection),
+        ScopeSettings {
             request_timeout,
-        ))
+            fleet,
+            demo,
+            regions,
+        },
+    )
+}
+
+pub(crate) struct RoutedRequest {
+    profile: String,
+    region: String,
+    regions: Vec<String>,
+    request_timeout: Duration,
+    demo: Option<DemoFleet>,
+}
+
+pub(crate) fn routed_request(cx: &Call<'_>, connection: &ConnectionId) -> Option<RoutedRequest> {
+    let request_timeout =
+        Duration::from_millis(cx.host.setting(REQUEST_TIMEOUT_KEY)?.parse().ok()?);
+    let fleet = cx.host.setting(FLEET_KEY).is_some();
+    let regions: Vec<String> = cx
+        .host
+        .setting(REGIONS_KEY)
+        .unwrap_or_default()
+        .split(',')
+        .filter(|region| !region.is_empty())
+        .map(str::to_string)
+        .collect();
+    let region = if fleet {
+        "fleet".to_string()
+    } else {
+        regions.first().cloned().unwrap_or_default()
+    };
+    let demo = cx
+        .host
+        .setting(DEMO_SCENARIO_KEY)
+        .and_then(|key| DemoFleet::from_key(&key));
+    Some(RoutedRequest {
+        profile: connection.as_str().to_string(),
+        region,
+        regions,
+        request_timeout,
+        demo,
     })
 }
 
-fn demo_routed(
-    providers: &[Arc<dyn Provider>],
-    profile: &str,
-    region: &str,
-    demo: Option<DemoFleet>,
-) -> Option<Arc<dyn Provider>> {
-    if demo != Some(DemoFleet::Happy) || region == "fleet" || profile.is_empty() {
-        return None;
+impl RoutedRequest {
+    pub(crate) fn is_demo_fixture(&self) -> bool {
+        self.demo == Some(DemoFleet::Happy) && self.region != "fleet" && !self.profile.is_empty()
     }
-    let demo_provider = providers
-        .iter()
-        .find(|provider| provider.info().id == "demo")?;
-    Some(bound_provider(
-        Arc::clone(demo_provider),
-        ConnectionId::from(profile),
-        Selection::new().with(REGION, vec![ValueId::from(region)]),
-    ))
+
+    pub(crate) fn list(
+        &self,
+        cx: &Call<'_>,
+        connection: &ConnectionId,
+        kind: &KindId,
+    ) -> ListResult {
+        service_provider(service(
+            &self.profile,
+            &self.region,
+            self.demo,
+            &self.regions,
+            self.request_timeout,
+        ))
+        .list(cx, connection, kind, &Selection::new())
+    }
 }
 
-fn service(
+pub(crate) fn service(
     profile: &str,
     region: &str,
     demo: Option<DemoFleet>,

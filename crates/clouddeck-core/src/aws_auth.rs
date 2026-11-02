@@ -20,6 +20,7 @@ use crate::aws_sso_login::{
     sso_cache_path,
 };
 use crate::context::{aws_file_paths, read_profile_auth};
+use crate::workspace_provider::routed_request;
 use crate::{
     AwsCredentialKind, AwsSdkComputeService, AwsSsoConfiguration, ComputeServiceProvider,
     Dimension, LoginGuidance, REGIONS, load_profiles, login_guidance,
@@ -262,7 +263,10 @@ impl Provider for AwsProvider {
         kind: &KindId,
         selection: &Selection,
     ) -> ListResult {
-        self.inner.list(cx, connection, kind, selection)
+        match routed_request(cx, connection) {
+            Some(request) => request.list(cx, connection, kind),
+            None => self.inner.list(cx, connection, kind, selection),
+        }
     }
 
     fn console_url(
