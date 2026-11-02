@@ -433,16 +433,19 @@ impl WorkspaceContext {
     }
 }
 
-pub fn context_path() -> PathBuf {
-    let base = std::env::var_os("XDG_CONFIG_HOME")
+pub fn config_home() -> PathBuf {
+    std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
             std::env::var_os("HOME")
                 .map(PathBuf::from)
                 .unwrap_or_default()
                 .join(".config")
-        });
-    base.join("clouddeck/context.json")
+        })
+}
+
+pub fn context_path() -> PathBuf {
+    config_home().join("clouddeck/context.json")
 }
 
 pub const FLEET_REGIONS: &[&str] = &["us-east-1", "us-west-2", "eu-west-1", "eu-central-1"];

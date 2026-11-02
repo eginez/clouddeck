@@ -1392,6 +1392,7 @@ dependencies = [
  "tar",
  "tempfile",
  "tokio",
+ "toml 0.8.23",
  "ureq",
  "url",
 ]
@@ -1412,6 +1413,7 @@ dependencies = [
  "clouddeck-core",
  "clouddeck-extension-api",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

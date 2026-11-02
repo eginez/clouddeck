@@ -53,7 +53,6 @@ mod aws_identity;
 mod aws_sdk;
 mod aws_sso_login;
 pub use aws_auth::aws_provider;
-mod extension_host;
 pub use extension_host::{LoadError, LoadedExtension, load_extension};
 mod demo_provider;
 #[cfg(test)]
@@ -61,6 +60,7 @@ mod demo_provider_tests;
 pub use demo_provider::{DemoProvider, builtin_providers, demo_provider};
 mod console_url;
 mod context;
+pub mod extension_host;
 mod inspector;
 pub use inspector::*;
 mod status_text;
