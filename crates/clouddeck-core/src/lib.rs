@@ -8,9 +8,10 @@ pub use instance::{
 mod aws_inspector;
 mod provider;
 pub use clouddeck_provider_api::{
-    Connection, CoreField, ErrorKind, FieldDef, FieldKind, FieldSource, InspectorRowDef,
-    InspectorSectionDef, InspectorValue, ListResult, MatchMode, Provider, ProviderError, Scope,
-    ScopeFailure,
+    CellFailure, Connection, ConnectionId, CoreField, DimValue, Dimension, DimensionId, ErrorKind,
+    FieldDef, FieldKind, FieldSource, InspectorRowDef, InspectorSectionDef, InspectorValue, KindId,
+    KindInfo, ListResult, MatchMode, Provider, ProviderError, ProviderInfo, ResourceId, Selection,
+    ValueId,
 };
 pub use provider::ComputeServiceProvider;
 mod mock;

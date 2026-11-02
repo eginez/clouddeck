@@ -1,47 +1,85 @@
 use crate::error::ProviderError;
 use crate::field::FieldDef;
+use crate::host::Call;
+use crate::ids::{ConnectionId, KindId, ResourceId};
 use crate::inspector::InspectorSectionDef;
-use crate::instance::Instance;
+use crate::instance::{ExtrasSection, Instance};
+use crate::selection::{Dimension, Selection};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Connection {
-    pub id: String,
+    pub id: ConnectionId,
     pub display_name: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Scope {
+pub struct ProviderInfo {
     pub id: String,
-    pub display_name: String,
+    pub name: String,
+    pub version: String,
+    pub connection_label: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ScopeFailure {
-    pub scope: String,
-    pub message: String,
+pub struct KindInfo {
+    pub id: KindId,
+    pub label: String,
+}
+
+/// `cell` names the exact dimension values that failed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CellFailure {
+    pub cell: Selection,
     pub error: ProviderError,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ListResult {
-    pub instances: Vec<Instance>,
-    pub failures: Vec<ScopeFailure>,
+    pub resources: Vec<Instance>,
+    pub failures: Vec<CellFailure>,
 }
 
 pub trait Provider: Send + Sync {
-    fn id(&self) -> String;
-    fn connections(&self) -> Result<Vec<Connection>, ProviderError>;
-    fn scopes(&self, connection: &str) -> Result<Vec<Scope>, ProviderError>;
-    fn list(&self, connection: &str, scopes: &[String]) -> ListResult;
+    fn info(&self) -> ProviderInfo;
+    /// Err with kind Auth means the user must sign in first.
+    fn connections(&self, cx: &Call<'_>) -> Result<Vec<Connection>, ProviderError>;
+    fn dimensions(
+        &self,
+        cx: &Call<'_>,
+        connection: &ConnectionId,
+    ) -> Result<Vec<Dimension>, ProviderError>;
+    fn kinds(&self) -> Vec<KindInfo>;
+    fn list(
+        &self,
+        cx: &Call<'_>,
+        connection: &ConnectionId,
+        kind: &KindId,
+        selection: &Selection,
+    ) -> ListResult;
+
+    fn describe(
+        &self,
+        _cx: &Call<'_>,
+        _connection: &ConnectionId,
+        _kind: &KindId,
+        _id: &ResourceId,
+    ) -> Result<Vec<ExtrasSection>, ProviderError> {
+        Err(ProviderError::unsupported())
+    }
 
     fn sign_in(&self, _connection: &str) -> Result<(), ProviderError> {
         Err(ProviderError::unsupported())
     }
 
-    fn console_url(&self, instance: &Instance) -> Option<String>;
-    fn fields(&self) -> Vec<FieldDef>;
+    fn console_url(
+        &self,
+        connection: &ConnectionId,
+        kind: &KindId,
+        resource: &Instance,
+    ) -> Option<String>;
+    fn fields(&self, kind: &KindId) -> Vec<FieldDef>;
 
-    fn inspector(&self) -> Vec<InspectorSectionDef> {
+    fn inspector(&self, _kind: &KindId) -> Vec<InspectorSectionDef> {
         Vec::new()
     }
 }
@@ -49,32 +87,150 @@ pub trait Provider: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::host::LogLevel;
+    use crate::ids::ValueId;
+    use crate::selection::DimValue;
+    use std::path::PathBuf;
     use std::sync::Arc;
+
+    struct NullHost;
+
+    impl crate::host::Host for NullHost {
+        fn log(&self, _level: LogLevel, _message: &str) {}
+        fn data_dir(&self) -> PathBuf {
+            PathBuf::new()
+        }
+        fn setting(&self, _key: &str) -> Option<String> {
+            None
+        }
+        fn secret(&self, _key: &str) -> Option<String> {
+            None
+        }
+        fn set_secret(&self, _key: &str, _value: Option<&str>) -> Result<(), ProviderError> {
+            Ok(())
+        }
+        fn open_url(&self, _url: &str) -> Result<(), ProviderError> {
+            Ok(())
+        }
+        fn cancelled(&self) -> bool {
+            false
+        }
+    }
 
     struct EmptyProvider;
 
     impl Provider for EmptyProvider {
-        fn id(&self) -> String {
-            "empty".to_string()
+        fn info(&self) -> ProviderInfo {
+            ProviderInfo {
+                id: "empty".to_string(),
+                name: "Empty".to_string(),
+                version: "0".to_string(),
+                connection_label: "Profile".to_string(),
+            }
         }
 
-        fn connections(&self) -> Result<Vec<Connection>, ProviderError> {
+        fn connections(&self, _cx: &Call<'_>) -> Result<Vec<Connection>, ProviderError> {
             Ok(vec![])
         }
 
-        fn scopes(&self, _connection: &str) -> Result<Vec<Scope>, ProviderError> {
+        fn dimensions(
+            &self,
+            _cx: &Call<'_>,
+            _connection: &ConnectionId,
+        ) -> Result<Vec<Dimension>, ProviderError> {
             Ok(vec![])
         }
 
-        fn list(&self, _connection: &str, _scopes: &[String]) -> ListResult {
+        fn kinds(&self) -> Vec<KindInfo> {
+            vec![]
+        }
+
+        fn list(
+            &self,
+            _cx: &Call<'_>,
+            _connection: &ConnectionId,
+            _kind: &KindId,
+            _selection: &Selection,
+        ) -> ListResult {
             ListResult::default()
         }
 
-        fn console_url(&self, _instance: &Instance) -> Option<String> {
+        fn console_url(
+            &self,
+            _connection: &ConnectionId,
+            _kind: &KindId,
+            _resource: &Instance,
+        ) -> Option<String> {
             None
         }
 
-        fn fields(&self) -> Vec<FieldDef> {
+        fn fields(&self, _kind: &KindId) -> Vec<FieldDef> {
+            vec![]
+        }
+    }
+
+    struct TreeProvider;
+
+    impl Provider for TreeProvider {
+        fn info(&self) -> ProviderInfo {
+            EmptyProvider.info()
+        }
+
+        fn connections(&self, _cx: &Call<'_>) -> Result<Vec<Connection>, ProviderError> {
+            Ok(vec![])
+        }
+
+        fn dimensions(
+            &self,
+            _cx: &Call<'_>,
+            _connection: &ConnectionId,
+        ) -> Result<Vec<Dimension>, ProviderError> {
+            Ok(vec![Dimension {
+                id: "place".into(),
+                label: "Place".to_string(),
+                multi: true,
+                optional: true,
+                values: vec![
+                    DimValue {
+                        id: "us".into(),
+                        label: "US".to_string(),
+                        parent: None,
+                        default: false,
+                    },
+                    DimValue {
+                        id: "us-east".into(),
+                        label: "US East".to_string(),
+                        parent: Some("us".into()),
+                        default: true,
+                    },
+                ],
+            }])
+        }
+
+        fn kinds(&self) -> Vec<KindInfo> {
+            vec![]
+        }
+
+        fn list(
+            &self,
+            _cx: &Call<'_>,
+            _connection: &ConnectionId,
+            _kind: &KindId,
+            _selection: &Selection,
+        ) -> ListResult {
+            ListResult::default()
+        }
+
+        fn console_url(
+            &self,
+            _connection: &ConnectionId,
+            _kind: &KindId,
+            _resource: &Instance,
+        ) -> Option<String> {
+            None
+        }
+
+        fn fields(&self, _kind: &KindId) -> Vec<FieldDef> {
             vec![]
         }
     }
@@ -83,12 +239,23 @@ mod tests {
 
     #[test]
     fn provider_is_object_safe_behind_box_and_arc() {
+        let host = NullHost;
+        let cx = Call {
+            deadline: None,
+            host: &host,
+        };
+        let default = ConnectionId::from("default");
+
         let boxed: Box<dyn Provider> = Box::new(EmptyProvider);
-        assert_eq!(boxed.id(), "empty");
-        assert_eq!(boxed.list("default", &[]), ListResult::default());
+        assert_eq!(boxed.info().id, "empty");
+        assert_eq!(
+            boxed.list(&cx, &default, &KindId::instances(), &Selection::new()),
+            ListResult::default()
+        );
 
         let shared: Arc<dyn Provider> = Arc::new(EmptyProvider);
-        assert_eq!(shared.connections(), Ok(vec![]));
+        assert_eq!(shared.connections(&cx), Ok(vec![]));
+        assert_eq!(shared.dimensions(&cx, &default), Ok(vec![]));
     }
 
     #[test]
@@ -97,8 +264,31 @@ mod tests {
     }
 
     #[test]
-    fn default_inspector_is_empty() {
-        assert!(EmptyProvider.inspector().is_empty());
+    fn default_describe_is_unsupported() {
+        let host = NullHost;
+        let cx = Call {
+            deadline: None,
+            host: &host,
+        };
+        assert_eq!(
+            EmptyProvider.describe(
+                &cx,
+                &ConnectionId::from("default"),
+                &KindId::instances(),
+                &ResourceId::from("i-1"),
+            ),
+            Err(ProviderError::unsupported())
+        );
+    }
+
+    #[test]
+    fn default_inspector_is_empty_for_any_kind() {
+        assert!(EmptyProvider.inspector(&KindId::instances()).is_empty());
+        assert!(
+            EmptyProvider
+                .inspector(&KindId::from("services"))
+                .is_empty()
+        );
     }
 
     #[test]
@@ -107,5 +297,29 @@ mod tests {
             EmptyProvider.sign_in("default"),
             Err(ProviderError::unsupported())
         );
+    }
+
+    #[test]
+    fn dimension_value_tree_round_trips() {
+        let host = NullHost;
+        let cx = Call {
+            deadline: None,
+            host: &host,
+        };
+        let dimensions = TreeProvider
+            .dimensions(&cx, &ConnectionId::from("default"))
+            .expect("dimensions");
+        let values = &dimensions[0].values;
+        assert_eq!(values[0].parent, None);
+        assert_eq!(values[1].parent, Some(ValueId::from("us")));
+    }
+
+    #[test]
+    fn selection_absent_dimension_is_empty() {
+        let selection = Selection::new().with("region", vec![ValueId::from("eu-west-1")]);
+        assert!(selection.values("zone").is_empty());
+        assert_eq!(selection.values("region"), &[ValueId::from("eu-west-1")]);
+        assert!(Selection::new().is_empty());
+        assert!(!selection.is_empty());
     }
 }
