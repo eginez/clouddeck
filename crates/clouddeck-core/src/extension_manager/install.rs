@@ -20,6 +20,7 @@ pub const EXTERNAL_EXTENSIONS_ALLOWED: bool = false;
 const ENABLE_REFUSED: &str =
     "enabling external extensions is turned off until security review B (clouddeck-rs-7ah1) closes";
 pub const MAX_EXTENSION_ASSET: u64 = 200 * 1024 * 1024;
+const LOCK_FILE: &str = ".install.lock";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Installed {
@@ -81,7 +82,27 @@ impl Manager {
         )
     }
 
+    fn lock(&self) -> Result<fs::File, String> {
+        fs::create_dir_all(&self.dirs.state_root).map_err(io_error)?;
+        let path = self.dirs.state_root.join(LOCK_FILE);
+        let file = fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(&path)
+            .map_err(io_error)?;
+        match file.try_lock() {
+            Ok(()) => Ok(file),
+            Err(fs::TryLockError::WouldBlock) => Err(format!(
+                "another extension operation is running; wait for it to finish ({} is held)",
+                path.display()
+            )),
+            Err(fs::TryLockError::Error(error)) => Err(io_error(error)),
+        }
+    }
+
     pub fn install_from_index(&self, id: &str, accept: Option<&str>) -> Result<Outcome, String> {
+        let _lock = self.lock()?;
         check_id(id)?;
         let index = index(&*self.source, &self.release_key).map_err(|error| error.to_string())?;
         let entry = index
@@ -108,6 +129,7 @@ impl Manager {
         trust_key: Option<&str>,
         accept: Option<&str>,
     ) -> Result<Outcome, String> {
+        let _lock = self.lock()?;
         let (owner, repo) = parse_repository(url)?;
         let index = match index(&*self.source, &self.release_key) {
             Ok(index) => Some(index),
@@ -154,6 +176,7 @@ impl Manager {
     }
 
     pub fn update(&self, id: &str, accept: Option<&str>) -> Result<Outcome, String> {
+        let _lock = self.lock()?;
         require_installed(&self.dirs, id)?;
         let (dev, repository) = state(&self.dirs, id)?.read(|s| (s.dev, s.repository.clone()));
         if dev {
@@ -195,6 +218,7 @@ impl Manager {
     }
 
     pub fn install_dev(&self, path: &Path) -> Result<Outcome, String> {
+        let _lock = self.lock()?;
         let manifest = read_manifest(path)?;
         let id = manifest.id.clone();
         let existed = is_installed(&self.dirs, &id);
@@ -228,6 +252,7 @@ impl Manager {
     }
 
     pub fn disable(&self, id: &str) -> Result<(), String> {
+        let _lock = self.lock()?;
         require_installed(&self.dirs, id)?;
         state(&self.dirs, id)?
             .update(|s| s.enabled = false)
@@ -236,6 +261,7 @@ impl Manager {
 
     /// Removes the folder and keeps the author key pin, so a reinstall cannot silently swap keys.
     pub fn remove(&self, id: &str) -> Result<(), String> {
+        let _lock = self.lock()?;
         require_installed(&self.dirs, id)?;
         fs::remove_dir_all(self.dirs.root.join(id)).map_err(io_error)?;
         state(&self.dirs, id)?

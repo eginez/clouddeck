@@ -48,6 +48,13 @@ that second rename fails. A `state.json` in the archive is ignored.
   extensions stays off until security review B (clouddeck-rs-7ah1) closes.
 - `remove` deletes the folder and keeps the author key pin, so a reinstall cannot silently change
   keys. Enable, disable, install, update and remove take effect on restart.
+- To reset the pin on purpose, run `remove <id>`, then delete
+  `~/.config/clouddeck/extension-state/<id>.json`. The next install pins the author key you offer
+  (from the index or `--trust-key`), so check who now publishes the extension first. Deleting the
+  file also clears the enabled and dev flags, granted capabilities and crash counts.
+- Install, update, dev and remove hold a lock at `~/.config/clouddeck/extension-state/.install.lock`.
+  A second one started while the first runs is refused. If no operation is running, a leftover
+  lock file is harmless.
 - Extensions are not sandboxed. Install only from authors you trust.
 
 ## Deadlines

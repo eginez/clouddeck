@@ -13,6 +13,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 use clouddeck_extension_api::API_VERSION;
+#[cfg(feature = "test-support")]
 use clouddeck_extension_api::abi::Slice;
 use libloading::Library;
 
@@ -91,7 +92,7 @@ impl LoadedExtension {
 
 /// Tests only: this skips the manifest, containment, ownership and enable checks. The app must go
 /// through `ProviderRegistry`.
-#[doc(hidden)]
+#[cfg(feature = "test-support")]
 pub fn load_extension(path: &Path) -> Result<LoadedExtension, LoadError> {
     if !path.is_absolute() {
         return Err(LoadError::RelativePath {
@@ -116,6 +117,7 @@ pub fn load_extension(path: &Path) -> Result<LoadedExtension, LoadError> {
     })
 }
 
+#[cfg(feature = "test-support")]
 fn lookup<F: Copy>(library: &Library, name: &'static str) -> Result<F, LoadError> {
     let symbol = unsafe { library.get::<F>(name.as_bytes()) }
         .map_err(|source| LoadError::MissingSymbol { name, source })?;

@@ -52,6 +52,14 @@ fn is_name(segment: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
 }
 
+fn is_path_part(part: &str) -> bool {
+    !part.is_empty()
+        && !part.starts_with('.')
+        && part
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+}
+
 pub struct GithubExtensions {
     agent: ureq::Agent,
 }
@@ -109,8 +117,15 @@ impl GithubExtensions {
         read_body(response, max_bytes, &mut |_, _| {})
     }
 
-    fn release_asset(owner: &str, repo: &str, tag: &str, asset: &str) -> String {
-        format!("https://github.com/{owner}/{repo}/releases/download/{tag}/{asset}")
+    fn release_asset(owner: &str, repo: &str, tag: &str, asset: &str) -> Result<String, String> {
+        if !is_path_part(tag) || !is_path_part(asset) {
+            return Err(format!(
+                "refusing release tag {tag:?} or asset {asset:?}: only letters, digits, '.', '-' and '_' are allowed, and a name cannot start with '.'"
+            ));
+        }
+        Ok(format!(
+            "https://github.com/{owner}/{repo}/releases/download/{tag}/{asset}"
+        ))
     }
 }
 
@@ -133,11 +148,11 @@ impl ExtensionSource for GithubExtensions {
         let latest = format!("https://api.github.com/repos/{owner}/{repo}/releases/latest");
         let tag = release_tag(&self.get(&latest, SMALL_LIMIT)?)?;
         let manifest_bytes = self.get(
-            &Self::release_asset(owner, repo, &tag, "manifest.json"),
+            &Self::release_asset(owner, repo, &tag, "manifest.json")?,
             SMALL_LIMIT,
         )?;
         let signature = self.get(
-            &Self::release_asset(owner, repo, &tag, "manifest.json.sig"),
+            &Self::release_asset(owner, repo, &tag, "manifest.json.sig")?,
             SMALL_LIMIT,
         )?;
         let signature_b64 = String::from_utf8(signature)
@@ -159,7 +174,7 @@ impl ExtensionSource for GithubExtensions {
         asset: &str,
         max_bytes: u64,
     ) -> Result<Vec<u8>, String> {
-        self.get(&Self::release_asset(owner, repo, tag, asset), max_bytes)
+        self.get(&Self::release_asset(owner, repo, tag, asset)?, max_bytes)
     }
 }
 
@@ -189,5 +204,34 @@ mod tests {
         ] {
             assert!(parse_repository(url).is_err(), "{url} should be refused");
         }
+    }
+
+    #[test]
+    fn release_asset_refuses_tags_and_names_that_leave_the_release_path() {
+        for (tag, asset) in [
+            ("v1", "../x"),
+            ("v1", "a/b"),
+            ("v1", "x?y"),
+            ("v1", "x#y"),
+            ("v1", ".hidden"),
+            ("v1", ".."),
+            ("v1", ""),
+            ("../v1", "x"),
+            ("v1/../x", "y"),
+            ("v1 x", "y"),
+        ] {
+            assert!(
+                GithubExtensions::release_asset("o", "r", tag, asset).is_err(),
+                "{tag}/{asset} should be refused"
+            );
+        }
+    }
+
+    #[test]
+    fn release_asset_builds_the_url_for_plain_names() {
+        assert_eq!(
+            GithubExtensions::release_asset("o", "r", "v0.1.0", "toy-0.1.0.tar.gz").unwrap(),
+            "https://github.com/o/r/releases/download/v0.1.0/toy-0.1.0.tar.gz"
+        );
     }
 }

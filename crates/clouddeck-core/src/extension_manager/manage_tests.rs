@@ -144,6 +144,69 @@ fn dev_install_copies_and_refuses_symlinks() {
     }
 }
 
+fn hold_install_lock(fx: &Fixture) -> fs::File {
+    fs::create_dir_all(&fx.state_root).unwrap();
+    let held = fs::File::create(fx.state_root.join(".install.lock")).unwrap();
+    held.try_lock().unwrap();
+    held
+}
+
+#[test]
+fn remove_is_refused_while_another_operation_holds_the_lock() {
+    let fx = fixture();
+    fx.install_v1();
+    let held = hold_install_lock(&fx);
+    let err = fx.manager().remove("toy").unwrap_err();
+    assert!(
+        err.contains("another extension operation is running"),
+        "{err}"
+    );
+    assert!(fx.root.join("toy").exists());
+
+    drop(held);
+    fx.manager().remove("toy").unwrap();
+    assert!(!fx.root.join("toy").exists());
+}
+
+#[test]
+fn disable_is_refused_while_another_operation_holds_the_lock() {
+    let fx = fixture();
+    fx.install_v1();
+    let manager = fx.manager();
+    manager.enable_with("toy", true).unwrap();
+    let held = hold_install_lock(&fx);
+    let err = manager.disable("toy").unwrap_err();
+    assert!(
+        err.contains("another extension operation is running"),
+        "{err}"
+    );
+    assert!(fx.state_enabled());
+
+    drop(held);
+    manager.disable("toy").unwrap();
+    assert!(!fx.state_enabled());
+}
+
+#[test]
+fn dev_install_is_refused_while_another_operation_holds_the_lock() {
+    let fx = fixture();
+    let source = tempfile::tempdir().unwrap();
+    fs::write(
+        source.path().join("extension.toml"),
+        extension_toml("toy", API_VERSION, "0.1.0"),
+    )
+    .unwrap();
+    fs::write(source.path().join(library_name("toy")), b"fake").unwrap();
+    let held = hold_install_lock(&fx);
+    let err = fx.manager().install_dev(source.path()).unwrap_err();
+    assert!(
+        err.contains("another extension operation is running"),
+        "{err}"
+    );
+    assert!(!fx.root.join("toy").exists());
+    drop(held);
+}
+
 #[test]
 fn dev_install_refuses_to_replace_a_signed_install() {
     let fx = fixture();
