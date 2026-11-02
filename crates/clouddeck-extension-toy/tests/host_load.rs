@@ -1,68 +1,8 @@
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::Command;
+mod common;
 
 use clouddeck_core::extension_host::{ProviderRegistry, StateStore, state_path};
-use clouddeck_core::{Call, ConnectionId, Host, LogLevel, ProviderError};
-
-struct NoHost;
-
-impl Host for NoHost {
-    fn log(&self, _: LogLevel, _: &str) {}
-    fn data_dir(&self) -> PathBuf {
-        PathBuf::new()
-    }
-    fn setting(&self, _: &str) -> Option<String> {
-        None
-    }
-    fn secret(&self, _: &str) -> Option<String> {
-        None
-    }
-    fn set_secret(&self, _: &str, _: Option<&str>) -> Result<(), ProviderError> {
-        Ok(())
-    }
-    fn open_url(&self, _: &str) -> Result<(), ProviderError> {
-        Ok(())
-    }
-    fn cancelled(&self) -> bool {
-        false
-    }
-}
-
-const LIBRARY: &str = if cfg!(target_os = "macos") {
-    "libclouddeck_extension_toy.dylib"
-} else {
-    "libclouddeck_extension_toy.so"
-};
-
-/// `cargo test` builds only the rlib, so the cdylib is built here into the same target directory.
-fn built_library() -> PathBuf {
-    let exe = std::env::current_exe().unwrap();
-    let profile_dir = exe.parent().unwrap().parent().unwrap().to_path_buf();
-    let mut build = Command::new(env!("CARGO"));
-    build.args(["build", "--lib", "-p", "clouddeck-extension-toy"]);
-    if profile_dir.file_name() == Some("release".as_ref()) {
-        build.arg("--release");
-    }
-    assert!(
-        build.status().unwrap().success(),
-        "building the toy cdylib failed"
-    );
-    profile_dir.join(LIBRARY)
-}
-
-fn install(root: &Path) {
-    let dir = root.join("toy");
-    fs::create_dir_all(&dir).unwrap();
-    fs::copy(built_library(), dir.join(LIBRARY)).unwrap();
-    fs::write(
-        dir.join("extension.toml"),
-        format!(
-            "id = \"toy\"\nname = \"Toy\"\nversion = \"0.1.0\"\nschema_version = 1\napi_version = 1\nlibrary = \"{LIBRARY}\"\n\n[providers.toy]\nname = \"Toy\"\n"
-        ),
-    )
-    .unwrap();
-}
+use clouddeck_core::{Call, ConnectionId};
+use common::{NoHost, install};
 
 // One test: the extension's host table is process-wide, so the library can be initialised once.
 #[test]

@@ -1,5 +1,7 @@
 use std::cell::RefCell;
 use std::ffi::c_void;
+#[cfg(unix)]
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::ptr;
@@ -85,7 +87,10 @@ pub struct Library {
 }
 
 impl Library {
-    pub fn open(path: &Path, host: Arc<HostContext>) -> Result<Self, String> {
+    /// dlopen runs the library constructors before our version and build checks, which is why
+    /// ownership and permission checks come first.
+    pub fn open(path: &Path, root: &Path, host: Arc<HostContext>) -> Result<Self, String> {
+        check_trusted_location(path, root)?;
         // SAFETY: loading runs the library's initializers; the crash guard in the caller covers that.
         let library = unsafe { libloading::Library::new(path) }
             .map_err(|error| format!("cannot load {}: {error}", path.display()))?;
@@ -113,6 +118,62 @@ impl Library {
         unsafe { (self.free)(buffer.ptr, buffer.len) };
         response
     }
+}
+
+/// `path` is canonical and must lie under `root`. Every folder from `root` down to the library and
+/// the library itself must belong to the current user and must not be writable by group or others.
+#[cfg(unix)]
+fn check_trusted_location(path: &Path, root: &Path) -> Result<(), String> {
+    let root = root
+        .canonicalize()
+        .map_err(|error| format!("cannot read {}: {error}", root.display()))?;
+    if !path.starts_with(&root) {
+        return Err(format!(
+            "{} is outside the extensions folder {}",
+            path.display(),
+            root.display()
+        ));
+    }
+    if !fs::metadata(path).is_ok_and(|m| m.is_file()) {
+        return Err(format!("{} is not a regular file", path.display()));
+    }
+    // SAFETY: geteuid has no preconditions and cannot fail.
+    let euid = unsafe { libc::geteuid() };
+    for folder in path
+        .ancestors()
+        .skip(1)
+        .take_while(|folder| folder.starts_with(&root))
+    {
+        check_owner_and_mode(folder, euid)?;
+    }
+    check_owner_and_mode(path, euid)
+}
+
+#[cfg(unix)]
+fn check_owner_and_mode(path: &Path, euid: u32) -> Result<(), String> {
+    use std::os::unix::fs::MetadataExt;
+    let metadata =
+        fs::metadata(path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    if metadata.uid() != euid {
+        return Err(format!(
+            "{} is owned by uid {}, not by the user running CloudDeck",
+            path.display(),
+            metadata.uid()
+        ));
+    }
+    if metadata.mode() & 0o022 != 0 {
+        return Err(format!(
+            "{} is writable by other users; fix it with: chmod go-w {}",
+            path.display(),
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn check_trusted_location(_path: &Path, _root: &Path) -> Result<(), String> {
+    Err("extensions can only be loaded on macOS and Linux".into())
 }
 
 fn bind(library: &libloading::Library, host: &HostContext) -> Result<(CallFn, FreeFn), String> {

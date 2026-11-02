@@ -23,6 +23,7 @@ const CONNECTION_LABEL: &str = "Profile";
 
 /// One installed extension: its manifest, its state, and its library once loaded.
 pub struct Plugin {
+    root: PathBuf,
     dir: PathBuf,
     manifest: Manifest,
     state: Arc<StateStore>,
@@ -32,7 +33,7 @@ pub struct Plugin {
 }
 
 impl Plugin {
-    pub fn new(dir: PathBuf, manifest: Manifest, state: Arc<StateStore>) -> Self {
+    pub fn new(root: PathBuf, dir: PathBuf, manifest: Manifest, state: Arc<StateStore>) -> Self {
         let host = Arc::new(HostContext::new(
             manifest.id.clone(),
             dir.join("data"),
@@ -40,6 +41,7 @@ impl Plugin {
             Arc::clone(&state),
         ));
         Self {
+            root,
             dir,
             manifest,
             state,
@@ -66,7 +68,7 @@ impl Plugin {
         let opened = self
             .manifest
             .library_path(&self.dir)
-            .and_then(|path| Library::open(&path, Arc::clone(&self.host)));
+            .and_then(|path| Library::open(&path, &self.root, Arc::clone(&self.host)));
         match opened {
             Ok(library) => {
                 let library = Arc::new(library);

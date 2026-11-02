@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -100,6 +101,11 @@ impl Manifest {
         let dir = dir
             .canonicalize()
             .map_err(|error| format!("cannot read {}: {error}", dir.display()))?;
+        if fs::symlink_metadata(dir.join(relative)).is_ok_and(|m| m.file_type().is_symlink()) {
+            return Err(format!(
+                "library {file:?} is a symlink; copy the library into the extension directory instead"
+            ));
+        }
         let path = dir
             .join(relative)
             .canonicalize()

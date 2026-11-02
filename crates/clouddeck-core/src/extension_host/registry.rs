@@ -78,7 +78,7 @@ impl ProviderRegistry {
             .collect();
         dirs.sort();
         for dir in dirs {
-            if let Err(message) = self.add_extension(&dir, state_root) {
+            if let Err(message) = self.add_extension(root, &dir, state_root) {
                 let extension = dir
                     .file_name()
                     .unwrap_or(OsStr::new("?"))
@@ -90,7 +90,7 @@ impl ProviderRegistry {
         Ok(())
     }
 
-    fn add_extension(&mut self, dir: &Path, state_root: &Path) -> Result<(), String> {
+    fn add_extension(&mut self, root: &Path, dir: &Path, state_root: &Path) -> Result<(), String> {
         let text = fs::read_to_string(dir.join(MANIFEST_FILE))
             .map_err(|error| format!("cannot read {MANIFEST_FILE}: {error}"))?;
         let manifest = Manifest::parse(&text)?;
@@ -114,7 +114,7 @@ impl ProviderRegistry {
             ));
         }
         self.reserve_provider_ids(&manifest)?;
-        self.register_remote(dir, manifest, state);
+        self.register_remote(root, dir, manifest, state);
         Ok(())
     }
 
@@ -130,13 +130,24 @@ impl ProviderRegistry {
         Ok(())
     }
 
-    fn register_remote(&mut self, dir: &Path, manifest: Manifest, state: Arc<StateStore>) {
+    fn register_remote(
+        &mut self,
+        root: &Path,
+        dir: &Path,
+        manifest: Manifest,
+        state: Arc<StateStore>,
+    ) {
         let declared: Vec<(String, String)> = manifest
             .providers
             .iter()
             .map(|(id, decl)| (id.clone(), decl.name.clone()))
             .collect();
-        let plugin = Arc::new(Plugin::new(dir.to_path_buf(), manifest, state));
+        let plugin = Arc::new(Plugin::new(
+            root.to_path_buf(),
+            dir.to_path_buf(),
+            manifest,
+            state,
+        ));
         self.plugins.push(Arc::clone(&plugin));
         for (id, name) in declared {
             let provider = RemoteProvider::new(Arc::clone(&plugin), id, name);
