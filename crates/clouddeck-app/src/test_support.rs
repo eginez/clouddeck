@@ -124,3 +124,26 @@ pub(crate) fn load_fleet(cx: &mut TestAppContext, state: &Entity<FleetState>) {
         })
     });
 }
+
+/// A gzipped tar whose only entry is `clouddeck` with the given contents.
+pub fn tar_gz_with_binary(content: &[u8]) -> Vec<u8> {
+    let mut builder = tar::Builder::new(flate2::write::GzEncoder::new(
+        Vec::new(),
+        flate2::Compression::default(),
+    ));
+    let mut header = tar::Header::new_gnu();
+    header.set_path("clouddeck").unwrap();
+    header.set_size(content.len() as u64);
+    header.set_mode(0o755);
+    header.set_cksum();
+    builder.append(&header, content).unwrap();
+    let mut plugin = tar::Header::new_gnu();
+    plugin
+        .set_path("extensions-bundled/aws/extension.toml")
+        .unwrap();
+    plugin.set_size(1);
+    plugin.set_mode(0o644);
+    plugin.set_cksum();
+    builder.append(&plugin, &b"m"[..]).unwrap();
+    builder.into_inner().unwrap().finish().unwrap()
+}

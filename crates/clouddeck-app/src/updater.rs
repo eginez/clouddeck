@@ -323,6 +323,7 @@ mod tests {
     use clouddeck_core::release::manifest::{Manifest, to_canonical_json};
     use clouddeck_core::release::sign::{generate_keypair, sign_bytes};
     use clouddeck_core::release::verify::sha256_hex;
+    use crate::test_support::tar_gz_with_binary;
     use gpui::TestAppContext;
 
     struct FakeSource {
@@ -385,28 +386,6 @@ mod tests {
             progress(total, total);
             Ok(self.asset_bytes.clone())
         }
-    }
-
-    fn tar_gz_with_binary(content: &[u8]) -> Vec<u8> {
-        let mut builder = tar::Builder::new(flate2::write::GzEncoder::new(
-            Vec::new(),
-            flate2::Compression::default(),
-        ));
-        let mut header = tar::Header::new_gnu();
-        header.set_path("clouddeck").unwrap();
-        header.set_size(content.len() as u64);
-        header.set_mode(0o755);
-        header.set_cksum();
-        builder.append(&header, content).unwrap();
-        let mut plugin = tar::Header::new_gnu();
-        plugin
-            .set_path("extensions-bundled/aws/extension.toml")
-            .unwrap();
-        plugin.set_size(1);
-        plugin.set_mode(0o644);
-        plugin.set_cksum();
-        builder.append(&plugin, &b"m"[..]).unwrap();
-        builder.into_inner().unwrap().finish().unwrap()
     }
 
     fn signed_release(secret: &str, version: &str, asset: &[u8], sha256: String) -> FetchedRelease {
