@@ -1058,36 +1058,29 @@ mod tests {
         );
     }
 
-    #[test]
-    fn tag_value_with_double_quote_is_not_suggested() {
+    fn assert_tag_value_not_suggested(value: &str, prefix_query: &str) {
         let mut instances = spaced_fleet();
         instances[2].labels = vec![Label {
             key: "Team".to_string(),
-            value: Some("Bob \"B\" Smith".to_string()),
+            value: Some(value.to_string()),
         }];
         let s = suggest("tag:team=", &instances, &known_tag_keys(&instances));
         assert_eq!(
             s.items.iter().map(|i| i.label.as_str()).collect::<Vec<_>>(),
             ["Team=Data Platform", "Team=search"]
         );
-        let s = suggest("team:b", &instances, &known_tag_keys(&instances));
+        let s = suggest(prefix_query, &instances, &known_tag_keys(&instances));
         assert!(s.items.is_empty());
     }
 
     #[test]
+    fn tag_value_with_double_quote_is_not_suggested() {
+        assert_tag_value_not_suggested("Bob \"B\" Smith", "team:b");
+    }
+
+    #[test]
     fn tag_value_with_comma_is_not_suggested() {
-        let mut instances = spaced_fleet();
-        instances[2].labels = vec![Label {
-            key: "Team".to_string(),
-            value: Some("Ops,Tier1".to_string()),
-        }];
-        let s = suggest("tag:team=", &instances, &known_tag_keys(&instances));
-        assert_eq!(
-            s.items.iter().map(|i| i.label.as_str()).collect::<Vec<_>>(),
-            ["Team=Data Platform", "Team=search"]
-        );
-        let s = suggest("team:o", &instances, &known_tag_keys(&instances));
-        assert!(s.items.is_empty());
+        assert_tag_value_not_suggested("Ops,Tier1", "team:o");
     }
 
     #[test]
