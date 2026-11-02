@@ -1,3 +1,4 @@
+use crate::app_providers;
 use crate::render_state::{DEFAULT_ROW_MENU_ANCHOR, State, apply_render_state, fleet_loaded};
 use crate::{
     fleet_state::FleetState,
@@ -390,6 +391,7 @@ impl AppShell {
     }
 
     fn provider_for(
+        providers: &[std::sync::Arc<dyn Provider>],
         context: &WorkspaceContext,
         demo: bool,
         demo_fleet: DemoFleet,
@@ -397,7 +399,7 @@ impl AppShell {
         request_timeout: Duration,
     ) -> std::sync::Arc<dyn Provider> {
         workspace_provider(
-            &clouddeck_core::builtin_providers(demo),
+            providers,
             &context.profile,
             &context.region,
             demo.then_some(demo_fleet),
@@ -474,7 +476,9 @@ impl AppShell {
         };
         let fleet_regions = Self::fleet_regions(&scope, &available);
         let request_timeout = Settings::load(&settings_path()).request_timeout();
+        let providers = app_providers::providers(cx);
         let view_model = InstanceListViewModel::new(Self::provider_for(
+            &providers,
             &context,
             demo,
             demo_scenario,
@@ -518,6 +522,9 @@ impl AppShell {
         let weak = cx.weak_entity();
         window.on_window_should_close(cx, move |_, cx| {
             let _ = weak.update(cx, |this, cx| this.save_ui_state(cx));
+            if cfg!(target_os = "linux") {
+                app_providers::shutdown(cx);
+            }
             true
         });
         fleet.update(cx, |fleet, cx| fleet.refresh(cx));
@@ -726,9 +733,11 @@ impl AppShell {
         scope_changed(&scope, &self.applied_scope)
             .then(|| self.remembered_scope = Self::remembered_regions(&scope, &available));
         self.applied_scope = scope.clone();
+        let providers = app_providers::providers(cx);
         #[cfg(test)]
         let provider = self.test_service_override.clone().unwrap_or_else(|| {
             Self::provider_for(
+                &providers,
                 &self.context,
                 self.demo,
                 self.demo_scenario,
@@ -738,6 +747,7 @@ impl AppShell {
         });
         #[cfg(not(test))]
         let provider = Self::provider_for(
+            &providers,
             &self.context,
             self.demo,
             self.demo_scenario,
@@ -1300,8 +1310,18 @@ mod tests {
         demo: DemoFleet,
         fleet_regions: &[String],
     ) -> InstanceListViewModel {
-        let provider =
-            AppShell::provider_for(context, true, demo, fleet_regions, Duration::from_secs(5));
+        let registry = clouddeck_core::extension_host::app_registry(
+            std::path::Path::new("/nonexistent-clouddeck-extensions"),
+            std::path::Path::new("/nonexistent-clouddeck-state"),
+        );
+        let provider = AppShell::provider_for(
+            registry.providers(),
+            context,
+            true,
+            demo,
+            fleet_regions,
+            Duration::from_secs(5),
+        );
         let mut view_model = InstanceListViewModel::new(provider);
         crate::runtime::runtime().block_on(view_model.load_instances());
         view_model
@@ -1512,6 +1532,39 @@ mod tests {
         if let Some(dir) = path.parent() {
             let _ = std::fs::remove_dir_all(dir);
         }
+    }
+
+    fn install_test_providers(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let registry = clouddeck_core::extension_host::app_registry(
+                std::path::Path::new("/nonexistent-clouddeck-extensions"),
+                std::path::Path::new("/nonexistent-clouddeck-state"),
+            );
+            cx.set_global(crate::app_providers::AppProviders::new(registry));
+            crate::app_providers::observe_quit(cx);
+        });
+    }
+
+    fn provider_shutdowns(cx: &TestAppContext) -> usize {
+        cx.read(|cx| cx.global::<crate::app_providers::AppProviders>().shutdowns())
+    }
+
+    #[gpui::test]
+    fn quit_shuts_the_providers_down_once(cx: &mut TestAppContext) {
+        install_test_providers(cx);
+        cx.update(|cx| cx.shutdown());
+        assert_eq!(provider_shutdowns(cx), 1);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[gpui::test]
+    fn closing_the_main_window_shuts_the_providers_down(cx: &mut TestAppContext) {
+        install_test_providers(cx);
+        let (_shell, cx) = add_rooted_shell(cx, |window, cx| {
+            AppShell::build(window, true, DemoFleet::Happy, None, cx)
+        });
+        assert!(cx.simulate_close());
+        assert_eq!(provider_shutdowns(&cx.cx), 1);
     }
 
     #[gpui::test]

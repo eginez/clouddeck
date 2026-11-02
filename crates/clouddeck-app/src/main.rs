@@ -1,6 +1,7 @@
 mod account_connect;
 mod account_window;
 mod app_menus;
+mod app_providers;
 mod assets;
 mod center_state_view;
 mod command_palette;
@@ -65,6 +66,7 @@ fn main() {
             // The welcome window never does, so this default is what it renders with.
             gpui_component::Theme::change(gpui_component::ThemeMode::Light, None, cx);
             let options = shell::launch_options();
+            app_providers::install(cx);
             let saved = WorkspaceContext::load(&context_path());
             if options.state == Some(render_state::State::Welcome) {
                 welcome_window::open_welcome_window_sized(cx, options.size)
