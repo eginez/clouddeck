@@ -88,6 +88,9 @@ impl LoadedExtension {
     }
 }
 
+/// Tests only: this skips the manifest, containment, ownership and enable checks. The app must go
+/// through `ProviderRegistry`.
+#[doc(hidden)]
 pub fn load_extension(path: &Path) -> Result<LoadedExtension, LoadError> {
     if !path.is_absolute() {
         return Err(LoadError::RelativePath {

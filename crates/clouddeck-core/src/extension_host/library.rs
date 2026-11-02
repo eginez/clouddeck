@@ -222,12 +222,12 @@ fn bind(library: &libloading::Library, host: &HostContext) -> Result<(CallFn, Fr
     let build_info = unsafe { symbol::<BuildInfoFn>(library, b"clouddeck_build_info")? };
     check_build_info(unsafe { build_info().bytes() }).map_err(|error| error.to_string())?;
     let init = unsafe { symbol::<InitFn>(library, b"clouddeck_init")? };
+    let call = unsafe { symbol::<CallFn>(library, b"clouddeck_call")? };
+    let free = unsafe { symbol::<FreeFn>(library, b"clouddeck_free")? };
     let table = host.table();
     if unsafe { init(&table) } != INIT_OK {
         return Err("the extension rejected host initialization".into());
     }
-    let call = unsafe { symbol::<CallFn>(library, b"clouddeck_call")? };
-    let free = unsafe { symbol::<FreeFn>(library, b"clouddeck_free")? };
     Ok((call, free))
 }
 
@@ -268,9 +268,24 @@ fn write_error(out: *mut Buffer, message: String) {
 extern "C" fn log(ctx: *mut c_void, level: u32, message: Slice) {
     let host = unsafe { context(ctx) };
     let level = LEVEL_NAMES.get(level as usize).copied().unwrap_or("log");
-    eprintln!("[extension {}] {level}: {}", host.id, unsafe {
-        text(message)
-    });
+    let message = printable_log_text(&unsafe { text(message) });
+    eprintln!("[extension {}] {level}: {message}", host.id);
+}
+
+/// Drops control characters, line separators and bidi overrides so an extension cannot forge lines,
+/// move the terminal cursor or reorder what is displayed.
+fn printable_log_text(text: &str) -> String {
+    text.chars()
+        .filter(|&c| {
+            c == '\t'
+                || !(c.is_control()
+                    || matches!(
+                        c,
+                        '\u{200e}' | '\u{200f}' | '\u{2028}' | '\u{2029}' | '\u{202a}'..='\u{202e}'
+                            | '\u{2066}'..='\u{2069}'
+                    ))
+        })
+        .collect()
 }
 
 extern "C" fn data_dir(ctx: *mut c_void) -> Buffer {
@@ -442,5 +457,52 @@ mod tests {
         assert_eq!(error.kind, ErrorKind::Other);
         assert_eq!(error.message, "extension request too large");
         assert!(check_request(&request[..MAX_REQUEST_BYTES]).is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn library_missing_call_is_refused_before_init_runs() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let build = tempfile::tempdir().unwrap();
+        let manifest = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/missing-call-extension/Cargo.toml");
+        let status = Command::new(env!("CARGO"))
+            .args(["build", "--manifest-path"])
+            .arg(&manifest)
+            .arg("--target-dir")
+            .arg(build.path())
+            .status()
+            .unwrap();
+        assert!(status.success(), "building the missing-call fixture failed");
+        let debug_dir = build.path().join("debug");
+        let library = debug_dir.join(format!(
+            "{}clouddeck_fixture_missing_call.{}",
+            std::env::consts::DLL_PREFIX,
+            std::env::consts::DLL_EXTENSION
+        ));
+        for path in [build.path(), debug_dir.as_path(), library.as_path()] {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let state = Arc::new(StateStore::open(&build.path().join("state.json")).unwrap());
+        let host = Arc::new(HostContext::new(
+            "fixture".into(),
+            build.path().join("data"),
+            Vec::new(),
+            state,
+        ));
+        let error = Library::open(&library, build.path(), host)
+            .err()
+            .expect("a library without clouddeck_call must be refused");
+        assert!(error.contains("clouddeck_call"), "{error}");
+    }
+
+    #[test]
+    fn log_text_drops_control_characters_but_keeps_tabs() {
+        assert_eq!(
+            printable_log_text("ok\u{1b}[31m\r\nforged\u{7}\tline"),
+            "ok[31mforged\tline"
+        );
+        assert_eq!(printable_log_text("a\u{9b}b\u{2028}c\u{202e}d"), "abcd");
     }
 }
