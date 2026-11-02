@@ -642,13 +642,12 @@ impl AppShell {
                 },
             });
         let restored = RegionScope::from_selected(&ui_state.selected_regions, &available);
-        let scope = restored
-            .is_all(&available)
-            .then(|| Self::scope_for_region(&context.region, restored.clone(), &available))
-            .unwrap_or_else(|| {
-                context.region = Self::region_for_scope(&restored, &available);
-                restored
-            });
+        let scope = if restored.is_all(&available) {
+            Self::scope_for_region(&context.region, restored.clone(), &available)
+        } else {
+            context.region = Self::region_for_scope(&restored, &available);
+            restored
+        };
         let fleet_regions = Self::fleet_regions(&scope, &available);
         let request_timeout = Settings::load(&settings_path()).request_timeout();
         let view_model = InstanceListViewModel::new(Self::service(
