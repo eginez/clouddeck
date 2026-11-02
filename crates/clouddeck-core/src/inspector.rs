@@ -17,7 +17,7 @@ const SECONDS_PER_DAY: u64 = 86_400;
 /// One label and value line in an inspector section.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InspectorRow {
-    pub label: &'static str,
+    pub label: String,
     pub value: Option<String>,
     pub empty_text: String,
     pub monospace: bool,
@@ -139,7 +139,7 @@ fn resolve_row(instance: &Instance, def: &InspectorRowDef) -> InspectorRow {
         _ => "None".to_string(),
     };
     InspectorRow {
-        label: def.label,
+        label: def.label.clone(),
         value,
         empty_text,
         monospace: def.monospace,
@@ -445,8 +445,8 @@ mod tests {
         );
     }
 
-    fn labels(section: &InspectorSection) -> Vec<&'static str> {
-        section.rows.iter().map(|row| row.label).collect()
+    fn labels(section: &InspectorSection) -> Vec<&str> {
+        section.rows.iter().map(|row| row.label.as_str()).collect()
     }
 
     fn values(section: &InspectorSection) -> Vec<Option<&str>> {

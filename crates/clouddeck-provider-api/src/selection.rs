@@ -1,8 +1,10 @@
 use std::collections::BTreeMap;
 
+use serde::{Deserialize, Serialize};
+
 use crate::ids::{DimensionId, ValueId};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DimValue {
     pub id: ValueId,
     pub label: String,
@@ -11,7 +13,7 @@ pub struct DimValue {
     pub default: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Dimension {
     pub id: DimensionId,
     pub label: String,
@@ -20,7 +22,7 @@ pub struct Dimension {
     pub values: Vec<DimValue>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Selection(pub BTreeMap<DimensionId, Vec<ValueId>>);
 
 impl Selection {

@@ -1,6 +1,8 @@
 use std::time::SystemTime;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub enum StateKind {
     Running,
     Stopped,
@@ -12,38 +14,38 @@ pub enum StateKind {
 }
 
 /// `raw` is the provider's own state text, shown as-is.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub struct State {
     pub kind: StateKind,
     pub raw: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Label {
     pub key: String,
     pub value: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AddressKind {
     Private,
     Public,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Address {
     pub kind: AddressKind,
     pub value: String,
 }
 
 /// Provider-specific key/value lines shown in order. An empty value means the attribute is absent.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExtrasSection {
     pub title: String,
     pub entries: Vec<(String, String)>,
 }
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Instance {
     pub id: String,
     pub name: Option<String>,

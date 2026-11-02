@@ -41,7 +41,9 @@ so CI and the release workflow enforce it too. It fails when the quality score
 drops below the baseline, and when any architecture rule is violated, even if the
 score is unchanged. Existing findings do not fail it. The architecture rules in
 `rustqual.toml` enforce the crate dependency direction: `clouddeck-provider-api` <-
-`clouddeck-core` <- `clouddeck-app`.
+`clouddeck-extension-api` <- `clouddeck-core` <- `clouddeck-app`. The example
+extension `clouddeck-extension-toy` sits outside that chain and the app may not
+import it.
 
 To run the gate's checks by hand, from the repository root:
 

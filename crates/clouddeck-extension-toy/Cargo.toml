@@ -1,0 +1,16 @@
+[package]
+name = "clouddeck-extension-toy"
+version = "0.1.0"
+edition = "2024"
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+clouddeck-extension-api = { path = "../clouddeck-extension-api" }
+
+[dev-dependencies]
+serde_json = "1"

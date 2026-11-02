@@ -3,7 +3,7 @@ use clouddeck_provider_api::{InspectorRowDef, InspectorSectionDef, InspectorValu
 pub(crate) fn aws_inspector() -> Vec<InspectorSectionDef> {
     vec![
         InspectorSectionDef {
-            title: "Instance",
+            title: "Instance".to_string(),
             rows: vec![
                 field("State", InspectorValue::State, false, false),
                 field("Type", InspectorValue::Type, false, false),
@@ -14,7 +14,7 @@ pub(crate) fn aws_inspector() -> Vec<InspectorSectionDef> {
             ],
         },
         InspectorSectionDef {
-            title: "Network",
+            title: "Network".to_string(),
             rows: vec![
                 field("Private IP", InspectorValue::PrivateAddress, true, true),
                 field("Public IP", InspectorValue::PublicAddress, true, true),
@@ -27,13 +27,13 @@ pub(crate) fn aws_inspector() -> Vec<InspectorSectionDef> {
 }
 
 fn field(
-    label: &'static str,
+    label: &str,
     value: InspectorValue,
     monospace: bool,
     copyable: bool,
 ) -> InspectorRowDef {
     InspectorRowDef {
-        label,
+        label: label.to_string(),
         value,
         monospace,
         copyable,
@@ -41,15 +41,18 @@ fn field(
 }
 
 fn extra(
-    label: &'static str,
-    section: &'static str,
-    key: &'static str,
+    label: &str,
+    section: &str,
+    key: &str,
     monospace: bool,
     copyable: bool,
 ) -> InspectorRowDef {
     field(
         label,
-        InspectorValue::Extra { section, key },
+        InspectorValue::Extra {
+            section: section.to_string(),
+            key: key.to_string(),
+        },
         monospace,
         copyable,
     )
@@ -62,15 +65,16 @@ mod tests {
     #[test]
     fn aws_inspector_reproduces_todays_layout() {
         type Layout<'a> = Vec<(&'a str, Vec<(&'a str, bool, bool)>)>;
-        let layout: Layout = aws_inspector()
+        let sections = aws_inspector();
+        let layout: Layout = sections
             .iter()
             .map(|section| {
                 (
-                    section.title,
+                    section.title.as_str(),
                     section
                         .rows
                         .iter()
-                        .map(|row| (row.label, row.monospace, row.copyable))
+                        .map(|row| (row.label.as_str(), row.monospace, row.copyable))
                         .collect(),
                 )
             })
@@ -111,7 +115,7 @@ mod tests {
             .iter()
             .flat_map(|section| &section.rows)
             .any(|row| {
-                matches!(&row.value, InspectorValue::Extra { key, .. } if hidden.contains(key))
+                matches!(&row.value, InspectorValue::Extra { key, .. } if hidden.contains(&key.as_str()))
             });
         assert!(!shows_hidden);
     }

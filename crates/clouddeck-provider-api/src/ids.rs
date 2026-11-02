@@ -1,11 +1,13 @@
 use std::borrow::Borrow;
 use std::fmt;
 
+use serde::{Deserialize, Serialize};
+
 pub const INSTANCES: &str = "instances";
 
 macro_rules! string_id {
     ($($name:ident),* $(,)?) => {$(
-        #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
         pub struct $name(pub String);
 
         impl $name {

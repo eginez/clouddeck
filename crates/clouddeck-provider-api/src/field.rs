@@ -1,6 +1,8 @@
+use serde::{Deserialize, Serialize};
+
 use crate::instance::{ExtrasSection, Instance};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FieldKind {
     Text,
     Enum,
@@ -9,7 +11,7 @@ pub enum FieldKind {
     Date,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MatchMode {
     Contains,
     StartsWith,
@@ -17,7 +19,7 @@ pub enum MatchMode {
     PrefixOrGlob,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CoreField {
     Id,
     Name,
@@ -30,15 +32,15 @@ pub enum CoreField {
 }
 
 /// Where a field's values come from. A field may yield several values; a term matches when any one does.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FieldSource {
     Core(CoreField),
     Extra {
-        section: &'static str,
-        key: &'static str,
+        section: String,
+        key: String,
     },
     Section {
-        section: &'static str,
+        section: String,
     },
     Labels,
     Concat(Vec<FieldSource>),
@@ -105,7 +107,7 @@ fn section_entries(sections: &[ExtrasSection], section: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FieldDef {
     pub name: String,
     pub label: String,
@@ -226,22 +228,22 @@ mod tests {
     fn extra_yields_first_matching_key_or_nothing() {
         assert_eq!(
             values(FieldSource::Extra {
-                section: "Network",
-                key: "VPC",
+                section: "Network".into(),
+                key: "VPC".into(),
             }),
             ["vpc-1"]
         );
         assert_eq!(
             values(FieldSource::Extra {
-                section: "Network",
-                key: "Public DNS",
+                section: "Network".into(),
+                key: "Public DNS".into(),
             }),
             [""]
         );
         assert!(
             values(FieldSource::Extra {
-                section: "Network",
-                key: "Missing",
+                section: "Network".into(),
+                key: "Missing".into(),
             })
             .is_empty()
         );
@@ -251,11 +253,13 @@ mod tests {
     fn section_flattens_key_value_pairs() {
         assert_eq!(
             values(FieldSource::Section {
-                section: "Security groups",
+                section: "Security groups".into(),
             }),
             ["web", "sg-1"]
         );
-        assert!(values(FieldSource::Section { section: "Nope" }).is_empty());
+        assert!(values(FieldSource::Section {
+            section: "Nope".into(),
+        }).is_empty());
     }
 
     #[test]
@@ -267,12 +271,12 @@ mod tests {
     fn concat_joins_parts_in_order() {
         let dns = FieldSource::Concat(vec![
             FieldSource::Extra {
-                section: "Network",
-                key: "Private DNS",
+                section: "Network".into(),
+                key: "Private DNS".into(),
             },
             FieldSource::Extra {
-                section: "Network",
-                key: "Public DNS",
+                section: "Network".into(),
+                key: "Public DNS".into(),
             },
         ]);
         assert_eq!(values(dns), ["ip-10-0-0-1", ""]);

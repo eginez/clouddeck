@@ -1,6 +1,12 @@
 [workspace]
 resolver = "2"
-members = ["crates/clouddeck-provider-api", "crates/clouddeck-core", "crates/clouddeck-app"]
+members = [
+    "crates/clouddeck-provider-api",
+    "crates/clouddeck-extension-api",
+    "crates/clouddeck-extension-toy",
+    "crates/clouddeck-core",
+    "crates/clouddeck-app",
+]
 
 [workspace.package]
 license = "MIT OR Apache-2.0"

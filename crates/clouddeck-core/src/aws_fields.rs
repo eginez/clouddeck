@@ -18,7 +18,7 @@ pub fn aws_fields() -> Vec<FieldDef> {
             true,
             true,
             FieldSource::Section {
-                section: "Security groups",
+                section: "Security groups".to_string(),
             },
         ),
         field(
@@ -81,8 +81,11 @@ fn field(
     }
 }
 
-fn extra(section: &'static str, key: &'static str) -> FieldSource {
-    FieldSource::Extra { section, key }
+fn extra(section: &str, key: &str) -> FieldSource {
+    FieldSource::Extra {
+        section: section.to_string(),
+        key: key.to_string(),
+    }
 }
 
 #[cfg(test)]

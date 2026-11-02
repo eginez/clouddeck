@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 use crate::auth::{AuthAnswer, AuthInput, AuthMethod, AuthStatus, AuthStep};
 use crate::error::ProviderError;
 use crate::field::FieldDef;
@@ -7,13 +9,13 @@ use crate::inspector::InspectorSectionDef;
 use crate::instance::{ExtrasSection, Instance};
 use crate::selection::{Dimension, Selection};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Connection {
     pub id: ConnectionId,
     pub display_name: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProviderInfo {
     pub id: String,
     pub name: String,
@@ -21,20 +23,20 @@ pub struct ProviderInfo {
     pub connection_label: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KindInfo {
     pub id: KindId,
     pub label: String,
 }
 
 /// `cell` names the exact dimension values that failed.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CellFailure {
     pub cell: Selection,
     pub error: ProviderError,
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ListResult {
     pub resources: Vec<Instance>,
     pub failures: Vec<CellFailure>,

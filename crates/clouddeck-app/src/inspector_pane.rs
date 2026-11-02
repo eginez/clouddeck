@@ -300,7 +300,7 @@ fn row_view(
                 .w(px(LABEL_WIDTH))
                 .flex_none()
                 .text_color(palette.dim)
-                .child(row.label),
+                .child(row.label.clone()),
         )
         .child(value)
 }
