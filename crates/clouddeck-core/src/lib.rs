@@ -59,6 +59,7 @@ mod demo_provider_tests;
 pub use demo_provider::{DemoProvider, builtin_providers, demo_provider};
 mod console_url;
 mod context;
+pub mod extension_host;
 mod inspector;
 pub use inspector::*;
 mod status_text;
