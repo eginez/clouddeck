@@ -6,11 +6,11 @@ use std::ptr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use clouddeck_extension_api::API_VERSION;
 use clouddeck_extension_api::abi::{Buffer, HostTable, INIT_OK, Slice};
 
 use super::manifest::Capability;
 use super::state::StateStore;
+use super::{check_api_version, check_build_info};
 
 type ApiVersionFn = unsafe extern "C" fn() -> u32;
 type BuildInfoFn = unsafe extern "C" fn() -> Slice;
@@ -116,8 +116,10 @@ impl Library {
 }
 
 fn bind(library: &libloading::Library, host: &HostContext) -> Result<(CallFn, FreeFn), String> {
-    check_api_version(library)?;
-    check_build_info(&read_build_info(library)?)?;
+    let api_version = unsafe { symbol::<ApiVersionFn>(library, b"clouddeck_api_version")? };
+    check_api_version(unsafe { api_version() }).map_err(|error| error.to_string())?;
+    let build_info = unsafe { symbol::<BuildInfoFn>(library, b"clouddeck_build_info")? };
+    check_build_info(unsafe { build_info().bytes() }).map_err(|error| error.to_string())?;
     let init = unsafe { symbol::<InitFn>(library, b"clouddeck_init")? };
     let table = host.table();
     if unsafe { init(&table) } != INIT_OK {
@@ -134,32 +136,6 @@ unsafe fn symbol<F: Copy>(library: &libloading::Library, name: &[u8]) -> Result<
     unsafe { library.get::<F>(name) }
         .map(|symbol| *symbol)
         .map_err(|error| format!("missing {}: {error}", String::from_utf8_lossy(name)))
-}
-
-fn check_api_version(library: &libloading::Library) -> Result<(), String> {
-    let api = unsafe { (symbol::<ApiVersionFn>(library, b"clouddeck_api_version")?)() };
-    if api == API_VERSION {
-        return Ok(());
-    }
-    Err(format!(
-        "built for extension API {api} but this CloudDeck uses API {API_VERSION}; rebuild it for this CloudDeck"
-    ))
-}
-
-fn read_build_info(library: &libloading::Library) -> Result<Vec<u8>, String> {
-    let info = unsafe { (symbol::<BuildInfoFn>(library, b"clouddeck_build_info")?)() };
-    Ok(unsafe { info.bytes() }.to_vec())
-}
-
-fn check_build_info(info: &[u8]) -> Result<(), String> {
-    match info {
-        b"panic=unwind" => Ok(()),
-        b"panic=abort" => Err(
-            "was built with panic=abort, so a panic in it would abort CloudDeck; rebuild it with panic=unwind"
-                .into(),
-        ),
-        _ => Err("reports an unknown build configuration".into()),
-    }
 }
 
 unsafe fn context<'a>(ctx: *mut c_void) -> &'a HostContext {
@@ -273,17 +249,6 @@ extern "C" fn free(ptr: *mut u8, len: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn only_unwinding_builds_are_accepted() {
-        assert!(check_build_info(b"panic=unwind").is_ok());
-        assert!(
-            check_build_info(b"panic=abort")
-                .unwrap_err()
-                .contains("panic=abort")
-        );
-        assert!(check_build_info(b"").is_err());
-    }
 
     #[test]
     fn capability_needs_both_declaration_and_grant() {
