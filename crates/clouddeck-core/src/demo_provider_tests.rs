@@ -55,7 +55,10 @@ fn profile() -> ConnectionId {
 fn region_selection(regions: &[&str]) -> Selection {
     Selection::new().with(
         "region",
-        regions.iter().map(|region| ValueId::from(*region)).collect(),
+        regions
+            .iter()
+            .map(|region| ValueId::from(*region))
+            .collect(),
     )
 }
 
@@ -67,7 +70,11 @@ fn resource_ids(result: &ListResult) -> Vec<&str> {
     result.resources.iter().map(|r| r.id.as_str()).collect()
 }
 
-const INSTANCE_IDS: [&str; 3] = ["i-scenario-001", "i-scenario-002", "i-scenario-003"];
+const INSTANCE_IDS: [&str; 3] = [
+    "us-east-1:i-scenario-001",
+    "us-east-1:i-scenario-002",
+    "us-east-1:i-scenario-003",
+];
 
 #[test]
 fn info_identifies_the_demo_provider() {
@@ -98,7 +105,10 @@ fn auth_is_a_no_op_sign_in() {
         label: "SSO".to_string(),
     };
     assert_eq!(
-        provider.begin_auth(&call(), &sso, input()).unwrap_err().kind,
+        provider
+            .begin_auth(&call(), &sso, input())
+            .unwrap_err()
+            .kind,
         ErrorKind::Unsupported
     );
 
@@ -112,10 +122,7 @@ fn auth_is_a_no_op_sign_in() {
 
     let signed_in = AuthStatus::SignedIn { expires: None };
     assert_eq!(provider.auth_status(&call(), None), signed_in);
-    assert_eq!(
-        provider.auth_status(&call(), Some(&profile())),
-        signed_in
-    );
+    assert_eq!(provider.auth_status(&call(), Some(&profile())), signed_in);
     assert_eq!(provider.sign_out(&call(), Some(&profile())), Ok(()));
 }
 
@@ -222,7 +229,7 @@ fn describe_returns_the_listed_instance_extras() {
             &call(),
             &profile(),
             &KindId::instances(),
-            &ResourceId::from("i-scenario-001"),
+            &ResourceId::from("us-east-1:i-scenario-001"),
         )
         .unwrap();
     assert_eq!(extras, expected);
@@ -257,10 +264,7 @@ fn console_url_is_absent_for_every_instance() {
 fn fields_and_inspector_reuse_the_aws_definitions() {
     let provider = demo_provider();
     let instances = KindId::instances();
-    assert_eq!(
-        provider.fields(&instances),
-        crate::aws_fields()
-    );
+    assert_eq!(provider.fields(&instances), crate::aws_fields());
     assert_eq!(
         provider.inspector(&instances).len(),
         crate::aws_inspector::aws_inspector().len()
