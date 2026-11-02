@@ -15,7 +15,7 @@ pub const CRASH_LIMIT: u32 = 2;
 pub struct State {
     #[serde(default)]
     pub enabled: bool,
-    /// A launch that began loading and never completed a call counts as a crash.
+    /// Set while a loaded library runs; a session that ends without a clean shutdown leaves it set.
     #[serde(default)]
     pub launch_pending: bool,
     #[serde(default)]
@@ -41,19 +41,15 @@ impl State {
         self.crashes >= CRASH_LIMIT
     }
 
-    /// The launch ended without a crash: loading failed or a call ran out of time.
+    /// The launch ended without a crash because loading failed.
     pub fn launch_ended(&mut self) {
         self.launch_pending = false;
     }
 
-    /// A call returned, so the library ran without crashing.
-    pub fn launch_completed(&mut self) {
+    /// The host shut down cleanly after the library was loaded, so the session did not crash.
+    pub fn clean_shutdown(&mut self) {
         self.launch_pending = false;
         self.crashes = 0;
-    }
-
-    pub fn has_launch_history(&self) -> bool {
-        self.launch_pending || self.crashes > 0
     }
 
     pub fn grant(&mut self, capability: Capability) {
@@ -132,13 +128,22 @@ mod tests {
     }
 
     #[test]
-    fn completed_call_clears_crash_history() {
+    fn served_session_without_clean_shutdown_counts_as_crash() {
+        let mut state = State::default();
+        assert!(state.begin_launch());
+        state.begin_launch();
+        assert_eq!(state.crashes, 1);
+        assert!(state.launch_pending);
+    }
+
+    #[test]
+    fn clean_shutdown_clears_crash_history() {
         let mut state = State {
             launch_pending: true,
             crashes: 1,
             ..State::default()
         };
-        state.launch_completed();
+        state.clean_shutdown();
         assert_eq!(state.crashes, 0);
         assert!(!state.launch_pending);
     }

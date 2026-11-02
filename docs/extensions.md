@@ -14,8 +14,11 @@ user must also grant; they limit what the host's helpers do, not what the librar
 - A library that reports `panic=abort` is refused. Panics must unwind so they can be turned into
   provider errors at the boundary.
 - Updates and removals take effect on restart. Libraries are never unloaded.
-- Crash-loop guard: a launch that loads the library and never completes a call counts as a crash.
-  After two crashed launches in a row the extension is disabled until it is re-enabled.
+- Crash-loop guard: a library that is loaded is recorded as a pending launch until the host calls
+  `ProviderRegistry::shutdown` on a clean exit. A session that ends without that call (a crash, a
+  force-quit, a kill) counts as a crash against every extension loaded in it. After two such
+  sessions in a row the extension is disabled. The app quit path must call
+  `ProviderRegistry::shutdown` once it adopts the registry.
 
 ## Deadlines
 

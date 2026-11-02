@@ -26,6 +26,7 @@ pub struct Refusal {
 #[derive(Default)]
 pub struct ProviderRegistry {
     providers: Vec<Arc<dyn Provider>>,
+    plugins: Vec<Arc<Plugin>>,
     provider_ids: BTreeSet<String>,
     refusals: Vec<Refusal>,
 }
@@ -43,6 +44,14 @@ impl ProviderRegistry {
 
     pub fn providers(&self) -> &[Arc<dyn Provider>] {
         &self.providers
+    }
+
+    /// Records a clean shutdown for every extension whose library was loaded this session.
+    /// The app quit path must call this, or each loaded extension counts a crash next launch.
+    pub fn shutdown(&self) {
+        for plugin in &self.plugins {
+            plugin.shutdown();
+        }
     }
 
     pub fn refusals(&self) -> &[Refusal] {
@@ -126,6 +135,7 @@ impl ProviderRegistry {
             .map(|(id, decl)| (id.clone(), decl.name.clone()))
             .collect();
         let plugin = Arc::new(Plugin::new(dir.to_path_buf(), manifest, state));
+        self.plugins.push(Arc::clone(&plugin));
         for (id, name) in declared {
             let provider = RemoteProvider::new(Arc::clone(&plugin), id, name);
             self.providers.push(Arc::new(provider));
@@ -223,6 +233,25 @@ mod tests {
                 .message
                 .contains("different folder name")
         );
+    }
+
+    #[test]
+    fn shutdown_leaves_unloaded_extensions_alone() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = install(root.path(), "idle", &manifest_text("idle", API_VERSION));
+        enable(&dir, |s| {
+            s.enabled = true;
+            s.launch_pending = true;
+            s.crashes = 1;
+        });
+
+        let mut registry = ProviderRegistry::default();
+        registry.discover(root.path()).unwrap();
+        registry.shutdown();
+
+        let state = StateStore::open(&dir).unwrap();
+        assert!(state.read(|s| s.launch_pending));
+        assert_eq!(state.read(|s| s.crashes), 1);
     }
 
     #[test]

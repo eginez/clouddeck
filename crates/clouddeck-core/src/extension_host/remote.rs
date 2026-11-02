@@ -28,6 +28,7 @@ pub struct Plugin {
     state: Arc<StateStore>,
     host: Arc<HostContext>,
     library: Mutex<Option<Arc<Library>>>,
+    loaded: AtomicBool,
 }
 
 impl Plugin {
@@ -44,6 +45,7 @@ impl Plugin {
             state,
             host,
             library: Mutex::new(None),
+            loaded: AtomicBool::new(false),
         }
     }
 
@@ -69,6 +71,7 @@ impl Plugin {
             Ok(library) => {
                 let library = Arc::new(library);
                 *slot = Some(Arc::clone(&library));
+                self.loaded.store(true, Ordering::Release);
                 Ok(library)
             }
             Err(message) => {
@@ -98,11 +101,7 @@ impl Plugin {
         cancel: Arc<AtomicBool>,
     ) -> Result<Vec<u8>, ProviderError> {
         let library = self.load()?;
-        let response = with_cancel_flag(cancel, || library.call(method, request));
-        if self.state.read(State::has_launch_history) {
-            self.settle(State::launch_completed);
-        }
-        Ok(response)
+        Ok(with_cancel_flag(cancel, || library.call(method, request)))
     }
 
     /// Runs one call on a worker thread. On deadline the worker is told to cancel and the caller
@@ -131,12 +130,19 @@ impl Plugin {
             Ok(outcome) => outcome,
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 cancel.store(true, Ordering::Relaxed);
-                self.settle(State::launch_ended);
                 Err(ProviderError::of(ErrorKind::Timeout))
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
                 Err(self.failure("the call ended without a response".into()))
             }
+        }
+    }
+
+    /// Records a clean shutdown if the library was loaded. Never takes the library lock, which a
+    /// hung load may hold.
+    pub fn shutdown(&self) {
+        if self.loaded.load(Ordering::Acquire) {
+            self.settle(State::clean_shutdown);
         }
     }
 
