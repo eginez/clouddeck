@@ -253,7 +253,7 @@ mod tests {
     #[test]
     fn capability_needs_both_declaration_and_grant() {
         let dir = tempfile::tempdir().unwrap();
-        let state = Arc::new(StateStore::open(dir.path()).unwrap());
+        let state = Arc::new(StateStore::open(&dir.path().join("state.json")).unwrap());
         let host = HostContext::new(
             "toy".into(),
             dir.path().join("data"),

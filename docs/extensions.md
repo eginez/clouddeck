@@ -1,14 +1,16 @@
 # Provider extensions: host notes
 
 Extensions are native libraries (`.so` on Linux, `.dylib` on macOS) loaded at runtime from
-`~/.config/clouddeck/plugins/<id>/`, next to an `extension.toml`. There is no sandbox: an
+`~/.config/clouddeck/extensions/<id>/`, next to an `extension.toml`. There is no sandbox: an
 extension runs with the user's permissions. Capabilities in the manifest are declarations the
 user must also grant; they limit what the host's helpers do, not what the library can do itself.
 
 ## Loading
 
-- Discovery reads `extension.toml` and `state.json` only. No library is loaded until a provider
-  is first used.
+- Discovery reads `extension.toml` and the host state file only. Host state (enabled, grants,
+  crash count) lives in `~/.config/clouddeck/extension-state/<id>.json`, outside the extension
+  folder; a `state.json` shipped inside an extension folder is never read. No library is loaded
+  until a provider is first used.
 - An extension whose `api_version` differs from CloudDeck's is refused with a "Rebuild <id> for
   CloudDeck <version>" message.
 - A library that reports `panic=abort` is refused. Panics must unwind so they can be turned into

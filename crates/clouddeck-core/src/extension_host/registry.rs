@@ -13,7 +13,7 @@ use crate::context::config_home;
 
 use super::manifest::{MANIFEST_FILE, Manifest};
 use super::remote::{Plugin, RemoteProvider};
-use super::state::{CRASH_LIMIT, State, StateStore};
+use super::state::{CRASH_LIMIT, State, StateStore, state_path};
 
 const CLOUDDECK_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -58,12 +58,12 @@ impl ProviderRegistry {
         &self.refusals
     }
 
-    /// Reads each installed extension's manifest and state. No library is loaded here.
-    pub fn discover(&mut self, root: &Path) -> io::Result<()> {
+    /// Reads each installed extension's manifest and host-owned state. No library is loaded here.
+    pub fn discover(&mut self, root: &Path, state_root: &Path) -> io::Result<()> {
         if !root.is_absolute() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                "the plugins root must be an absolute path",
+                "the extensions root must be an absolute path",
             ));
         }
         let entries = match fs::read_dir(root) {
@@ -78,7 +78,7 @@ impl ProviderRegistry {
             .collect();
         dirs.sort();
         for dir in dirs {
-            if let Err(message) = self.add_extension(&dir) {
+            if let Err(message) = self.add_extension(&dir, state_root) {
                 let extension = dir
                     .file_name()
                     .unwrap_or(OsStr::new("?"))
@@ -90,7 +90,7 @@ impl ProviderRegistry {
         Ok(())
     }
 
-    fn add_extension(&mut self, dir: &Path) -> Result<(), String> {
+    fn add_extension(&mut self, dir: &Path, state_root: &Path) -> Result<(), String> {
         let text = fs::read_to_string(dir.join(MANIFEST_FILE))
             .map_err(|error| format!("cannot read {MANIFEST_FILE}: {error}"))?;
         let manifest = Manifest::parse(&text)?;
@@ -101,8 +101,10 @@ impl ProviderRegistry {
                 manifest.id
             ));
         }
-        let state =
-            Arc::new(StateStore::open(dir).map_err(|error| format!("cannot read state: {error}"))?);
+        let state = Arc::new(
+            StateStore::open(&state_path(state_root, &manifest.id))
+                .map_err(|error| format!("cannot read state: {error}"))?,
+        );
         if !state.read(|s| s.enabled) {
             return Ok(());
         }
@@ -144,8 +146,13 @@ impl ProviderRegistry {
 }
 
 /// Where installed extensions live, next to the rest of CloudDeck's configuration.
-pub fn plugins_root() -> PathBuf {
-    config_home().join("clouddeck/plugins")
+pub fn extensions_root() -> PathBuf {
+    config_home().join("clouddeck/extensions")
+}
+
+/// Host-owned state for every extension, kept out of the extension folders.
+pub fn extension_state_root() -> PathBuf {
+    config_home().join("clouddeck/extension-state")
 }
 
 #[cfg(test)]
@@ -165,18 +172,22 @@ mod tests {
         path
     }
 
-    fn enable(path: &Path, change: impl FnOnce(&mut State)) {
-        StateStore::open(path).unwrap().update(change).unwrap();
+    fn enable(state_root: &Path, id: &str, change: impl FnOnce(&mut State)) {
+        StateStore::open(&state_path(state_root, id))
+            .unwrap()
+            .update(change)
+            .unwrap();
     }
 
     #[test]
     fn discovery_refuses_mismatched_api_and_names_the_rebuild() {
         let root = tempfile::tempdir().unwrap();
-        let dir = install(root.path(), "old", &manifest_text("old", API_VERSION + 1));
-        enable(&dir, |s| s.enabled = true);
+        let state_root = tempfile::tempdir().unwrap();
+        install(root.path(), "old", &manifest_text("old", API_VERSION + 1));
+        enable(state_root.path(), "old", |s| s.enabled = true);
 
         let mut registry = ProviderRegistry::default();
-        registry.discover(root.path()).unwrap();
+        registry.discover(root.path(), state_root.path()).unwrap();
 
         assert!(registry.providers().is_empty());
         assert_eq!(registry.refusals().len(), 1);
@@ -190,10 +201,11 @@ mod tests {
     #[test]
     fn discovery_skips_disabled_extensions_without_refusing_them() {
         let root = tempfile::tempdir().unwrap();
+        let state_root = tempfile::tempdir().unwrap();
         install(root.path(), "quiet", &manifest_text("quiet", API_VERSION));
 
         let mut registry = ProviderRegistry::default();
-        registry.discover(root.path()).unwrap();
+        registry.discover(root.path(), state_root.path()).unwrap();
 
         assert!(registry.providers().is_empty());
         assert!(registry.refusals().is_empty());
@@ -202,14 +214,15 @@ mod tests {
     #[test]
     fn crash_disabled_extension_is_refused_at_discovery() {
         let root = tempfile::tempdir().unwrap();
-        let dir = install(root.path(), "crashy", &manifest_text("crashy", API_VERSION));
-        enable(&dir, |s| {
+        let state_root = tempfile::tempdir().unwrap();
+        install(root.path(), "crashy", &manifest_text("crashy", API_VERSION));
+        enable(state_root.path(), "crashy", |s| {
             s.enabled = true;
             s.crashes = CRASH_LIMIT;
         });
 
         let mut registry = ProviderRegistry::default();
-        registry.discover(root.path()).unwrap();
+        registry.discover(root.path(), state_root.path()).unwrap();
 
         assert!(registry.providers().is_empty());
         assert!(
@@ -222,11 +235,12 @@ mod tests {
     #[test]
     fn folder_must_match_manifest_id() {
         let root = tempfile::tempdir().unwrap();
-        let dir = install(root.path(), "other", &manifest_text("toy", API_VERSION));
-        enable(&dir, |s| s.enabled = true);
+        let state_root = tempfile::tempdir().unwrap();
+        install(root.path(), "other", &manifest_text("toy", API_VERSION));
+        enable(state_root.path(), "toy", |s| s.enabled = true);
 
         let mut registry = ProviderRegistry::default();
-        registry.discover(root.path()).unwrap();
+        registry.discover(root.path(), state_root.path()).unwrap();
 
         assert!(
             registry.refusals()[0]
@@ -238,27 +252,66 @@ mod tests {
     #[test]
     fn shutdown_leaves_unloaded_extensions_alone() {
         let root = tempfile::tempdir().unwrap();
-        let dir = install(root.path(), "idle", &manifest_text("idle", API_VERSION));
-        enable(&dir, |s| {
+        let state_root = tempfile::tempdir().unwrap();
+        install(root.path(), "idle", &manifest_text("idle", API_VERSION));
+        enable(state_root.path(), "idle", |s| {
             s.enabled = true;
             s.launch_pending = true;
             s.crashes = 1;
         });
 
         let mut registry = ProviderRegistry::default();
-        registry.discover(root.path()).unwrap();
+        registry.discover(root.path(), state_root.path()).unwrap();
         registry.shutdown();
 
-        let state = StateStore::open(&dir).unwrap();
+        let state = StateStore::open(&state_path(state_root.path(), "idle")).unwrap();
         assert!(state.read(|s| s.launch_pending));
         assert_eq!(state.read(|s| s.crashes), 1);
     }
 
     #[test]
-    fn missing_plugins_root_is_empty() {
+    fn state_json_shipped_in_an_extension_folder_is_ignored() {
         let root = tempfile::tempdir().unwrap();
+        let state_root = tempfile::tempdir().unwrap();
+        let dir = install(root.path(), "toy", &manifest_text("toy", API_VERSION));
+        fs::write(
+            dir.join("state.json"),
+            r#"{"enabled":true,"granted":[{"kind":"credentials"}],"crashes":0}"#,
+        )
+        .unwrap();
+
         let mut registry = ProviderRegistry::default();
-        registry.discover(&root.path().join("absent")).unwrap();
+        registry.discover(root.path(), state_root.path()).unwrap();
+
+        assert!(registry.providers().is_empty());
+        assert!(registry.refusals().is_empty());
+        let state = StateStore::open(&state_path(state_root.path(), "toy")).unwrap();
+        assert!(!state.read(|s| s.enabled));
+        assert!(state.read(|s| s.granted.is_empty()));
+    }
+
+    #[test]
+    fn host_state_is_not_inside_any_extension_folder() {
+        let extensions = extensions_root();
+        let state = extension_state_root();
+        assert!(!state.starts_with(&extensions));
+        assert!(!extensions.starts_with(&state));
+
+        let root = tempfile::tempdir().unwrap();
+        let dir = install(root.path(), "toy", &manifest_text("toy", API_VERSION));
+        let state_file = state_path(&state, "toy");
+        assert!(!state_file.starts_with(&dir));
+        assert!(!state_file.starts_with(dir.join("data")));
+    }
+
+    #[test]
+    fn missing_extensions_root_is_empty() {
+        let root = tempfile::tempdir().unwrap();
+        let state_root = tempfile::tempdir().unwrap();
+        let mut registry = ProviderRegistry::default();
+        registry
+            .discover(&root.path().join("absent"), state_root.path())
+            .unwrap();
         assert!(registry.refusals().is_empty());
     }
 }

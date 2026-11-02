@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::fs;
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
@@ -8,8 +8,12 @@ use serde::{Deserialize, Serialize};
 
 use super::manifest::Capability;
 
-pub const STATE_FILE: &str = "state.json";
 pub const CRASH_LIMIT: u32 = 2;
+
+/// The host's state file for one extension, under the host-owned state root.
+pub fn state_path(root: &Path, id: &str) -> PathBuf {
+    root.join(format!("{id}.json"))
+}
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct State {
@@ -69,15 +73,14 @@ pub struct StateStore {
 }
 
 impl StateStore {
-    pub fn open(dir: &Path) -> io::Result<Self> {
-        let path = dir.join(STATE_FILE);
-        let state = match fs::read(&path) {
+    pub fn open(path: &Path) -> io::Result<Self> {
+        let state = match fs::read(path) {
             Ok(bytes) => serde_json::from_slice(&bytes).map_err(io::Error::other)?,
             Err(error) if error.kind() == io::ErrorKind::NotFound => State::default(),
             Err(error) => return Err(error),
         };
         Ok(Self {
-            path,
+            path: path.to_path_buf(),
             state: Mutex::new(state),
         })
     }
@@ -99,12 +102,48 @@ fn lock(state: &Mutex<State>) -> MutexGuard<'_, State> {
 }
 
 fn save(path: &Path, state: &State) -> io::Result<()> {
+    let bytes = serde_json::to_vec_pretty(state).map_err(io::Error::other)?;
+    if let Some(dir) = path.parent() {
+        create_private_dir(dir)?;
+    }
     let temp = path.with_extension("json.tmp");
-    fs::write(
-        &temp,
-        serde_json::to_vec_pretty(state).map_err(io::Error::other)?,
-    )?;
+    create_private_file(&temp)?.write_all(&bytes)?;
     fs::rename(temp, path)
+}
+
+#[cfg(unix)]
+fn create_private_dir(dir: &Path) -> io::Result<()> {
+    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+    fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(dir)?;
+    fs::set_permissions(dir, fs::Permissions::from_mode(0o700))
+}
+
+#[cfg(not(unix))]
+fn create_private_dir(dir: &Path) -> io::Result<()> {
+    fs::create_dir_all(dir)
+}
+
+#[cfg(unix)]
+fn create_private_file(path: &Path) -> io::Result<fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    match fs::remove_file(path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+}
+
+#[cfg(not(unix))]
+fn create_private_file(path: &Path) -> io::Result<fs::File> {
+    fs::File::create(path)
 }
 
 #[cfg(test)]
@@ -151,15 +190,53 @@ mod tests {
     #[test]
     fn state_round_trips_through_the_store() {
         let dir = tempfile::tempdir().unwrap();
-        let store = StateStore::open(dir.path()).unwrap();
+        let path = state_path(dir.path(), "toy");
+        let store = StateStore::open(&path).unwrap();
         store
             .update(|state| {
                 state.enabled = true;
                 state.grant(Capability::Secrets);
             })
             .unwrap();
-        let reopened = StateStore::open(dir.path()).unwrap();
+        let reopened = StateStore::open(&path).unwrap();
         assert!(reopened.read(|state| state.enabled));
         assert!(reopened.read(|state| state.is_granted(&Capability::Secrets)));
+    }
+
+    #[test]
+    fn crash_count_persists_across_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = state_path(dir.path(), "toy");
+        let store = StateStore::open(&path).unwrap();
+        store.update(State::begin_launch).unwrap();
+        store.update(State::begin_launch).unwrap();
+        drop(store);
+
+        let reopened = StateStore::open(&path).unwrap();
+        assert_eq!(reopened.read(|state| state.crashes), 1);
+        assert!(reopened.read(|state| state.launch_pending));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn state_file_and_its_directory_are_private() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let state_dir = dir.path().join("extension-state");
+        fs::create_dir_all(&state_dir).unwrap();
+        fs::set_permissions(&state_dir, fs::Permissions::from_mode(0o755)).unwrap();
+        let path = state_path(&state_dir, "toy");
+        let stale = path.with_extension("json.tmp");
+        fs::write(&stale, b"{}").unwrap();
+        fs::set_permissions(&stale, fs::Permissions::from_mode(0o644)).unwrap();
+        StateStore::open(&path)
+            .unwrap()
+            .update(|state| state.enabled = true)
+            .unwrap();
+
+        let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&state_dir), 0o700);
+        assert_eq!(mode(&path), 0o600);
     }
 }

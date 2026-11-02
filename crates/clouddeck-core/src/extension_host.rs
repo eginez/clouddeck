@@ -5,8 +5,8 @@ mod remote;
 mod state;
 
 pub use manifest::{Capability, MANIFEST_FILE, Manifest, SCHEMA_VERSION};
-pub use registry::{ProviderRegistry, Refusal, plugins_root};
-pub use state::{CRASH_LIMIT, State, StateStore};
+pub use registry::{ProviderRegistry, Refusal, extension_state_root, extensions_root};
+pub use state::{CRASH_LIMIT, State, StateStore, state_path};
 
 use std::fmt;
 use std::path::{Path, PathBuf};

@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use clouddeck_core::extension_host::{ProviderRegistry, StateStore};
+use clouddeck_core::extension_host::{ProviderRegistry, StateStore, state_path};
 use clouddeck_core::{Call, ConnectionId, Host, LogLevel, ProviderError};
 
 struct NoHost;
@@ -51,7 +51,7 @@ fn built_library() -> PathBuf {
     profile_dir.join(LIBRARY)
 }
 
-fn install(root: &Path) -> PathBuf {
+fn install(root: &Path) {
     let dir = root.join("toy");
     fs::create_dir_all(&dir).unwrap();
     fs::copy(built_library(), dir.join(LIBRARY)).unwrap();
@@ -62,25 +62,26 @@ fn install(root: &Path) -> PathBuf {
         ),
     )
     .unwrap();
-    dir
 }
 
 // One test: the extension's host table is process-wide, so the library can be initialised once.
 #[test]
 fn installed_extension_loads_on_first_use_and_serves_calls() {
     let root = tempfile::tempdir().unwrap();
-    let dir = install(root.path());
-    StateStore::open(&dir)
+    let state_root = tempfile::tempdir().unwrap();
+    let state_file = state_path(state_root.path(), "toy");
+    install(root.path());
+    StateStore::open(&state_file)
         .unwrap()
         .update(|state| state.enabled = true)
         .unwrap();
 
     let mut registry = ProviderRegistry::default();
-    registry.discover(root.path()).unwrap();
+    registry.discover(root.path(), state_root.path()).unwrap();
     assert!(registry.refusals().is_empty(), "{:?}", registry.refusals());
     let provider = &registry.providers()[0];
 
-    let store = StateStore::open(&dir).unwrap();
+    let store = StateStore::open(&state_file).unwrap();
     assert!(
         !store.read(|state| state.launch_pending),
         "discovery must not load"
@@ -95,12 +96,12 @@ fn installed_extension_loads_on_first_use_and_serves_calls() {
     assert_eq!(connections[0].id, ConnectionId::from("default"));
     assert_eq!(provider.info().id, "toy");
 
-    let store = StateStore::open(&dir).unwrap();
+    let store = StateStore::open(&state_file).unwrap();
     assert!(store.read(|state| state.launch_pending));
     assert_eq!(store.read(|state| state.crashes), 0);
 
     registry.shutdown();
-    let store = StateStore::open(&dir).unwrap();
+    let store = StateStore::open(&state_file).unwrap();
     assert!(!store.read(|state| state.launch_pending));
     assert_eq!(store.read(|state| state.crashes), 0);
 }
