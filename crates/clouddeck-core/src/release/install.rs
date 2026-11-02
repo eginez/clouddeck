@@ -7,16 +7,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use flate2::read::GzDecoder;
 
+use super::tar_guard::{ExtensionGuard, GuardState};
+
 const UNSAFE_PATH: &str = "unsafe path in archive";
 const UNSUPPORTED_ENTRY: &str = "unsupported entry type in archive";
 const TOO_MANY_ENTRIES: &str = "archive has too many entries";
 const FILE_TOO_LARGE: &str = "archive file is larger than the size limit";
 const TOTAL_TOO_LARGE: &str = "archive expands past the size limit";
-const EXTENSION_TOO_LARGE: &str = "archive extension header is larger than the size limit";
-const PAX_SIZE_OVERRIDE: &str = "archive pax header overrides entry size";
 
-const BLOCK: u64 = 512;
-const MAX_EXTENSION_HEADER_BYTES: u64 = 64 * 1024;
 const MIB: u64 = 1024 * 1024;
 const GIB: u64 = 1024 * MIB;
 
@@ -41,10 +39,13 @@ pub const EXTENSION_UNPACK_LIMITS: UnpackLimits = UnpackLimits {
 /// directories are accepted; links and special files are refused. On error, `dest`
 /// may hold partial output, so callers pass a scratch directory.
 pub fn unpack(tar_gz: &[u8], dest: &Path, limits: UnpackLimits) -> Result<(), String> {
-    let decoded = ExtensionGuard::new(Budget {
-        inner: GzDecoder::new(tar_gz),
-        remaining: limits.max_total_bytes,
-    });
+    let decoded = ExtensionGuard {
+        inner: Budget {
+            inner: GzDecoder::new(tar_gz),
+            remaining: limits.max_total_bytes,
+        },
+        state: GuardState::default(),
+    };
     let mut archive = tar::Archive::new(decoded);
     let entries = archive.entries().map_err(|e| e.to_string())?;
     for (index, entry) in entries.enumerate() {
@@ -89,126 +90,6 @@ impl<R: Read> Read for Budget<R> {
             .ok_or_else(|| io::Error::other(TOTAL_TOO_LARGE))?;
         Ok(n)
     }
-}
-
-/// The tar crate buffers extension-header bodies (GNU long names, PAX records) without
-/// a size check. This reader follows the 512-byte block framing of the bytes it passes
-/// through, so an oversized extension body is refused before it is buffered.
-struct ExtensionGuard<R> {
-    inner: R,
-    header: [u8; BLOCK as usize],
-    header_len: usize,
-    body_left: u64,
-    body_kind: Option<u8>,
-    body_declared: u64,
-    body: Vec<u8>,
-}
-
-impl<R> ExtensionGuard<R> {
-    fn new(inner: R) -> Self {
-        Self {
-            inner,
-            header: [0; BLOCK as usize],
-            header_len: 0,
-            body_left: 0,
-            body_kind: None,
-            body_declared: 0,
-            body: Vec::new(),
-        }
-    }
-
-    fn observe(&mut self, mut bytes: &[u8]) -> io::Result<()> {
-        while !bytes.is_empty() {
-            if self.body_left > 0 {
-                let take = self.body_left.min(bytes.len() as u64) as usize;
-                if self.body_kind.is_some() {
-                    self.body.extend_from_slice(&bytes[..take]);
-                }
-                self.body_left -= take as u64;
-                bytes = &bytes[take..];
-                if self.body_left == 0 {
-                    self.finish_body()?;
-                }
-                continue;
-            }
-            let take = (BLOCK as usize - self.header_len).min(bytes.len());
-            self.header[self.header_len..self.header_len + take].copy_from_slice(&bytes[..take]);
-            self.header_len += take;
-            bytes = &bytes[take..];
-            if self.header_len == BLOCK as usize {
-                self.header_len = 0;
-                self.start_entry()?;
-            }
-        }
-        Ok(())
-    }
-
-    fn start_entry(&mut self) -> io::Result<()> {
-        let size = parse_header_size(&self.header[124..136])?;
-        let kind = self.header[156];
-        let is_extension = matches!(kind, b'L' | b'K' | b'x' | b'g');
-        if is_extension && size > MAX_EXTENSION_HEADER_BYTES {
-            return Err(io::Error::other(EXTENSION_TOO_LARGE));
-        }
-        self.body_kind = is_extension.then_some(kind);
-        self.body_declared = size;
-        self.body.clear();
-        self.body_left = size.div_ceil(BLOCK).saturating_mul(BLOCK);
-        if self.body_left == 0 && self.body_kind.is_some() {
-            self.finish_body()?;
-        }
-        Ok(())
-    }
-
-    fn finish_body(&mut self) -> io::Result<()> {
-        if matches!(self.body_kind, Some(b'x' | b'g')) {
-            let declared = &self.body[..self.body_declared as usize];
-            if declared.windows(5).any(|w| w == b"size=") {
-                return Err(io::Error::other(PAX_SIZE_OVERRIDE));
-            }
-        }
-        self.body_kind = None;
-        self.body.clear();
-        Ok(())
-    }
-}
-
-impl<R: Read> Read for ExtensionGuard<R> {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let n = self.inner.read(buf)?;
-        self.observe(&buf[..n])?;
-        Ok(n)
-    }
-}
-
-fn parse_header_size(field: &[u8]) -> io::Result<u64> {
-    if field[0] & 0x80 != 0 {
-        let mut value = u64::from(field[0] & 0x7f);
-        for &byte in &field[1..] {
-            if value > u64::MAX >> 8 {
-                return Err(io::Error::other("archive entry size is out of range"));
-            }
-            value = (value << 8) | u64::from(byte);
-        }
-        return Ok(value);
-    }
-    let invalid = || io::Error::other("invalid archive entry size");
-    let end = field
-        .iter()
-        .position(|&b| b == 0 || b == b' ')
-        .unwrap_or(field.len());
-    if field[end..].iter().any(|&b| b != 0 && b != b' ') {
-        return Err(invalid());
-    }
-    field[..end].iter().try_fold(0u64, |value, &digit| {
-        if !(b'0'..=b'7').contains(&digit) {
-            return Err(invalid());
-        }
-        value
-            .checked_mul(8)
-            .and_then(|v| v.checked_add(u64::from(digit - b'0')))
-            .ok_or_else(invalid)
-    })
 }
 
 #[cfg(unix)]
@@ -371,8 +252,12 @@ impl Drop for StagingDir {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::release::tar_guard::{
+        BINARY_SIZE, EXTENSION_TOO_LARGE, PAX_MALFORMED, PAX_SIZE_OVERRIDE, SPARSE_ENTRY,
+    };
     use flate2::Compression;
     use flate2::write::GzEncoder;
+    use std::io::Write;
 
     fn archive(entries: &[(&str, &[u8])]) -> Vec<u8> {
         let mut builder = tar::Builder::new(GzEncoder::new(Vec::new(), Compression::default()));
@@ -473,6 +358,98 @@ mod tests {
         assert_eq!(
             unpack(&tgz, dir.path(), APP_UNPACK_LIMITS),
             Err(PAX_SIZE_OVERRIDE.to_string())
+        );
+    }
+
+    fn raw_entry(header: &tar::Header, data: &[u8]) -> Vec<u8> {
+        let mut out = header.as_bytes().to_vec();
+        out.extend_from_slice(data);
+        out.resize(out.len().next_multiple_of(512), 0);
+        out
+    }
+
+    fn gzip_raw(parts: &[Vec<u8>]) -> Vec<u8> {
+        let mut enc = GzEncoder::new(Vec::new(), Compression::default());
+        for part in parts {
+            enc.write_all(part).unwrap();
+        }
+        enc.write_all(&[0u8; 1024]).unwrap();
+        enc.finish().unwrap()
+    }
+
+    fn regular_file_header(path: &str, size: u64) -> tar::Header {
+        let mut header = tar::Header::new_gnu();
+        header.set_path(path).unwrap();
+        header.set_mode(0o644);
+        header.set_size(size);
+        header.set_cksum();
+        header
+    }
+
+    #[test]
+    fn unpack_refuses_gnu_sparse_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut sparse = tar::Header::new_gnu();
+        sparse.set_path("f").unwrap();
+        sparse.set_entry_type(tar::EntryType::GNUSparse);
+        sparse.set_size(0);
+        sparse.as_gnu_mut().unwrap().isextended[0] = 1;
+        sparse.set_cksum();
+        let tgz = gzip_raw(&[
+            raw_entry(&sparse, &[]),
+            vec![0u8; 512],
+            raw_entry(&regular_file_header("g", 1), b"x"),
+        ]);
+        assert_eq!(
+            unpack(&tgz, dir.path(), APP_UNPACK_LIMITS),
+            Err(SPARSE_ENTRY.to_string())
+        );
+        assert!(only_entries(dir.path()).is_empty());
+    }
+
+    #[test]
+    fn unpack_refuses_base256_size() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut header = regular_file_header("f", 1);
+        header.as_old_mut().size = [0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
+        header.set_cksum();
+        let tgz = gzip_raw(&[raw_entry(&header, b"x")]);
+        assert_eq!(
+            unpack(&tgz, dir.path(), APP_UNPACK_LIMITS),
+            Err(BINARY_SIZE.to_string())
+        );
+    }
+
+    #[test]
+    fn unpack_accepts_pax_value_containing_size() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut builder = tar::Builder::new(GzEncoder::new(Vec::new(), Compression::default()));
+        builder
+            .append_pax_extensions([("comment", b"size=1".as_slice())])
+            .unwrap();
+        let mut header = regular_file_header("f", 1);
+        builder.append_data(&mut header, "f", &b"x"[..]).unwrap();
+        let tgz = builder.into_inner().unwrap().finish().unwrap();
+        unpack(&tgz, dir.path(), APP_UNPACK_LIMITS).unwrap();
+        assert!(dir.path().join("f").is_file());
+    }
+
+    #[test]
+    fn unpack_refuses_malformed_pax_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let body = b"99 comment=x\n";
+        let mut pax = tar::Header::new_ustar();
+        pax.set_path("PaxHeader/f").unwrap();
+        pax.set_entry_type(tar::EntryType::XHeader);
+        pax.set_size(body.len() as u64);
+        pax.set_cksum();
+        let tgz = gzip_raw(&[
+            raw_entry(&pax, body),
+            raw_entry(&regular_file_header("f", 1), b"x"),
+        ]);
+        assert_eq!(
+            unpack(&tgz, dir.path(), APP_UNPACK_LIMITS),
+            Err(PAX_MALFORMED.to_string())
         );
     }
 
