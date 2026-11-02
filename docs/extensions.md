@@ -32,4 +32,5 @@ and the extension's `cancelled()` answers true; the library itself cannot be int
 - Apple silicon requires at least an ad-hoc code signature on the library.
 - If CloudDeck is notarized with the hardened runtime, it needs the
   `com.apple.security.cs.disable-library-validation` entitlement to load third-party libraries.
-- The loader has been checked on Linux only. Verify on macOS arm64 before relying on it.
+- The loader has been checked on Linux only. Verify on macOS arm64 before relying on it. Run the
+  extension-host-macos workflow (workflow_dispatch) to check.

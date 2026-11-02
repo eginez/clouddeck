@@ -97,6 +97,7 @@ fn installed_extension_loads_on_first_use_and_serves_calls() {
 
     let store = StateStore::open(&dir).unwrap();
     assert!(store.read(|state| state.launch_pending));
+    assert_eq!(store.read(|state| state.crashes), 0);
 
     registry.shutdown();
     let store = StateStore::open(&dir).unwrap();
