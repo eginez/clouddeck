@@ -166,12 +166,17 @@ where
             let provider = extension.provider(&request.provider).ok_or_else(|| {
                 ProviderError::new(ErrorKind::NotFound, format!("no provider {}", request.provider))
             })?;
-            let cx = Call {
-                deadline: request
-                    .deadline_ms
-                    .map(|ms| Instant::now() + Duration::from_millis(ms)),
-                host,
-            };
+            let deadline = request
+                .deadline_ms
+                .map(|ms| {
+                    Instant::now()
+                        .checked_add(Duration::from_millis(ms))
+                        .ok_or_else(|| {
+                            ProviderError::new(ErrorKind::Timeout, "deadline out of range")
+                        })
+                })
+                .transpose()?;
+            let cx = Call { deadline, host };
             handle(provider.as_ref(), &cx, request.args)
         });
     encode(outcome)

@@ -1,12 +1,15 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use clouddeck_extension_api::conformance::check_provider;
+use clouddeck_extension_api::wire::{Method, dispatch};
 use clouddeck_extension_api::{
     AuthAnswer, AuthInput, AuthMethod, AuthStatus, AuthStep, Call, CellFailure, Connection,
-    ConnectionId, CoreField, DimValue, Dimension, ErrorKind, ExtrasSection, FieldDef, FieldKind,
-    FieldSource, FlowId, INSTANCES, Instance, KindId, KindInfo, ListResult, MatchMode, PromptField,
-    Provider, ProviderError, ProviderInfo, ResourceId, Selection, ValueId,
+    ConnectionId, CoreField, DimValue, Dimension, ErrorKind, Extension, ExtrasSection, FieldDef,
+    FieldKind, FieldSource, FlowId, Host, INSTANCES, Instance, KindId, KindInfo, ListResult,
+    LogLevel, MatchMode, PromptField, Provider, ProviderError, ProviderInfo, ResourceId, Selection,
+    ValueId,
 };
 
 const REGIONS: [&str; 3] = ["us", "us-east", "eu"];
@@ -302,4 +305,57 @@ fn checker_reports_panics_instead_of_unwinding() {
             .any(|v| v.contains("describe") && v.contains("panicked")),
         "{violations:?}"
     );
+}
+
+struct WireExtension;
+
+impl Extension for WireExtension {
+    fn new() -> Self {
+        WireExtension
+    }
+
+    fn provider(&self, id: &str) -> Option<Box<dyn Provider>> {
+        (id == "fake").then(|| Box::new(Fake::default()) as Box<dyn Provider>)
+    }
+}
+
+struct NoHost;
+
+impl Host for NoHost {
+    fn log(&self, _level: LogLevel, _message: &str) {}
+    fn data_dir(&self) -> PathBuf {
+        PathBuf::new()
+    }
+    fn setting(&self, _key: &str) -> Option<String> {
+        None
+    }
+    fn secret(&self, _key: &str) -> Option<String> {
+        None
+    }
+    fn set_secret(&self, _key: &str, _value: Option<&str>) -> Result<(), ProviderError> {
+        Ok(())
+    }
+    fn open_url(&self, _url: &str) -> Result<(), ProviderError> {
+        Ok(())
+    }
+    fn cancelled(&self) -> bool {
+        false
+    }
+}
+
+#[test]
+fn extreme_deadline_is_accepted_without_panicking() {
+    let request = format!(
+        r#"{{"provider":"fake","deadline_ms":{},"args":null}}"#,
+        u64::MAX
+    );
+    let response = dispatch(
+        &WireExtension,
+        &NoHost,
+        Method::Info as u32,
+        request.as_bytes(),
+    );
+    let outcome: Result<ProviderInfo, ProviderError> =
+        serde_json::from_slice(&response).expect("response decodes");
+    assert!(outcome.is_ok(), "{outcome:?}");
 }
