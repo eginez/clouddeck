@@ -1,7 +1,8 @@
+use crate::auth::{AuthAnswer, AuthInput, AuthMethod, AuthStatus, AuthStep};
 use crate::error::ProviderError;
 use crate::field::FieldDef;
 use crate::host::Call;
-use crate::ids::{ConnectionId, KindId, ResourceId};
+use crate::ids::{ConnectionId, FlowId, KindId, ResourceId};
 use crate::inspector::InspectorSectionDef;
 use crate::instance::{ExtrasSection, Instance};
 use crate::selection::{Dimension, Selection};
@@ -67,8 +68,39 @@ pub trait Provider: Send + Sync {
         Err(ProviderError::unsupported())
     }
 
-    fn sign_in(&self, _connection: &str) -> Result<(), ProviderError> {
+    fn auth_methods(&self) -> Vec<AuthMethod> {
+        Vec::new()
+    }
+
+    fn begin_auth(
+        &self,
+        _cx: &Call<'_>,
+        _method: &AuthMethod,
+        _input: AuthInput,
+    ) -> Result<AuthStep, ProviderError> {
         Err(ProviderError::unsupported())
+    }
+
+    fn continue_auth(
+        &self,
+        _cx: &Call<'_>,
+        _flow: &FlowId,
+        _answer: AuthAnswer,
+    ) -> Result<AuthStep, ProviderError> {
+        Err(ProviderError::unsupported())
+    }
+
+    /// `None` asks about the provider as a whole rather than one connection.
+    fn auth_status(&self, _cx: &Call<'_>, _connection: Option<&ConnectionId>) -> AuthStatus {
+        AuthStatus::SignedIn { expires: None }
+    }
+
+    fn sign_out(
+        &self,
+        _cx: &Call<'_>,
+        _connection: Option<&ConnectionId>,
+    ) -> Result<(), ProviderError> {
+        Ok(())
     }
 
     fn console_url(
@@ -292,11 +324,34 @@ mod tests {
     }
 
     #[test]
-    fn default_sign_in_is_unsupported() {
+    fn default_auth_is_empty_unsupported_and_signed_in() {
+        let host = NullHost;
+        let cx = Call {
+            deadline: None,
+            host: &host,
+        };
+        let method = AuthMethod {
+            id: "method".to_string(),
+            label: "Method".to_string(),
+        };
+        let input = AuthInput {
+            connection: ConnectionId::from("default"),
+            values: Default::default(),
+        };
+        assert!(EmptyProvider.auth_methods().is_empty());
         assert_eq!(
-            EmptyProvider.sign_in("default"),
+            EmptyProvider.begin_auth(&cx, &method, input),
             Err(ProviderError::unsupported())
         );
+        assert_eq!(
+            EmptyProvider.continue_auth(&cx, &FlowId::from("flow"), AuthAnswer::Poll),
+            Err(ProviderError::unsupported())
+        );
+        assert_eq!(
+            EmptyProvider.auth_status(&cx, None),
+            AuthStatus::SignedIn { expires: None }
+        );
+        assert_eq!(EmptyProvider.sign_out(&cx, None), Ok(()));
     }
 
     #[test]

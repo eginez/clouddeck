@@ -10,19 +10,24 @@
 //! the clouddeck-rs-w6s.18 acceptance criteria explicitly rule out.
 //!
 //! The SDK-backed backend this module calls
-//! (`AwsIdentityService`/`AwsSdkComputeService`/`AwsSsoLoginService`/
+//! (`AwsIdentityService`/`AwsSdkComputeService`/`aws_provider`/
 //! `login_guidance`) already existed from clouddeck-rs-wz2.2; this module is
 //! the missing wiring, not a new auth implementation. Kept out of
 //! `account_window.rs` (pure UI state, easy to unit test without gpui) and
 //! `shell.rs` (window lifecycle, not auth orchestration) so each stays
 //! focused.
 
+use std::collections::BTreeMap;
+use std::path::PathBuf;
+use std::sync::Arc;
+
 use gpui::{App, AsyncApp, Entity};
 
 use crate::account_window::{AccountBrowserLoginPrompt, AccountConnectionError, AccountWindowView};
 use clouddeck_core::{
-    AwsCredentialKind, AwsIdentityService, AwsSdkComputeService, AwsSsoLoginService,
-    ComputeService, LoginGuidance, login_guidance,
+    AuthAnswer, AuthInput, AuthStep, AwsCredentialKind, AwsIdentityService, AwsSdkComputeService,
+    Call, ComputeService, ConnectionId, FlowId, Host, LogLevel, LoginGuidance, Provider,
+    ProviderError, aws_provider, login_guidance,
 };
 
 /// Consumes whichever one-shot request flags the wizard has set since the
@@ -133,9 +138,7 @@ fn begin_connect(wizard: Entity<AccountWindowView>, cx: &mut App) {
 /// `login_guidance` reason, rather than spinning on a network/OIDC call
 /// guaranteed to fail. Kept as one function so both entry points -- "Connect
 /// to AWS" and "Sign in with browser" -- report the identical
-/// `AccountConnectionError` for the same profile, instead of `begin_connect`
-/// short-circuiting cleanly while `begin_sign_in` falls through to a raw,
-/// unclassified `AwsSsoLoginService::begin` error.
+/// `AccountConnectionError` for the same profile.
 fn reject_unsupported_profile(
     wizard: &Entity<AccountWindowView>,
     cx: &mut App,
@@ -154,11 +157,12 @@ fn reject_unsupported_profile(
     false
 }
 
-/// Handles "Sign in with browser" / the "Sign in again" retry action:
-/// starts a device-authorization browser sign-in
-/// (`AwsSsoLoginService::begin`), publishes the code/URL for the UI to
-/// show, waits for the user to approve it, then falls through to the same
-/// identity + EC2-access check `begin_connect` uses once a token is cached.
+/// Handles "Sign in with browser" / the "Sign in again" retry action: starts
+/// a browser sign-in through the provider's auth flow, publishes the code/URL
+/// for the UI to show, polls until the user approves it, then falls through
+/// to the same identity + EC2-access check `begin_connect` uses once a token
+/// is cached. The provider paces its own polls, so each `Poll` returns only
+/// when another poll is due.
 fn begin_sign_in(wizard: Entity<AccountWindowView>, cx: &mut App) {
     let profile = wizard.read(cx).selected_profile.clone().unwrap_or_default();
     let region = wizard.read(cx).selected_region.clone();
@@ -170,55 +174,188 @@ fn begin_sign_in(wizard: Entity<AccountWindowView>, cx: &mut App) {
     }
 
     cx.spawn(async move |cx| {
-        let login_service = AwsSsoLoginService::new();
-        let begin_result = crate::runtime::runtime()
-            .spawn(async move { login_service.begin(&credential_kind).await })
-            .await
-            .unwrap_or_else(|error| Err(std::io::Error::other(error.to_string()).into()));
-
-        let (authorization, pending) = match begin_result {
-            Ok(pair) => pair,
-            Err(error) => {
-                fail(&wizard, attempt, &error.to_string(), cx);
-                return;
-            }
+        // One provider instance must own both begin and poll: it holds the flow state.
+        let provider = aws_provider();
+        let Some(flow) = start_browser_sign_in(&wizard, &provider, &profile, attempt, cx).await
+        else {
+            return;
         };
-
-        let applied = wizard.update(cx, |view, cx| {
-            if view.connection_attempt != attempt || view.dismissed {
-                return false;
-            }
-            view.await_browser_login_with_prompt(AccountBrowserLoginPrompt {
-                verification_uri: authorization.verification_uri.clone(),
-                verification_uri_complete: authorization.verification_uri_complete.clone(),
-                user_code: authorization.user_code.clone(),
-                expires_in: authorization.expires_in.as_secs(),
-                // The SDK's own polling interval lives inside
-                // `PendingSsoSignIn` (not exposed -- `wait_for_completion`
-                // handles pacing internally); the UI never renders this
-                // field, so any positive placeholder is fine here.
-                interval: 5,
-            });
-            cx.notify();
-            true
-        });
-        if !matches!(applied, Ok(true)) {
+        if !await_browser_approval(&wizard, &provider, flow, attempt, cx).await
+            || !is_current_attempt(&wizard, attempt, cx)
+        {
             return;
         }
-
-        let wait_result = crate::runtime::runtime()
-            .spawn(async move { pending.wait_for_completion().await })
-            .await
-            .unwrap_or_else(|error| Err(std::io::Error::other(error.to_string()).into()));
-
-        if let Err(error) = wait_result {
-            fail(&wizard, attempt, &error.to_string(), cx);
-            return;
-        }
-
         run_identity_and_access_check(wizard, profile, region, attempt, cx).await;
     })
     .detach();
+}
+
+async fn start_browser_sign_in(
+    wizard: &Entity<AccountWindowView>,
+    provider: &Arc<dyn Provider>,
+    profile: &str,
+    attempt: u64,
+    cx: &mut AsyncApp,
+) -> Option<FlowId> {
+    let step = match off_thread(cx, {
+        let provider = provider.clone();
+        let profile = profile.to_string();
+        move || begin_device_flow(provider.as_ref(), &profile)
+    })
+    .await
+    {
+        Ok(step) => step,
+        Err(error) => {
+            fail(wizard, attempt, &error.to_string(), cx);
+            return None;
+        }
+    };
+
+    let AuthStep::DeviceCode {
+        flow,
+        code,
+        url,
+        complete_url,
+        expires_in,
+    } = step
+    else {
+        fail(
+            wizard,
+            attempt,
+            "Browser sign-in did not return a code.",
+            cx,
+        );
+        return None;
+    };
+
+    let applied = wizard.update(cx, |view, cx| {
+        if view.connection_attempt != attempt || view.dismissed {
+            return false;
+        }
+        view.await_browser_login_with_prompt(AccountBrowserLoginPrompt {
+            verification_uri: url,
+            verification_uri_complete: complete_url,
+            user_code: code,
+            expires_in: expires_in.as_secs(),
+            // The provider paces polling itself; the UI never renders this field.
+            interval: 5,
+        });
+        cx.notify();
+        true
+    });
+    matches!(applied, Ok(true)).then_some(flow)
+}
+
+/// Returns `true` once the user approves the code, `false` if the attempt went
+/// stale or the flow failed (the failure is already reported to the wizard).
+async fn await_browser_approval(
+    wizard: &Entity<AccountWindowView>,
+    provider: &Arc<dyn Provider>,
+    flow: FlowId,
+    attempt: u64,
+    cx: &mut AsyncApp,
+) -> bool {
+    loop {
+        if !is_current_attempt(wizard, attempt, cx) {
+            return false;
+        }
+        let polled = off_thread(cx, {
+            let provider = provider.clone();
+            let flow = flow.clone();
+            move || with_call(|call| provider.continue_auth(call, &flow, AuthAnswer::Poll))
+        })
+        .await;
+        match polled {
+            Ok(AuthStep::Done) => return true,
+            Ok(_) => {}
+            Err(error) => {
+                fail(wizard, attempt, &error.to_string(), cx);
+                return false;
+            }
+        }
+    }
+}
+
+fn begin_device_flow(provider: &dyn Provider, profile: &str) -> Result<AuthStep, ProviderError> {
+    let method = provider
+        .auth_methods()
+        .into_iter()
+        .next()
+        .ok_or_else(ProviderError::unsupported)?;
+    with_call(|call| {
+        provider.begin_auth(
+            call,
+            &method,
+            AuthInput {
+                connection: ConnectionId::from(profile),
+                values: BTreeMap::new(),
+            },
+        )
+    })
+}
+
+fn is_current_attempt(wizard: &Entity<AccountWindowView>, attempt: u64, cx: &mut AsyncApp) -> bool {
+    wizard
+        .update(cx, |view, _| {
+            view.connection_attempt == attempt && !view.dismissed
+        })
+        .unwrap_or(false)
+}
+
+/// Runs blocking provider work off the UI thread. Provider calls can block on
+/// the SSO poll pacing, and the core's sync-over-async bridge must not run on
+/// the gpui foreground executor.
+async fn off_thread<T: Send + 'static>(
+    cx: &AsyncApp,
+    work: impl FnOnce() -> T + Send + 'static,
+) -> T {
+    cx.background_executor().spawn(async move { work() }).await
+}
+
+fn with_call<T>(work: impl FnOnce(&Call<'_>) -> T) -> T {
+    let host = AppHost;
+    work(&Call {
+        deadline: None,
+        host: &host,
+    })
+}
+
+/// Services the app offers providers. The AWS provider reads only its own
+/// `~/.aws` files, so settings and secrets are never requested; the wizard
+/// opens the verification URL itself (see `drive`).
+struct AppHost;
+
+impl Host for AppHost {
+    fn log(&self, level: LogLevel, message: &str) {
+        eprintln!("clouddeck {level:?}: {message}");
+    }
+
+    fn data_dir(&self) -> PathBuf {
+        clouddeck_core::context_path()
+            .parent()
+            .map(PathBuf::from)
+            .unwrap_or_default()
+    }
+
+    fn setting(&self, _key: &str) -> Option<String> {
+        None
+    }
+
+    fn secret(&self, _key: &str) -> Option<String> {
+        None
+    }
+
+    fn set_secret(&self, _key: &str, _value: Option<&str>) -> Result<(), ProviderError> {
+        Err(ProviderError::unsupported())
+    }
+
+    fn open_url(&self, _url: &str) -> Result<(), ProviderError> {
+        Err(ProviderError::unsupported())
+    }
+
+    fn cancelled(&self) -> bool {
+        false
+    }
 }
 
 /// Resolves STS identity, then verifies the selected region's EC2 access

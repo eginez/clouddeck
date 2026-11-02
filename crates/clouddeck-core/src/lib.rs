@@ -8,10 +8,10 @@ pub use instance::{
 mod aws_inspector;
 mod provider;
 pub use clouddeck_provider_api::{
-    CellFailure, Connection, ConnectionId, CoreField, DimValue, Dimension, DimensionId, ErrorKind,
-    FieldDef, FieldKind, FieldSource, InspectorRowDef, InspectorSectionDef, InspectorValue, KindId,
-    KindInfo, ListResult, MatchMode, Provider, ProviderError, ProviderInfo, ResourceId, Selection,
-    ValueId,
+    AuthAnswer, AuthInput, AuthStep, Call, CellFailure, Connection, ConnectionId, CoreField,
+    DimValue, Dimension, DimensionId, ErrorKind, FieldDef, FieldKind, FieldSource, FlowId, Host,
+    InspectorRowDef, InspectorSectionDef, InspectorValue, KindId, KindInfo, ListResult, LogLevel,
+    MatchMode, Provider, ProviderError, ProviderInfo, ResourceId, Selection, ValueId,
 };
 pub use provider::ComputeServiceProvider;
 mod mock;
@@ -48,9 +48,11 @@ pub use instance_detail_view_model::InstanceDetailViewModel;
 pub use instance_list_view_model::InstanceListViewModel;
 mod aws_fields;
 pub use aws_fields::aws_fields;
+mod aws_auth;
 mod aws_identity;
 mod aws_sdk;
 mod aws_sso_login;
+pub use aws_auth::aws_provider;
 mod console_url;
 mod context;
 mod inspector;
@@ -76,9 +78,7 @@ pub use settings::*;
 mod center_state;
 pub use aws_identity::{AwsIdentity, AwsIdentityProvider, AwsIdentityService};
 pub use aws_sdk::{AwsSdkComputeService, Ec2Page, Ec2PageSource};
-pub use aws_sso_login::{
-    AwsSsoLoginService, LoginGuidance, PendingSsoSignIn, SsoDeviceAuthorization, login_guidance,
-};
+pub use aws_sso_login::{LoginGuidance, login_guidance};
 pub use center_state::*;
 mod refresh;
 pub use refresh::*;

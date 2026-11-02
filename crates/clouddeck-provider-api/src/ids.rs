@@ -40,7 +40,14 @@ macro_rules! string_id {
     )*};
 }
 
-string_id!(ConnectionId, KindId, ResourceId, DimensionId, ValueId);
+string_id!(
+    ConnectionId,
+    FlowId,
+    KindId,
+    ResourceId,
+    DimensionId,
+    ValueId
+);
 
 impl KindId {
     pub fn instances() -> Self {

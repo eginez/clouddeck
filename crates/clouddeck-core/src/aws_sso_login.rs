@@ -23,9 +23,10 @@ use aws_types::region::Region;
 use sha1::{Digest, Sha1};
 use std::{
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::{Duration, SystemTime},
 };
+use tokio::time::Instant;
 
 const CLIENT_NAME: &str = "clouddeck-rs";
 const CLIENT_TYPE: &str = "public";
@@ -81,26 +82,26 @@ pub fn login_guidance(credential_kind: &AwsCredentialKind) -> LoginGuidance {
 /// The identifier the AWS SDK hashes to find a profile's cached SSO token:
 /// the `sso_session` name for session-based profiles, otherwise the profile's
 /// own `sso_start_url`.
-fn sso_cache_identifier(config: &AwsSsoConfiguration) -> &str {
+pub(crate) fn sso_cache_identifier(config: &AwsSsoConfiguration) -> &str {
     config
         .session_name
         .as_deref()
         .unwrap_or(config.start_url.as_str())
 }
 
-struct RegisteredClient {
+pub(crate) struct RegisteredClient {
     client_id: String,
     client_secret: String,
     client_secret_expires_at: SystemTime,
 }
 
-struct DeviceAuthorizationDetails {
+pub(crate) struct DeviceAuthorizationDetails {
     device_code: String,
     interval: Duration,
     expires_in: Duration,
 }
 
-struct IssuedToken {
+pub(crate) struct IssuedToken {
     access_token: String,
     expires_in: Duration,
     refresh_token: Option<String>,
@@ -119,14 +120,14 @@ impl std::fmt::Debug for IssuedToken {
     }
 }
 
-enum TokenPoll {
+pub(crate) enum TokenPoll {
     Ready(IssuedToken),
     Pending,
     SlowDown,
 }
 
 #[async_trait::async_trait]
-trait SsoOidcProvider: Send + Sync {
+pub(crate) trait SsoOidcProvider: Send + Sync {
     async fn register_client(&self) -> Result<RegisteredClient, BoxError>;
     async fn start_device_authorization(
         &self,
@@ -143,14 +144,8 @@ trait SsoOidcProvider: Send + Sync {
 /// Starts browser SSO sign-ins. Stateless: each `begin` call registers a
 /// fresh public client against the profile's SSO region and starts a new
 /// device-authorization request.
-pub struct AwsSsoLoginService {
+pub(crate) struct AwsSsoLoginService {
     provider: Option<Arc<dyn SsoOidcProvider>>,
-}
-
-impl Default for AwsSsoLoginService {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl AwsSsoLoginService {
@@ -159,7 +154,7 @@ impl AwsSsoLoginService {
     }
 
     #[cfg(test)]
-    fn with_provider(provider: Arc<dyn SsoOidcProvider>) -> Self {
+    pub(crate) fn with_provider(provider: Arc<dyn SsoOidcProvider>) -> Self {
         Self {
             provider: Some(provider),
         }
@@ -197,17 +192,22 @@ impl AwsSsoLoginService {
             .start_device_authorization(&client, &sso.start_url)
             .await?;
         let identifier = sso_cache_identifier(&sso).to_owned();
-        Ok((
-            authorization,
-            PendingSsoSignIn {
-                provider,
-                client,
-                details,
-                identifier,
-                start_url: sso.start_url.clone(),
-                region: sso.region.clone(),
-            },
-        ))
+        let now = Instant::now();
+        let budget = details.expires_in.min(MAX_POLL_DURATION);
+        let pending = PendingSsoSignIn {
+            provider,
+            client,
+            device_code: details.device_code,
+            identifier,
+            start_url: sso.start_url.clone(),
+            region: sso.region.clone(),
+            deadline: now + budget,
+            pacing: Mutex::new(Pacing {
+                next_poll: now + details.interval.max(Duration::from_secs(1)),
+                interval: details.interval.max(Duration::from_secs(1)),
+            }),
+        };
+        Ok((authorization, pending))
     }
 }
 
@@ -217,13 +217,20 @@ fn unsupported(message: &str) -> BoxError {
 
 /// A device-authorization request that has been started and is waiting on
 /// the user to approve it in a browser.
-pub struct PendingSsoSignIn {
+pub(crate) struct PendingSsoSignIn {
     provider: Arc<dyn SsoOidcProvider>,
     client: RegisteredClient,
-    details: DeviceAuthorizationDetails,
+    device_code: String,
     identifier: String,
     start_url: String,
     region: String,
+    deadline: Instant,
+    pacing: Mutex<Pacing>,
+}
+
+struct Pacing {
+    next_poll: Instant,
+    interval: Duration,
 }
 
 impl std::fmt::Debug for PendingSsoSignIn {
@@ -240,58 +247,59 @@ impl std::fmt::Debug for PendingSsoSignIn {
 }
 
 impl PendingSsoSignIn {
-    /// Polls IAM Identity Center until the user completes the browser step,
-    /// the device code expires, or the poll ceiling is hit, then caches the
-    /// resulting token where the AWS SDK's credential chain expects it.
-    pub async fn wait_for_completion(&self) -> Result<(), BoxError> {
-        self.complete_into(&home_dir()).await
+    /// Makes one poll once the pacing interval has elapsed. Returns `true`
+    /// after the user approved the sign-in and the token is cached under
+    /// `home`, `false` while still pending, and errors once the device code
+    /// lifetime or the poll ceiling has passed.
+    pub(crate) async fn try_complete_into(&self, home: &Path) -> Result<bool, BoxError> {
+        let next_poll = self.pacing.lock().expect("pacing lock").next_poll;
+        tokio::time::sleep_until(next_poll).await;
+        let slow_down = match self
+            .provider
+            .create_token(&self.client, &self.device_code)
+            .await?
+        {
+            TokenPoll::Ready(token) => {
+                write_cache_token_at(
+                    &sso_cache_path(&self.identifier, home),
+                    &self.start_url,
+                    &self.region,
+                    &self.client,
+                    &token,
+                )?;
+                return Ok(true);
+            }
+            TokenPoll::Pending => false,
+            TokenPoll::SlowDown => true,
+        };
+        self.schedule_next_poll(slow_down)?;
+        Ok(false)
     }
 
-    async fn complete_into(&self, home: &Path) -> Result<(), BoxError> {
-        let token = self.poll_until_ready().await?;
-        write_cache_token_at(
-            &sso_cache_path(&self.identifier, home),
-            &self.start_url,
-            &self.region,
-            &self.client,
-            &token,
-        )?;
-        Ok(())
-    }
-
-    async fn poll_until_ready(&self) -> Result<IssuedToken, BoxError> {
-        let budget = self.details.expires_in.min(MAX_POLL_DURATION);
-        let deadline = tokio::time::Instant::now() + budget;
-        let mut interval = self.details.interval.max(Duration::from_secs(1));
-        loop {
-            match self
-                .provider
-                .create_token(&self.client, &self.details.device_code)
-                .await?
-            {
-                TokenPoll::Ready(token) => return Ok(token),
-                TokenPoll::Pending => {}
-                TokenPoll::SlowDown => interval += Duration::from_secs(5),
-            }
-            if tokio::time::Instant::now() >= deadline {
-                return Err(std::io::Error::other(
-                    "Browser sign-in was not approved in time. Choose Sign in again to get a new code.",
-                )
-                .into());
-            }
-            tokio::time::sleep(interval).await;
+    fn schedule_next_poll(&self, slow_down: bool) -> Result<(), BoxError> {
+        if Instant::now() >= self.deadline {
+            return Err(std::io::Error::other(
+                "Browser sign-in was not approved in time. Choose Sign in again to get a new code.",
+            )
+            .into());
         }
+        let mut pacing = self.pacing.lock().expect("pacing lock");
+        if slow_down {
+            pacing.interval += Duration::from_secs(5);
+        }
+        pacing.next_poll = Instant::now() + pacing.interval;
+        Ok(())
     }
 }
 
-fn home_dir() -> PathBuf {
+pub(crate) fn home_dir() -> PathBuf {
     std::env::var_os("HOME")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
         .unwrap_or_default()
 }
 
-fn sso_cache_path(identifier: &str, home: &Path) -> PathBuf {
+pub(crate) fn sso_cache_path(identifier: &str, home: &Path) -> PathBuf {
     home.join(".aws/sso/cache").join(format!(
         "{}.json",
         hex::encode(Sha1::digest(identifier.as_bytes()))
@@ -571,7 +579,7 @@ fn oidc_error(operation: &str, code: Option<&str>, detail: &str) -> BoxError {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::sync::Mutex;
 
@@ -719,13 +727,13 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    struct FakeProvider {
-        register_calls: Mutex<u32>,
+    pub(crate) struct FakeProvider {
+        pub(crate) register_calls: Mutex<u32>,
         interval: Duration,
         create_token_outcomes: Mutex<Vec<Result<TokenPoll, String>>>,
     }
 
-    fn fake_provider(
+    pub(crate) fn fake_provider(
         interval: Duration,
         outcomes: Vec<Result<TokenPoll, String>>,
     ) -> Arc<FakeProvider> {
@@ -736,7 +744,7 @@ mod tests {
         })
     }
 
-    fn issued_token() -> IssuedToken {
+    pub(crate) fn issued_token() -> IssuedToken {
         IssuedToken {
             access_token: "access-token".into(),
             expires_in: Duration::from_secs(3600),
@@ -814,7 +822,7 @@ mod tests {
         );
         let pending = begin_pending(provider.clone(), Some("corp")).await;
 
-        pending.complete_into(home.path()).await.unwrap();
+        assert!(pending.try_complete_into(home.path()).await.unwrap());
 
         assert_eq!(*provider.register_calls.lock().unwrap(), 1);
         let cache_dir = home.path().join(".aws/sso/cache");
@@ -843,13 +851,14 @@ mod tests {
             Duration::from_secs(2),
             vec![Ok(TokenPoll::Pending), Ok(TokenPoll::Ready(issued_token()))],
         );
+        let home = tempfile::tempdir().unwrap();
         let pending = begin_pending(provider, None).await;
 
         let started = tokio::time::Instant::now();
-        let token = pending.poll_until_ready().await.unwrap();
+        assert!(!pending.try_complete_into(home.path()).await.unwrap());
+        assert!(pending.try_complete_into(home.path()).await.unwrap());
 
-        assert_eq!(token.access_token, "access-token");
-        assert_eq!(started.elapsed(), Duration::from_secs(2));
+        assert_eq!(started.elapsed(), Duration::from_secs(4));
     }
 
     #[tokio::test(start_paused = true)]
@@ -862,13 +871,14 @@ mod tests {
                 Ok(TokenPoll::Ready(issued_token())),
             ],
         );
+        let home = tempfile::tempdir().unwrap();
         let pending = begin_pending(provider, None).await;
 
         let started = tokio::time::Instant::now();
-        pending.poll_until_ready().await.unwrap();
+        while !pending.try_complete_into(home.path()).await.unwrap() {}
 
         // 1s initial interval, then 6s after the first slow_down and 11s after the second.
-        assert_eq!(started.elapsed(), Duration::from_secs(17));
+        assert_eq!(started.elapsed(), Duration::from_secs(18));
     }
 
     #[test]
@@ -935,7 +945,7 @@ mod tests {
         );
         let pending = begin_pending(provider, Some("corp")).await;
 
-        assert!(pending.complete_into(home.path()).await.is_err());
+        assert!(pending.try_complete_into(home.path()).await.is_err());
         assert!(home.path().join(".aws").is_file());
     }
 
@@ -984,7 +994,12 @@ mod tests {
             .begin(&AwsCredentialKind::Sso(sso_config(None)))
             .await
             .unwrap();
-        let error = pending.poll_until_ready().await.unwrap_err();
+        let home = tempfile::tempdir().unwrap();
+        let error = loop {
+            if let Err(error) = pending.try_complete_into(home.path()).await {
+                break error;
+            }
+        };
         assert!(error.to_string().contains("not approved in time"));
     }
 

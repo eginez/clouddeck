@@ -1,3 +1,4 @@
+mod auth;
 mod error;
 mod field;
 mod host;
@@ -7,10 +8,11 @@ mod instance;
 mod provider;
 mod selection;
 
+pub use auth::{AuthAnswer, AuthInput, AuthMethod, AuthStatus, AuthStep, PromptField};
 pub use error::{ErrorKind, ProviderError};
 pub use field::{CoreField, FieldDef, FieldKind, FieldSource, MatchMode};
 pub use host::{Call, Host, LogLevel};
-pub use ids::{ConnectionId, DimensionId, INSTANCES, KindId, ResourceId, ValueId};
+pub use ids::{ConnectionId, DimensionId, FlowId, INSTANCES, KindId, ResourceId, ValueId};
 pub use inspector::{InspectorRowDef, InspectorSectionDef, InspectorValue};
 pub use instance::{Address, AddressKind, ExtrasSection, Instance, Label, State, StateKind};
 pub use provider::{CellFailure, Connection, KindInfo, ListResult, Provider, ProviderInfo};
