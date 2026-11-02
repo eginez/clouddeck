@@ -25,6 +25,9 @@ pub enum LoadError {
         name: &'static str,
         source: libloading::Error,
     },
+    RelativePath {
+        path: PathBuf,
+    },
     ApiVersion {
         found: u32,
     },
@@ -42,6 +45,11 @@ impl fmt::Display for LoadError {
             LoadError::MissingSymbol { name, source } => {
                 write!(f, "extension does not export {name}: {source}")
             }
+            LoadError::RelativePath { path } => write!(
+                f,
+                "extension path {} must be absolute; a bare name is searched for on LD_LIBRARY_PATH",
+                path.display()
+            ),
             LoadError::ApiVersion { found } => write!(
                 f,
                 "extension targets boundary version {found}; this host requires {API_VERSION}"
@@ -61,7 +69,9 @@ impl std::error::Error for LoadError {
             LoadError::Open { source, .. } | LoadError::MissingSymbol { source, .. } => {
                 Some(source)
             }
-            LoadError::ApiVersion { .. } | LoadError::BuildInfo { .. } => None,
+            LoadError::RelativePath { .. }
+            | LoadError::ApiVersion { .. }
+            | LoadError::BuildInfo { .. } => None,
         }
     }
 }
@@ -79,6 +89,11 @@ impl LoadedExtension {
 }
 
 pub fn load_extension(path: &Path) -> Result<LoadedExtension, LoadError> {
+    if !path.is_absolute() {
+        return Err(LoadError::RelativePath {
+            path: path.to_path_buf(),
+        });
+    }
     let library = unsafe { Library::new(path) }.map_err(|source| LoadError::Open {
         path: path.to_path_buf(),
         source,
