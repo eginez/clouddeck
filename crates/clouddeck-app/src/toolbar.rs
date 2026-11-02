@@ -172,7 +172,8 @@ mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    use clouddeck_core::{EC2Instance, EC2InstanceTag, MockComputeService};
+    use crate::test_support::ec2_owned;
+    use clouddeck_core::MockComputeService;
     use gpui::{
         Bounds, Entity, TestAppContext, VisualTestContext, WindowBounds, WindowOptions, point, size,
     };
@@ -182,45 +183,11 @@ mod tests {
 
     type Events = Rc<RefCell<Vec<ToolbarEvent>>>;
 
-    fn instance(id: &str, name: &str, state: &str, owner: Option<&str>) -> EC2Instance {
-        let mut tags = vec![EC2InstanceTag {
-            key: "Name".to_string(),
-            value: name.to_string(),
-        }];
-        if let Some(owner) = owner {
-            tags.push(EC2InstanceTag {
-                key: "Owner".to_string(),
-                value: owner.to_string(),
-            });
-        }
-        EC2Instance {
-            instance_id: id.to_string(),
-            region: Some("us-east-1".to_string()),
-            instance_type: Some("t3.medium".to_string()),
-            state: Some(state.to_string()),
-            launch_time: None,
-            public_ip_address: None,
-            private_ip_address: None,
-            vpc_id: None,
-            subnet_id: None,
-            security_groups: vec![],
-            tags,
-            iam_instance_profile_arn: None,
-            private_dns_name: None,
-            public_dns_name: None,
-            availability_zone: None,
-            image_id: None,
-            key_name: None,
-            architecture: None,
-            state_transition_reason: None,
-        }
-    }
-
     fn three_instance_view_model() -> InstanceListViewModel {
         let instances = vec![
-            instance("i-1", "api-server", "running", Some("esteban")),
-            instance("i-2", "bastion", "stopped", None),
-            instance("i-3", "worker", "stopped", None),
+            ec2_owned("i-1", "api-server", "running", Some("esteban")),
+            ec2_owned("i-2", "bastion", "stopped", None),
+            ec2_owned("i-3", "worker", "stopped", None),
         ];
         let mut vm = InstanceListViewModel::new(Box::new(MockComputeService::new(instances, None)));
         let rt = tokio::runtime::Builder::new_current_thread()

@@ -3,9 +3,9 @@
 use std::time::SystemTime;
 
 use clouddeck_core::{
-    EC2Instance, InspectorRow, InspectorSection, Instance, NO_TAGS_TEXT, OPEN_IN_CONSOLE_FLASH,
-    console_url_for, copied_flash, inspector_sections, inspector_summary, inspector_tags,
-    inspector_title, security_group_rows, security_groups_title, tags_title, tags_toggle_text,
+    InspectorRow, InspectorSection, Instance, NO_TAGS_TEXT, OPEN_IN_CONSOLE_FLASH, console_url_for,
+    copied_flash, inspector_sections, inspector_summary, inspector_tags, inspector_title,
+    native_id, security_group_rows, security_groups_title, tags_title, tags_toggle_text,
     visible_tags,
 };
 use gpui::{
@@ -47,7 +47,7 @@ impl InspectorPane {
             .update(cx, |state, cx| state.set_flash(flash, cx));
     }
 
-    fn open_console(&self, instance: &EC2Instance, cx: &mut Context<Self>) {
+    fn open_console(&self, instance: &Instance, cx: &mut Context<Self>) {
         let flash = match console_url_for(instance) {
             Ok(url) => {
                 cx.open_url(&url);
@@ -86,11 +86,10 @@ impl Render for InspectorPane {
             return div().into_any_element();
         };
         let tags_show_all = state.tags_show_all;
-        let neutral = Instance::from(&instance);
-        let sections = inspector_sections(&neutral);
-        let summary = inspector_summary(&neutral, SystemTime::now());
+        let sections = inspector_sections(&instance);
+        let summary = inspector_summary(&instance, SystemTime::now());
 
-        let title = inspector_title(&neutral);
+        let title = inspector_title(&instance);
         record(
             cx,
             "inspector.title",
@@ -137,8 +136,8 @@ impl Render for InspectorPane {
                             .enumerate()
                             .map(|(index, section)| section_view(index, section, &palette, cx)),
                     )
-                    .child(security_groups(&neutral, &palette, cx))
-                    .child(tags(&neutral, tags_show_all, &palette, cx))
+                    .child(security_groups(&instance, &palette, cx))
+                    .child(tags(&instance, tags_show_all, &palette, cx))
                     .child(actions(&instance, &palette, cx)),
             )
             .into_any_element()
@@ -146,7 +145,7 @@ impl Render for InspectorPane {
 }
 
 fn header(
-    instance: &EC2Instance,
+    instance: &Instance,
     title: Option<String>,
     summary: String,
     palette: &Palette,
@@ -159,7 +158,7 @@ fn header(
     .font_weight(FontWeight::SEMIBOLD)
     .debug_selector(|| "inspector.title".into());
 
-    let state_dot = palette.state_dot(instance.state.as_deref().unwrap_or(""));
+    let state_dot = palette.state_dot(&instance.state.raw);
 
     div()
         .flex()
@@ -200,12 +199,12 @@ fn header(
                     div()
                         .font_family(MONO_FONT)
                         .text_color(palette.dim)
-                        .child(instance.instance_id.clone()),
+                        .child(native_id(instance).to_string()),
                 )
                 .child(
                     copy_button(
                         "inspector.copy-id".into(),
-                        instance.instance_id.clone(),
+                        native_id(instance).to_string(),
                         palette,
                         cx,
                     )
@@ -416,11 +415,11 @@ fn tag_chip(
 }
 
 fn actions(
-    instance: &EC2Instance,
+    instance: &Instance,
     palette: &Palette,
     cx: &Context<InspectorPane>,
 ) -> impl IntoElement {
-    let instance_id = instance.instance_id.clone();
+    let instance_id = native_id(instance).to_string();
     let console_instance = instance.clone();
     div()
         .flex()
@@ -503,9 +502,10 @@ fn copy_button(
 mod tests {
     use super::*;
     use crate::layout_check::states::{self, State};
+    use crate::test_support::ec2_inspector_fixture;
     use crate::ui_record::recorded;
     use crate::view_models::InstanceListViewModel;
-    use clouddeck_core::{EC2InstanceTag, EC2SecurityGroup, MockComputeService};
+    use clouddeck_core::MockComputeService;
     use gpui::{
         Bounds, TestAppContext, VisualTestContext, WindowBounds, WindowOptions, point, size,
     };
@@ -514,77 +514,6 @@ mod tests {
 
     const RUNNING_KEY: &str = "us-east-1:i-0123456789abcdef0";
     const UNTAGGED_KEY: &str = "us-east-1:i-0d2fc5662eb309e50";
-
-    fn tag(key: &str, value: &str) -> EC2InstanceTag {
-        EC2InstanceTag {
-            key: key.to_string(),
-            value: value.to_string(),
-        }
-    }
-
-    fn blank(id: &str) -> EC2Instance {
-        EC2Instance {
-            instance_id: id.to_string(),
-            region: Some("us-east-1".to_string()),
-            instance_type: None,
-            state: None,
-            launch_time: None,
-            public_ip_address: None,
-            private_ip_address: None,
-            vpc_id: None,
-            subnet_id: None,
-            security_groups: vec![],
-            tags: vec![],
-            iam_instance_profile_arn: None,
-            private_dns_name: None,
-            public_dns_name: None,
-            availability_zone: None,
-            image_id: None,
-            key_name: None,
-            architecture: None,
-            state_transition_reason: None,
-        }
-    }
-
-    fn running_with_ten_tags() -> EC2Instance {
-        let mut tags = vec![tag("Name", "api-gateway-01")];
-        tags.extend((1..=9).map(|n| tag(&format!("k{n}"), &n.to_string())));
-        EC2Instance {
-            state: Some("running".to_string()),
-            instance_type: Some("t3.medium".to_string()),
-            availability_zone: Some("us-east-1a".to_string()),
-            private_ip_address: Some("10.0.4.3".to_string()),
-            private_dns_name: Some("ip-10-0-4-3.ec2.internal".to_string()),
-            vpc_id: Some("vpc-098f0fdb8".to_string()),
-            subnet_id: Some("subnet-0d99b9061".to_string()),
-            image_id: Some("ami-027d083c0".to_string()),
-            key_name: Some("ops-ed25519".to_string()),
-            security_groups: vec![
-                EC2SecurityGroup {
-                    group_id: Some("sg-0d2fc5662".to_string()),
-                    group_name: Some("web-sg".to_string()),
-                },
-                EC2SecurityGroup {
-                    group_id: Some("sg-074bb5deb".to_string()),
-                    group_name: Some("monitoring-sg".to_string()),
-                },
-            ],
-            tags,
-            ..blank("i-0123456789abcdef0")
-        }
-    }
-
-    fn untagged_stopped() -> EC2Instance {
-        EC2Instance {
-            state: Some("stopped".to_string()),
-            instance_type: Some("m6i.large".to_string()),
-            ..blank("i-0d2fc5662eb309e50")
-        }
-    }
-
-    fn fixture() -> Vec<EC2Instance> {
-        vec![running_with_ten_tags(), untagged_stopped()]
-    }
 
     fn wait_until(cx: &mut TestAppContext, mut condition: impl FnMut(&mut TestAppContext) -> bool) {
         for _ in 0..200 {
@@ -597,8 +526,11 @@ mod tests {
         panic!("condition was not satisfied within the timeout");
     }
 
-    fn loaded_state(cx: &mut TestAppContext, instances: Vec<EC2Instance>) -> Entity<FleetState> {
-        let vm = InstanceListViewModel::new(Box::new(MockComputeService::new(instances, None)));
+    fn loaded_state(cx: &mut TestAppContext) -> Entity<FleetState> {
+        let vm = InstanceListViewModel::new(Box::new(MockComputeService::new(
+            ec2_inspector_fixture(),
+            None,
+        )));
         let state = cx.new(|_| FleetState::new(vm, "prod-readonly".to_string(), true));
         state.update(cx, |state, cx| state.refresh(cx));
         wait_until(cx, |cx| {
@@ -659,7 +591,7 @@ mod tests {
 
     #[gpui::test]
     fn nothing_selected_renders_no_inspector(cx: &mut TestAppContext) {
-        let state = loaded_state(cx, fixture());
+        let state = loaded_state(cx);
 
         let cx = open_pane(cx, state, None);
 
@@ -668,7 +600,7 @@ mod tests {
 
     #[gpui::test]
     fn running_instance_renders_header_sections_groups_and_tags(cx: &mut TestAppContext) {
-        let state = loaded_state(cx, fixture());
+        let state = loaded_state(cx);
         select(&state, RUNNING_KEY, cx);
 
         let cx = open_pane(cx, state, None);
@@ -700,7 +632,7 @@ mod tests {
 
     #[gpui::test]
     fn show_all_tags_reveals_the_rest(cx: &mut TestAppContext) {
-        let state = loaded_state(cx, fixture());
+        let state = loaded_state(cx);
         select(&state, RUNNING_KEY, cx);
         state.update(cx, |state, _| state.tags_show_all = true);
 
@@ -711,7 +643,7 @@ mod tests {
 
     #[gpui::test]
     fn untagged_instance_renders_the_no_tags_explanation(cx: &mut TestAppContext) {
-        let state = loaded_state(cx, fixture());
+        let state = loaded_state(cx);
         select(&state, UNTAGGED_KEY, cx);
 
         let cx = open_pane(cx, state, None);
@@ -722,7 +654,7 @@ mod tests {
 
     #[gpui::test]
     fn stale_note_renders_when_set(cx: &mut TestAppContext) {
-        let state = loaded_state(cx, fixture());
+        let state = loaded_state(cx);
         select(&state, RUNNING_KEY, cx);
         let note = clouddeck_core::stale_note("12:01", "eu-central-1");
 
@@ -741,7 +673,7 @@ mod tests {
 
     #[gpui::test]
     fn copy_id_writes_the_instance_id_to_the_clipboard(cx: &mut TestAppContext) {
-        let state = loaded_state(cx, fixture());
+        let state = loaded_state(cx);
         select(&state, RUNNING_KEY, cx);
         let cx = open_pane(cx, state.clone(), None);
 
@@ -756,7 +688,7 @@ mod tests {
 
     #[gpui::test]
     fn close_deselects_the_instance(cx: &mut TestAppContext) {
-        let state = loaded_state(cx, fixture());
+        let state = loaded_state(cx);
         select(&state, RUNNING_KEY, cx);
         let cx = open_pane(cx, state.clone(), None);
 
@@ -770,7 +702,7 @@ mod tests {
 
     #[gpui::test]
     fn tags_toggle_reveals_all_tags(cx: &mut TestAppContext) {
-        let state = loaded_state(cx, fixture());
+        let state = loaded_state(cx);
         select(&state, RUNNING_KEY, cx);
         let cx = open_pane(cx, state.clone(), None);
 
@@ -782,7 +714,7 @@ mod tests {
 
     #[gpui::test]
     fn clicking_a_tag_searches_its_value(cx: &mut TestAppContext) {
-        let state = loaded_state(cx, fixture());
+        let state = loaded_state(cx);
         select(&state, RUNNING_KEY, cx);
         let cx = open_pane(cx, state.clone(), None);
 
@@ -793,7 +725,7 @@ mod tests {
 
     #[gpui::test]
     fn open_in_console_flashes_for_a_valid_region(cx: &mut TestAppContext) {
-        let state = loaded_state(cx, fixture());
+        let state = loaded_state(cx);
         select(&state, RUNNING_KEY, cx);
         let cx = open_pane(cx, state.clone(), None);
 

@@ -3,8 +3,8 @@
 use super::fields::{provider_field, provider_fields};
 use super::term::{Term, TermKind, parse};
 use super::tokenize::QueryField;
-use crate::models::EC2Instance;
-use crate::{Instance, MatchMode};
+use crate::instance::native_id;
+use crate::{AddressKind, Instance, MatchMode};
 use chrono::{DateTime, Utc};
 use std::time::SystemTime;
 
@@ -84,15 +84,15 @@ impl CompiledQuery {
     }
 
     /// Whether `instance` satisfies every term.
-    pub fn matches(&self, instance: &EC2Instance) -> bool {
-        let neutral = Instance::from(instance);
-        self.terms.iter().zip(&self.ignored).all(|(term, ignored)| {
-            *ignored || self.term_matches(term, instance, &neutral) != term.negated
-        })
+    pub fn matches(&self, instance: &Instance) -> bool {
+        self.terms
+            .iter()
+            .zip(&self.ignored)
+            .all(|(term, ignored)| *ignored || self.term_matches(term, instance) != term.negated)
     }
 
     /// Clones of the matching instances, in input order.
-    pub fn filter_instances(&self, instances: &[EC2Instance]) -> Vec<EC2Instance> {
+    pub fn filter_instances(&self, instances: &[Instance]) -> Vec<Instance> {
         instances
             .iter()
             .filter(|instance| self.matches(instance))
@@ -100,10 +100,10 @@ impl CompiledQuery {
             .collect()
     }
 
-    fn term_matches(&self, term: &Term, instance: &EC2Instance, neutral: &Instance) -> bool {
+    fn term_matches(&self, term: &Term, instance: &Instance) -> bool {
         match &term.kind {
             TermKind::Word { text } | TermKind::Unknown { text, .. } => {
-                haystack(instance, neutral).contains(&text.to_lowercase())
+                haystack(instance).contains(&text.to_lowercase())
             }
             TermKind::Field {
                 field: QueryField::Age,
@@ -114,7 +114,7 @@ impl CompiledQuery {
                 .is_none_or(|age| age_matches(instance, age, self.now)),
             TermKind::Field { field, value, .. } => field_values(value)
                 .iter()
-                .any(|v| field_matches(*field, instance, neutral, v)),
+                .any(|v| field_matches(*field, instance, v)),
             TermKind::TagShorthand { key, value, .. } => field_values(value)
                 .iter()
                 .any(|v| tag_value_matches(instance, key, v)),
@@ -176,12 +176,12 @@ fn parse_age(value: &str) -> Option<(char, f64)> {
 }
 
 /// Whether the launch time is older (`>`) or younger (`<`) than the parsed limit.
-fn age_matches(instance: &EC2Instance, value: &str, now: SystemTime) -> bool {
+fn age_matches(instance: &Instance, value: &str, now: SystemTime) -> bool {
     let (direction, limit_days) = match parse_age(value) {
         Some(parsed) => parsed,
         None => return false,
     };
-    let Some(launch) = instance.launch_time else {
+    let Some(launch) = instance.created else {
         return false;
     };
     let age_days = match now.duration_since(launch) {
@@ -194,14 +194,13 @@ fn age_matches(instance: &EC2Instance, value: &str, now: SystemTime) -> bool {
     }
 }
 
-fn has_matches(instance: &EC2Instance, value: &str) -> bool {
+fn has_matches(instance: &Instance, value: &str) -> bool {
     match value {
         "public-ip" => instance
-            .public_ip_address
-            .as_deref()
+            .address(AddressKind::Public)
             .is_some_and(|ip| !ip.is_empty()),
-        "tags" => !instance.tags.is_empty(),
-        "name" => instance.name().is_some_and(|name| !name.is_empty()),
+        "tags" => !instance.labels.is_empty(),
+        "name" => instance.name.as_deref().is_some_and(|name| !name.is_empty()),
         _ => false,
     }
 }
@@ -214,38 +213,35 @@ fn field_values(value: &str) -> Vec<String> {
         .collect()
 }
 
-fn field_text(value: &Option<String>) -> String {
-    value.as_deref().unwrap_or("").to_lowercase()
+fn field_text(value: Option<&str>) -> String {
+    value.unwrap_or("").to_lowercase()
 }
 
-fn field_matches(
-    field: QueryField,
-    instance: &EC2Instance,
-    neutral: &Instance,
-    value: &str,
-) -> bool {
-    let prefix_or_glob = |text: &Option<String>| {
+fn field_matches(field: QueryField, instance: &Instance, value: &str) -> bool {
+    let private = instance.address(AddressKind::Private);
+    let public = instance.address(AddressKind::Public);
+    let prefix_or_glob = |text: Option<&str>| {
         if value.contains('*') {
-            glob(text.as_deref().unwrap_or(""), value)
+            glob(text.unwrap_or(""), value)
         } else {
             field_text(text).starts_with(value)
         }
     };
     match field {
-        QueryField::Name => glob(instance.name().unwrap_or(""), value),
-        QueryField::Id => glob(&instance.instance_id, value),
-        QueryField::State => field_text(&instance.state).starts_with(value),
-        QueryField::Region => field_text(&instance.region).starts_with(value),
-        QueryField::Type => prefix_or_glob(&instance.instance_type),
-        QueryField::Az => prefix_or_glob(&instance.availability_zone),
+        QueryField::Name => glob(instance.name.as_deref().unwrap_or(""), value),
+        QueryField::Id => glob(native_id(instance), value),
+        QueryField::State => field_text(Some(&instance.state.raw)).starts_with(value),
+        QueryField::Region => field_text(instance.region.as_deref()).starts_with(value),
+        QueryField::Type => prefix_or_glob(instance.instance_type.as_deref()),
+        QueryField::Az => prefix_or_glob(instance.location.as_deref()),
         QueryField::Ip => {
-            field_text(&instance.private_ip_address).contains(value)
-                || field_text(&instance.public_ip_address).contains(value)
+            field_text(private).contains(value) || field_text(public).contains(value)
         }
-        QueryField::Private => field_text(&instance.private_ip_address).contains(value),
-        QueryField::Public => field_text(&instance.public_ip_address).contains(value),
+        QueryField::Private => field_text(private).contains(value),
+        QueryField::Public => field_text(public).contains(value),
         QueryField::Provider(name) => provider_field(name).is_some_and(|def| {
-            (def.getter)(neutral)
+            def.source
+                .values(instance)
                 .iter()
                 .any(|text| mode_matches(def.match_mode, text, value))
         }),
@@ -267,14 +263,16 @@ fn mode_matches(mode: MatchMode, text: &str, value: &str) -> bool {
 }
 
 /// Whether some tag matches `key` (as in `tag:Team`) or `key=value` (value is a substring test).
-fn tag_field_matches(instance: &EC2Instance, spec: &str) -> bool {
+fn tag_field_matches(instance: &Instance, spec: &str) -> bool {
     let (key, wanted) = match spec.split_once('=') {
         Some((key, wanted)) => (unquote(key), Some(unquote(wanted))),
         None => (unquote(spec), None),
     };
-    instance.tags.iter().any(|tag| {
-        tag.key.to_lowercase() == key
-            && wanted.is_none_or(|wanted| tag.value.to_lowercase().contains(wanted))
+    instance.labels.iter().any(|label| {
+        label.key.to_lowercase() == key
+            && wanted.is_none_or(|wanted| {
+                label.value.as_deref().unwrap_or("").to_lowercase().contains(wanted)
+            })
     })
 }
 
@@ -285,18 +283,23 @@ fn unquote(text: &str) -> &str {
 }
 
 /// Whether a tag named `key` (ignoring case) has a value containing `value`.
-fn tag_value_matches(instance: &EC2Instance, key: &str, value: &str) -> bool {
+fn tag_value_matches(instance: &Instance, key: &str, value: &str) -> bool {
     let key = key.to_lowercase();
-    instance
-        .tags
-        .iter()
-        .any(|tag| tag.key.to_lowercase() == key && tag.value.to_lowercase().contains(value))
+    instance.labels.iter().any(|label| {
+        label.key.to_lowercase() == key
+            && label
+                .value
+                .as_deref()
+                .unwrap_or("")
+                .to_lowercase()
+                .contains(value)
+    })
 }
 
-fn haystack(instance: &EC2Instance, neutral: &Instance) -> String {
-    let field = |value: &Option<String>| value.as_deref().unwrap_or("").to_string();
+fn haystack(instance: &Instance) -> String {
+    let field = |value: Option<&str>| value.unwrap_or("").to_string();
     let launch = instance
-        .launch_time
+        .created
         .map(|time| {
             DateTime::<Utc>::from(time)
                 .format("%Y-%m-%d %H:%M")
@@ -304,24 +307,24 @@ fn haystack(instance: &EC2Instance, neutral: &Instance) -> String {
         })
         .unwrap_or_default();
     let mut parts = vec![
-        instance.name().unwrap_or("").to_string(),
-        instance.instance_id.clone(),
-        field(&instance.state),
-        field(&instance.instance_type),
-        field(&instance.availability_zone),
-        field(&instance.region),
-        field(&instance.private_ip_address),
-        field(&instance.public_ip_address),
+        field(instance.name.as_deref()),
+        native_id(instance).to_string(),
+        instance.state.raw.clone(),
+        field(instance.instance_type.as_deref()),
+        field(instance.location.as_deref()),
+        field(instance.region.as_deref()),
+        field(instance.address(AddressKind::Private)),
+        field(instance.address(AddressKind::Public)),
         launch,
     ];
     for def in provider_fields().iter().filter(|def| def.search) {
-        parts.extend((def.getter)(neutral));
+        parts.extend(def.source.values(instance));
     }
     parts.extend(
         instance
-            .tags
+            .labels
             .iter()
-            .map(|tag| format!("{} {}", tag.key, tag.value)),
+            .map(|label| format!("{} {}", label.key, label.value.as_deref().unwrap_or(""))),
     );
     parts.join(" ").to_lowercase()
 }
@@ -351,18 +354,17 @@ pub(crate) fn glob(text: &str, pattern: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::EC2InstanceTag;
-    use crate::query::fixtures::{fleet, now};
+    use crate::instance::{Instance, Label, native_id};
+    use crate::query::fixtures::{fleet_instances, now};
     use crate::query::known_tag_keys;
 
     fn ids(query: &str) -> Vec<u8> {
-        let fleet = fleet();
+        let fleet = fleet_instances();
         compile(query, &known_tag_keys(&fleet), now())
             .filter_instances(&fleet)
             .iter()
             .map(|instance| {
-                instance
-                    .instance_id
+                native_id(instance)
                     .chars()
                     .last()
                     .unwrap()
@@ -374,7 +376,7 @@ mod tests {
 
     #[test]
     fn empty_query_matches_everything() {
-        let fleet = fleet();
+        let fleet = fleet_instances();
         let query = compile("", &known_tag_keys(&fleet), now());
         assert_eq!(ids(""), vec![1, 2, 3, 4, 5]);
         assert!(query.errors().is_empty());
@@ -408,7 +410,7 @@ mod tests {
 
     #[test]
     fn unknown_field_is_searched_as_text_with_error() {
-        let fleet = fleet();
+        let fleet = fleet_instances();
         let query = compile("colour:red", &known_tag_keys(&fleet), now());
         assert_eq!(ids("colour:red"), Vec::<u8>::new());
         assert_eq!(
@@ -422,7 +424,7 @@ mod tests {
 
     #[test]
     fn unknown_field_error_carries_term_index() {
-        let fleet = fleet();
+        let fleet = fleet_instances();
         let query = compile("web colour:x", &known_tag_keys(&fleet), now());
         assert_eq!(query.errors().len(), 1);
         assert_eq!(query.errors()[0].term_index, 1);
@@ -513,10 +515,9 @@ mod tests {
 
     #[test]
     fn recognised_field_count_cases() {
-        let fleet = fleet();
-        let count = |query: &str| {
-            compile(query, &known_tag_keys(&fleet), now()).recognised_field_count()
-        };
+        let fleet = fleet_instances();
+        let count =
+            |query: &str| compile(query, &known_tag_keys(&fleet), now()).recognised_field_count();
         assert_eq!(count("state:stopped type:t3 web"), 2);
         assert_eq!(count("-state:stopped"), 1);
         assert_eq!(count("state:"), 0);
@@ -574,7 +575,7 @@ mod tests {
 
     #[test]
     fn recognised_field_count_counts_tags() {
-        let fleet = fleet();
+        let fleet = fleet_instances();
         let count =
             |query: &str| compile(query, &known_tag_keys(&fleet), now()).recognised_field_count();
         assert_eq!(count("owner:esteban tag:Team web"), 2);
@@ -593,7 +594,7 @@ mod tests {
 
     #[test]
     fn has_with_unknown_key_is_ignored_with_error() {
-        let fleet = fleet();
+        let fleet = fleet_instances();
         let query = compile("has:ipv6", &known_tag_keys(&fleet), now());
         assert_eq!(ids("has:ipv6"), vec![1, 2, 3, 4, 5]);
         assert_eq!(
@@ -618,7 +619,7 @@ mod tests {
 
     #[test]
     fn invalid_age_is_ignored_with_error() {
-        let fleet = fleet();
+        let fleet = fleet_instances();
         let help = "age needs > or <, a number and h, d or w. Example: age:>30d";
         let error = |query: &str| {
             compile(query, &known_tag_keys(&fleet), now())
@@ -641,7 +642,7 @@ mod tests {
 
     #[test]
     fn recognised_field_count_skips_ignored_terms() {
-        let fleet = fleet();
+        let fleet = fleet_instances();
         let query = compile(
             "state:stopped owner:esteban web colour:x age:bad -has:tags state:",
             &known_tag_keys(&fleet),
@@ -652,35 +653,19 @@ mod tests {
         assert_eq!(indexes, vec![3, 4]);
     }
 
-    fn team_fleet() -> Vec<EC2Instance> {
+    fn team_fleet() -> Vec<Instance> {
         [
             ("i-0000000000000011", "Data Platform"),
             ("i-0000000000000012", "platform"),
         ]
         .into_iter()
-        .map(|(id, team)| EC2Instance {
-            instance_id: id.to_string(),
-            region: None,
-            instance_type: None,
-            state: None,
-            launch_time: None,
-            public_ip_address: None,
-            private_ip_address: None,
-            vpc_id: None,
-            subnet_id: None,
-            security_groups: Vec::new(),
-            tags: vec![EC2InstanceTag {
+        .map(|(id, team)| Instance {
+            id: id.to_string(),
+            labels: vec![Label {
                 key: "Team".to_string(),
-                value: team.to_string(),
+                value: Some(team.to_string()),
             }],
-            availability_zone: None,
-            image_id: None,
-            key_name: None,
-            architecture: None,
-            state_transition_reason: None,
-            iam_instance_profile_arn: None,
-            private_dns_name: None,
-            public_dns_name: None,
+            ..Instance::default()
         })
         .collect()
     }
@@ -690,7 +675,7 @@ mod tests {
         compile(query, &known_tag_keys(&fleet), now())
             .filter_instances(&fleet)
             .into_iter()
-            .map(|instance| instance.instance_id)
+            .map(|instance| native_id(&instance).to_string())
             .collect()
     }
 

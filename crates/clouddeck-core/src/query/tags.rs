@@ -1,13 +1,13 @@
-use crate::models::EC2Instance;
+use crate::instance::Instance;
 
 /// Distinct tag keys that work as field names (e.g. `owner:esteban`),
 /// skipping `Name` (any ASCII case) and `aws:`-prefixed keys, first
 /// occurrence wins on case clashes, sorted ascending ignoring ASCII case.
-pub fn known_tag_keys(instances: &[EC2Instance]) -> Vec<String> {
+pub fn known_tag_keys(instances: &[Instance]) -> Vec<String> {
     let mut seen: Vec<String> = Vec::new();
     for instance in instances {
-        for tag in &instance.tags {
-            let key = &tag.key;
+        for label in &instance.labels {
+            let key = &label.key;
             if key.eq_ignore_ascii_case("Name") || key.starts_with("aws:") {
                 continue;
             }
@@ -23,13 +23,13 @@ pub fn known_tag_keys(instances: &[EC2Instance]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{EC2Instance, EC2InstanceTag};
+    use crate::instance::Label;
     use crate::query::fixtures;
 
     #[test]
     fn fixture_fleet_keys() {
         assert_eq!(
-            known_tag_keys(&fixtures::fleet()),
+            known_tag_keys(&fixtures::fleet_instances()),
             vec![
                 "CostCenter".to_string(),
                 "Environment".to_string(),
@@ -53,33 +53,17 @@ mod tests {
         assert_eq!(known_tag_keys(&instances), vec!["team".to_string()]);
     }
 
-    fn tagged(tags: &[(&str, &str)]) -> EC2Instance {
-        EC2Instance {
-            instance_id: "i-0000000000000009".to_string(),
-            region: None,
-            instance_type: None,
-            state: None,
-            launch_time: None,
-            public_ip_address: None,
-            private_ip_address: None,
-            vpc_id: None,
-            subnet_id: None,
-            security_groups: Vec::new(),
-            tags: tags
+    fn tagged(tags: &[(&str, &str)]) -> Instance {
+        Instance {
+            id: "i-0000000000000009".to_string(),
+            labels: tags
                 .iter()
-                .map(|(key, value)| EC2InstanceTag {
+                .map(|(key, value)| Label {
                     key: (*key).to_string(),
-                    value: (*value).to_string(),
+                    value: Some((*value).to_string()),
                 })
                 .collect(),
-            availability_zone: None,
-            image_id: None,
-            key_name: None,
-            architecture: None,
-            state_transition_reason: None,
-            iam_instance_profile_arn: None,
-            private_dns_name: None,
-            public_dns_name: None,
+            ..Instance::default()
         }
     }
 }

@@ -1,45 +1,61 @@
-use crate::{FieldDef, FieldKind, Instance, MatchMode};
+use crate::{FieldDef, FieldKind, FieldSource, MatchMode};
 
 pub fn aws_fields() -> Vec<FieldDef> {
     vec![
-        field("vpc", "VPC", "VPC id", true, true, |i| {
-            extra(i, "Network", "VPC")
-        }),
-        field("subnet", "Subnet", "subnet id", true, true, |i| {
-            extra(i, "Network", "Subnet")
-        }),
-        field("sg", "Security groups", "security group", true, true, |i| {
-            i.extras
-                .iter()
-                .find(|section| section.title == "Security groups")
-                .map(|section| {
-                    section
-                        .entries
-                        .iter()
-                        .flat_map(|(name, id)| [name.clone(), id.clone()])
-                        .collect()
-                })
-                .unwrap_or_default()
-        }),
-        field("ami", "AMI", "image id", true, true, |i| {
-            extra(i, "Instance", "AMI")
-        }),
-        field("key", "Key pair", "key pair", true, true, |i| {
-            extra(i, "Instance", "Key pair")
-        }),
+        field("vpc", "VPC", "VPC id", true, true, extra("Network", "VPC")),
+        field(
+            "subnet",
+            "Subnet",
+            "subnet id",
+            true,
+            true,
+            extra("Network", "Subnet"),
+        ),
+        field(
+            "sg",
+            "Security groups",
+            "security group",
+            true,
+            true,
+            FieldSource::Section {
+                section: "Security groups",
+            },
+        ),
+        field(
+            "ami",
+            "AMI",
+            "image id",
+            true,
+            true,
+            extra("Instance", "AMI"),
+        ),
+        field(
+            "key",
+            "Key pair",
+            "key pair",
+            true,
+            true,
+            extra("Instance", "Key pair"),
+        ),
         field(
             "iam",
             "IAM instance profile",
             "IAM instance profile",
             false,
             false,
-            |i| extra(i, "Instance", "IAM instance profile"),
+            extra("Instance", "IAM instance profile"),
         ),
-        field("dns", "DNS", "private or public DNS", false, false, |i| {
-            let mut values = extra(i, "Network", "Private DNS");
-            values.extend(extra(i, "Network", "Public DNS"));
-            values
-        }),
+        field(
+            "dns",
+            "DNS",
+            "private or public DNS",
+            false,
+            false,
+            FieldSource::Concat(vec![
+                extra("Network", "Private DNS"),
+                extra("Network", "Public DNS"),
+            ]),
+        ),
     ]
 }
 
@@ -49,7 +65,7 @@ fn field(
     hint: &str,
     query: bool,
     search: bool,
-    getter: fn(&Instance) -> Vec<String>,
+    source: FieldSource,
 ) -> FieldDef {
     FieldDef {
         name: name.to_string(),
@@ -61,24 +77,18 @@ fn field(
         search,
         facet: false,
         column: false,
-        getter,
+        source,
     }
 }
 
-fn extra(instance: &Instance, section: &str, key: &str) -> Vec<String> {
-    instance
-        .extras
-        .iter()
-        .filter(|s| s.title == section)
-        .flat_map(|s| s.entries.iter())
-        .find(|(entry_key, _)| entry_key == key)
-        .map(|(_, value)| vec![value.clone()])
-        .unwrap_or_default()
+fn extra(section: &'static str, key: &'static str) -> FieldSource {
+    FieldSource::Extra { section, key }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Instance;
     use crate::query::fixtures::fleet;
 
     #[test]
@@ -95,12 +105,12 @@ mod tests {
     }
 
     #[test]
-    fn getters_read_extras() {
+    fn sources_read_extras() {
         let instance = Instance::from(&fleet()[0]);
         let fields = aws_fields();
         let values = |name: &str| {
             let def = fields.iter().find(|f| f.name == name).unwrap();
-            (def.getter)(&instance)
+            def.source.values(&instance)
         };
         assert_eq!(values("vpc"), ["vpc-0aaa1111"]);
         assert_eq!(values("subnet"), ["subnet-0bbb2222"]);

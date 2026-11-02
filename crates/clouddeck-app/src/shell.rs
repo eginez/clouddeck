@@ -1365,7 +1365,7 @@ mod tests {
                 .view_model
                 .instances()
                 .iter()
-                .any(|instance| instance.instance_id == "i-gated")),
+                .any(|instance| clouddeck_core::native_id(instance) == "i-gated")),
             "the gated instance should be populated once the async load completes"
         );
     }

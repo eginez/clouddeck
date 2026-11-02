@@ -3,7 +3,7 @@
 use super::edit::query_without_field;
 use super::matcher::compile;
 use super::tokenize::QueryField;
-use crate::models::EC2Instance;
+use crate::instance::Instance;
 use std::collections::BTreeMap;
 use std::time::SystemTime;
 
@@ -22,7 +22,7 @@ pub struct StateFacetCounts {
 
 /// Counts each State facet over `instances`, ignoring any State terms in `query`.
 pub fn state_facet_counts(
-    instances: &[EC2Instance],
+    instances: &[Instance],
     query: &str,
     known_tag_keys: &[String],
     now: SystemTime,
@@ -41,7 +41,7 @@ pub fn state_facet_counts(
 
 /// Counts each distinct instance type over `instances`, ignoring any Type terms in `query`.
 pub fn type_facet_counts(
-    instances: &[EC2Instance],
+    instances: &[Instance],
     query: &str,
     known_tag_keys: &[String],
     now: SystemTime,
@@ -57,7 +57,7 @@ pub fn type_facet_counts(
 
     let q = query_without_field(query, QueryField::Type, known_tag_keys);
     let compiled = compile(&q, known_tag_keys, now);
-    let matching: Vec<&EC2Instance> = instances.iter().filter(|i| compiled.matches(i)).collect();
+    let matching: Vec<&Instance> = instances.iter().filter(|i| compiled.matches(i)).collect();
 
     types
         .into_iter()
@@ -90,18 +90,15 @@ pub fn top_types(counts: &[(String, usize)], n: usize) -> Vec<(String, usize)> {
     ranked
 }
 
-fn has_state(instance: &EC2Instance, state: &str) -> bool {
-    instance
-        .state
-        .as_deref()
-        .is_some_and(|s| s.eq_ignore_ascii_case(state))
+fn has_state(instance: &Instance, state: &str) -> bool {
+    instance.state.raw.eq_ignore_ascii_case(state)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::query::{
-        fixtures::{fleet, now},
+        fixtures::{fleet_instances, now},
         known_tag_keys,
     };
 
@@ -111,7 +108,7 @@ mod tests {
 
     #[test]
     fn state_counts_follow_other_filters() {
-        let fleet = fleet();
+        let fleet = fleet_instances();
         let k = known_tag_keys(&fleet);
         let count = |query: &str| state_facet_counts(&fleet, query, &k, now());
 
@@ -155,7 +152,7 @@ mod tests {
 
     #[test]
     fn state_counts_of_empty_slice_are_zero() {
-        let k = known_tag_keys(&fleet());
+        let k = known_tag_keys(&fleet_instances());
         assert_eq!(
             state_facet_counts(&[], "", &k, now()),
             StateFacetCounts::default()
@@ -164,7 +161,7 @@ mod tests {
 
     #[test]
     fn type_counts_ignore_own_type_filter() {
-        let fleet = fleet();
+        let fleet = fleet_instances();
         let k = known_tag_keys(&fleet);
         let count = |query: &str| type_facet_counts(&fleet, query, &k, now());
 
@@ -202,13 +199,13 @@ mod tests {
 
     #[test]
     fn type_counts_of_empty_slice_are_empty() {
-        let k = known_tag_keys(&fleet());
+        let k = known_tag_keys(&fleet_instances());
         assert!(type_facet_counts(&[], "", &k, now()).is_empty());
     }
 
     #[test]
     fn top_types_keeps_highest_counts_sorted_by_name() {
-        let fleet = fleet();
+        let fleet = fleet_instances();
         let k = known_tag_keys(&fleet);
         let running = type_facet_counts(&fleet, "state:running", &k, now());
         let all = type_facet_counts(&fleet, "", &k, now());

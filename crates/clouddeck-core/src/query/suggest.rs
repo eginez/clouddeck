@@ -3,7 +3,7 @@
 use super::fields::provider_field;
 use super::term::{TermKind, classify};
 use super::tokenize::{QueryField, tokenize};
-use crate::models::EC2Instance;
+use crate::{AddressKind, Instance};
 use std::collections::{BTreeMap, BTreeSet};
 
 const MAX_FIELD_ITEMS: usize = 6;
@@ -45,7 +45,7 @@ pub struct Suggestions {
 }
 
 /// Suggests fields and values for the word at the end of `query`.
-pub fn suggest(query: &str, instances: &[EC2Instance], known_tag_keys: &[String]) -> Suggestions {
+pub fn suggest(query: &str, instances: &[Instance], known_tag_keys: &[String]) -> Suggestions {
     if query.is_empty() {
         return Suggestions::default();
     }
@@ -177,11 +177,7 @@ fn split_value(current: &str) -> Option<(String, &str)> {
     ))
 }
 
-fn tag_items(
-    current: &str,
-    known_tag_keys: &[String],
-    instances: &[EC2Instance],
-) -> Vec<Suggestion> {
+fn tag_items(current: &str, known_tag_keys: &[String], instances: &[Instance]) -> Vec<Suggestion> {
     let Some((base, seg)) = split_value(current) else {
         return Vec::new();
     };
@@ -198,7 +194,7 @@ fn tag_items(
                 count: Some(
                     instances
                         .iter()
-                        .filter(|i| i.tags.iter().any(|t| t.key.eq_ignore_ascii_case(key)))
+                        .filter(|i| i.labels.iter().any(|l| l.key.eq_ignore_ascii_case(key)))
                         .count(),
                 ),
                 kind: SuggestionKind::Value,
@@ -222,7 +218,7 @@ fn tag_items(
     }
 }
 
-fn shorthand_items(current: &str, key: &str, instances: &[EC2Instance]) -> Vec<Suggestion> {
+fn shorthand_items(current: &str, key: &str, instances: &[Instance]) -> Vec<Suggestion> {
     let Some((base, seg)) = split_value(current) else {
         return Vec::new();
     };
@@ -230,7 +226,7 @@ fn shorthand_items(current: &str, key: &str, instances: &[EC2Instance]) -> Vec<S
 }
 
 fn tag_value_items(
-    instances: &[EC2Instance],
+    instances: &[Instance],
     key: &str,
     filter: &str,
     label_prefix: &str,
@@ -259,14 +255,15 @@ fn quote_if_spaced(value: &str) -> String {
     }
 }
 
-fn tag_value_counts(instances: &[EC2Instance], key: &str) -> BTreeMap<String, usize> {
+fn tag_value_counts(instances: &[Instance], key: &str) -> BTreeMap<String, usize> {
     let mut counts = BTreeMap::new();
     for instance in instances {
         let values: BTreeSet<&str> = instance
-            .tags
+            .labels
             .iter()
-            .filter(|tag| tag.key.eq_ignore_ascii_case(key) && !tag.value.is_empty())
-            .map(|tag| tag.value.as_str())
+            .filter(|label| label.key.eq_ignore_ascii_case(key))
+            .filter_map(|label| label.value.as_deref())
+            .filter(|value| !value.is_empty())
             .collect();
         for value in values {
             *counts.entry(value.to_string()).or_insert(0) += 1;
@@ -275,7 +272,7 @@ fn tag_value_counts(instances: &[EC2Instance], key: &str) -> BTreeMap<String, us
     counts
 }
 
-fn value_items(current: &str, field: QueryField, instances: &[EC2Instance]) -> Vec<Suggestion> {
+fn value_items(current: &str, field: QueryField, instances: &[Instance]) -> Vec<Suggestion> {
     let Some((base, seg)) = split_value(current) else {
         return Vec::new();
     };
@@ -295,20 +292,20 @@ fn value_items(current: &str, field: QueryField, instances: &[EC2Instance]) -> V
         .collect()
 }
 
-fn value_candidates(field: QueryField, instances: &[EC2Instance]) -> Vec<(String, Option<usize>)> {
+fn value_candidates(field: QueryField, instances: &[Instance]) -> Vec<(String, Option<usize>)> {
     match field {
         QueryField::State => ["running", "stopped", "pending"]
             .into_iter()
             .map(|state| {
                 let count = instances
                     .iter()
-                    .filter(|i| is_text(i.state.as_deref(), state))
+                    .filter(|i| is_text(Some(i.state.raw.as_str()), state))
                     .count();
                 (state.to_string(), Some(count))
             })
             .collect(),
         QueryField::Type => distinct_values(instances, |i| i.instance_type.as_deref()),
-        QueryField::Az => distinct_values(instances, |i| i.availability_zone.as_deref()),
+        QueryField::Az => distinct_values(instances, |i| i.location.as_deref()),
         QueryField::Region => distinct_values(instances, |i| i.region.as_deref()),
         QueryField::Has => vec![
             (
@@ -316,17 +313,22 @@ fn value_candidates(field: QueryField, instances: &[EC2Instance]) -> Vec<(String
                 Some(
                     instances
                         .iter()
-                        .filter(|i| non_empty(i.public_ip_address.as_deref()))
+                        .filter(|i| non_empty(i.address(AddressKind::Public)))
                         .count(),
                 ),
             ),
             (
                 "tags".to_string(),
-                Some(instances.iter().filter(|i| !i.tags.is_empty()).count()),
+                Some(instances.iter().filter(|i| !i.labels.is_empty()).count()),
             ),
             (
                 "name".to_string(),
-                Some(instances.iter().filter(|i| non_empty(i.name())).count()),
+                Some(
+                    instances
+                        .iter()
+                        .filter(|i| non_empty(i.name.as_deref()))
+                        .count(),
+                ),
             ),
         ],
         QueryField::Age => [">30d", ">7d", "<1d", "<7d"]
@@ -338,8 +340,8 @@ fn value_candidates(field: QueryField, instances: &[EC2Instance]) -> Vec<(String
 }
 
 fn distinct_values(
-    instances: &[EC2Instance],
-    text_of: impl Fn(&EC2Instance) -> Option<&str>,
+    instances: &[Instance],
+    text_of: impl Fn(&Instance) -> Option<&str>,
 ) -> Vec<(String, Option<usize>)> {
     let mut counts: BTreeMap<String, (String, usize)> = BTreeMap::new();
     for text in instances
@@ -411,12 +413,12 @@ fn field_hint(field: QueryField) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::EC2InstanceTag;
-    use crate::query::fixtures::fleet;
+    use crate::instance::Label;
+    use crate::query::fixtures::fleet_instances;
     use crate::query::known_tag_keys;
 
     fn labels(q: &str) -> Vec<String> {
-        suggest(q, &fleet(), &known_tag_keys(&fleet()))
+        suggest(q, &fleet_instances(), &known_tag_keys(&fleet_instances()))
             .items
             .into_iter()
             .map(|s| s.label)
@@ -425,12 +427,12 @@ mod tests {
 
     fn with_keys(q: &str, keys: &[&str]) -> Suggestions {
         let keys: Vec<String> = keys.iter().map(|k| k.to_string()).collect();
-        suggest(q, &fleet(), &keys)
+        suggest(q, &fleet_instances(), &keys)
     }
 
     #[test]
     fn empty_query_has_no_items() {
-        let s = suggest("", &fleet(), &known_tag_keys(&fleet()));
+        let s = suggest("", &fleet_instances(), &known_tag_keys(&fleet_instances()));
         assert_eq!(s, Suggestions::default());
         assert!(s.items.is_empty());
         assert_eq!(s.replace_start, 0);
@@ -438,7 +440,11 @@ mod tests {
 
     #[test]
     fn trailing_space_offers_leading_fields() {
-        let s = suggest("web ", &fleet(), &known_tag_keys(&fleet()));
+        let s = suggest(
+            "web ",
+            &fleet_instances(),
+            &known_tag_keys(&fleet_instances()),
+        );
         assert_eq!(
             s.items.iter().map(|i| i.label.as_str()).collect::<Vec<_>>(),
             ["state:", "type:", "tag:", "has:", "age:"]
@@ -471,7 +477,11 @@ mod tests {
 
     #[test]
     fn negated_prefix_keeps_dash_in_insert() {
-        let s = suggest("-st", &fleet(), &known_tag_keys(&fleet()));
+        let s = suggest(
+            "-st",
+            &fleet_instances(),
+            &known_tag_keys(&fleet_instances()),
+        );
         assert_eq!(s.items.len(), 1);
         assert_eq!(s.items[0].label, "-state:");
         assert_eq!(s.items[0].insert, "-state:");
@@ -480,7 +490,7 @@ mod tests {
 
     #[test]
     fn tag_key_suggested_with_tag_hint() {
-        let s = suggest("o", &fleet(), &known_tag_keys(&fleet()));
+        let s = suggest("o", &fleet_instances(), &known_tag_keys(&fleet_instances()));
         assert_eq!(
             s.items.iter().map(|i| i.label.as_str()).collect::<Vec<_>>(),
             ["owner:"]
@@ -515,7 +525,11 @@ mod tests {
 
     #[test]
     fn prefix_after_space_replaces_only_last_word() {
-        let s = suggest("web st", &fleet(), &known_tag_keys(&fleet()));
+        let s = suggest(
+            "web st",
+            &fleet_instances(),
+            &known_tag_keys(&fleet_instances()),
+        );
         assert_eq!(
             s.items.iter().map(|i| i.label.as_str()).collect::<Vec<_>>(),
             ["state:"]
@@ -529,7 +543,7 @@ mod tests {
     }
 
     fn counted(q: &str) -> Vec<(String, Option<usize>)> {
-        suggest(q, &fleet(), &known_tag_keys(&fleet()))
+        suggest(q, &fleet_instances(), &known_tag_keys(&fleet_instances()))
             .items
             .into_iter()
             .map(|s| (s.label, s.count))
@@ -553,7 +567,11 @@ mod tests {
 
     #[test]
     fn state_value_prefix_replaces_only_value() {
-        let s = suggest("web state:r", &fleet(), &known_tag_keys(&fleet()));
+        let s = suggest(
+            "web state:r",
+            &fleet_instances(),
+            &known_tag_keys(&fleet_instances()),
+        );
         assert_eq!(counted("web state:r"), pairs(&[("running", 2)]));
         assert_eq!(s.replace_start, 4);
         assert_eq!(s.items[0].insert, "state:running");
@@ -563,7 +581,11 @@ mod tests {
 
     #[test]
     fn comma_list_completes_last_segment() {
-        let s = suggest("state:running,st", &fleet(), &known_tag_keys(&fleet()));
+        let s = suggest(
+            "state:running,st",
+            &fleet_instances(),
+            &known_tag_keys(&fleet_instances()),
+        );
         assert_eq!(
             s.items.iter().map(|i| i.count).collect::<Vec<_>>(),
             [Some(2)]
@@ -574,14 +596,22 @@ mod tests {
 
     #[test]
     fn negated_value_keeps_dash_in_insert() {
-        let s = suggest("-state:s", &fleet(), &known_tag_keys(&fleet()));
+        let s = suggest(
+            "-state:s",
+            &fleet_instances(),
+            &known_tag_keys(&fleet_instances()),
+        );
         assert_eq!(s.items[0].insert, "-state:stopped");
         assert_eq!(s.items.len(), 1);
     }
 
     #[test]
     fn value_match_ignores_case_and_keeps_typed_name() {
-        let s = suggest("STATE:R", &fleet(), &known_tag_keys(&fleet()));
+        let s = suggest(
+            "STATE:R",
+            &fleet_instances(),
+            &known_tag_keys(&fleet_instances()),
+        );
         assert_eq!(counted("STATE:R"), pairs(&[("running", 2)]));
         assert_eq!(s.items[0].insert, "STATE:running");
     }
@@ -596,8 +626,8 @@ mod tests {
 
     #[test]
     fn distinct_values_keep_first_seen_text_and_merge_case() {
-        let mut instances = fleet();
-        instances[0].availability_zone = Some("US-EAST-1A".to_string());
+        let mut instances = fleet_instances();
+        instances[0].location = Some("US-EAST-1A".to_string());
         let s = suggest("zone:us-e", &instances, &known_tag_keys(&instances));
         assert_eq!(
             s.items
@@ -615,7 +645,11 @@ mod tests {
             counted("zone:us-w"),
             pairs(&[("us-west-2a", 1), ("us-west-2c", 1)])
         );
-        let s = suggest("zone:us-w", &fleet(), &known_tag_keys(&fleet()));
+        let s = suggest(
+            "zone:us-w",
+            &fleet_instances(),
+            &known_tag_keys(&fleet_instances()),
+        );
         assert_eq!(s.items[0].insert, "zone:us-west-2a");
     }
 
@@ -658,7 +692,11 @@ mod tests {
 
     #[test]
     fn tag_field_lists_keys_with_counts() {
-        let s = suggest("tag:", &fleet(), &known_tag_keys(&fleet()));
+        let s = suggest(
+            "tag:",
+            &fleet_instances(),
+            &known_tag_keys(&fleet_instances()),
+        );
         assert_eq!(s.items[0].insert, "tag:CostCenter=");
         assert_eq!(
             counted("tag:"),
@@ -673,7 +711,11 @@ mod tests {
 
     #[test]
     fn tag_field_key_prefix_applies_without_trailing_space() {
-        let s = suggest("tag:te", &fleet(), &known_tag_keys(&fleet()));
+        let s = suggest(
+            "tag:te",
+            &fleet_instances(),
+            &known_tag_keys(&fleet_instances()),
+        );
         assert_eq!(counted("tag:te"), pairs(&[("Team", 4)]));
         assert_eq!(
             apply_suggestion("tag:te", &s, 0).as_deref(),
@@ -683,14 +725,22 @@ mod tests {
 
     #[test]
     fn negated_tag_field_keeps_dash_in_insert() {
-        let s = suggest("-tag:o", &fleet(), &known_tag_keys(&fleet()));
+        let s = suggest(
+            "-tag:o",
+            &fleet_instances(),
+            &known_tag_keys(&fleet_instances()),
+        );
         assert_eq!(counted("-tag:o"), pairs(&[("Owner", 4)]));
         assert_eq!(s.items[0].insert, "-tag:Owner=");
     }
 
     #[test]
     fn tag_equals_lists_distinct_values_with_counts() {
-        let s = suggest("tag:team=", &fleet(), &known_tag_keys(&fleet()));
+        let s = suggest(
+            "tag:team=",
+            &fleet_instances(),
+            &known_tag_keys(&fleet_instances()),
+        );
         assert_eq!(
             counted("tag:team="),
             pairs(&[
@@ -718,7 +768,11 @@ mod tests {
 
     #[test]
     fn tag_shorthand_lists_values_sorted_with_counts() {
-        let s = suggest("owner:", &fleet(), &known_tag_keys(&fleet()));
+        let s = suggest(
+            "owner:",
+            &fleet_instances(),
+            &known_tag_keys(&fleet_instances()),
+        );
         assert_eq!(
             counted("owner:"),
             pairs(&[("esteban", 2), ("jonas", 1), ("mira", 1)])
@@ -733,7 +787,11 @@ mod tests {
 
     #[test]
     fn tag_shorthand_keeps_typed_key_case_in_insert() {
-        let s = suggest("Team:pa", &fleet(), &known_tag_keys(&fleet()));
+        let s = suggest(
+            "Team:pa",
+            &fleet_instances(),
+            &known_tag_keys(&fleet_instances()),
+        );
         assert_eq!(counted("Team:pa"), pairs(&[("payments", 1)]));
         assert_eq!(
             apply_suggestion("Team:pa", &s, 0).as_deref(),
@@ -743,9 +801,9 @@ mod tests {
 
     #[test]
     fn tag_values_compare_exactly_and_skip_empty() {
-        let mut instances = fleet();
-        instances[0].tags[2].value = "Platform".to_string();
-        instances[4].tags[1].value = String::new();
+        let mut instances = fleet_instances();
+        instances[0].labels[2].value = Some("Platform".to_string());
+        instances[4].labels[1].value = Some(String::new());
         let s = suggest("team:", &instances, &known_tag_keys(&instances));
         assert_eq!(
             s.items
@@ -762,16 +820,28 @@ mod tests {
 
     #[test]
     fn unknown_field_name_is_reported_as_typed() {
-        let s = suggest("Colour:", &fleet(), &known_tag_keys(&fleet()));
+        let s = suggest(
+            "Colour:",
+            &fleet_instances(),
+            &known_tag_keys(&fleet_instances()),
+        );
         assert!(s.items.is_empty());
         assert_eq!(s.unknown_field.as_deref(), Some("Colour"));
-        let s = suggest("state:", &fleet(), &known_tag_keys(&fleet()));
+        let s = suggest(
+            "state:",
+            &fleet_instances(),
+            &known_tag_keys(&fleet_instances()),
+        );
         assert_eq!(s.unknown_field, None);
     }
 
     #[test]
     fn apply_state_value_adds_trailing_space() {
-        let s = suggest("web state:r", &fleet(), &known_tag_keys(&fleet()));
+        let s = suggest(
+            "web state:r",
+            &fleet_instances(),
+            &known_tag_keys(&fleet_instances()),
+        );
         assert_eq!(
             apply_suggestion("web state:r", &s, 0).as_deref(),
             Some("web state:running ")
@@ -780,7 +850,11 @@ mod tests {
 
     #[test]
     fn unknown_name_value_reports_unknown_field() {
-        let s = suggest("colour:r", &fleet(), &known_tag_keys(&fleet()));
+        let s = suggest(
+            "colour:r",
+            &fleet_instances(),
+            &known_tag_keys(&fleet_instances()),
+        );
         assert!(s.items.is_empty());
         assert_eq!(s.unknown_field.as_deref(), Some("colour"));
         assert_eq!(s.replace_start, 0);
@@ -816,13 +890,21 @@ mod tests {
 
     #[test]
     fn apply_field_name_adds_no_trailing_space() {
-        let s = suggest("sta", &fleet(), &known_tag_keys(&fleet()));
+        let s = suggest(
+            "sta",
+            &fleet_instances(),
+            &known_tag_keys(&fleet_instances()),
+        );
         assert_eq!(apply_suggestion("sta", &s, 0).as_deref(), Some("state:"));
     }
 
     #[test]
     fn apply_replaces_only_last_word() {
-        let s = suggest("web st", &fleet(), &known_tag_keys(&fleet()));
+        let s = suggest(
+            "web st",
+            &fleet_instances(),
+            &known_tag_keys(&fleet_instances()),
+        );
         assert_eq!(
             apply_suggestion("web st", &s, 0).as_deref(),
             Some("web state:")
@@ -831,19 +913,27 @@ mod tests {
 
     #[test]
     fn apply_keeps_negation() {
-        let s = suggest("-st", &fleet(), &known_tag_keys(&fleet()));
+        let s = suggest(
+            "-st",
+            &fleet_instances(),
+            &known_tag_keys(&fleet_instances()),
+        );
         assert_eq!(apply_suggestion("-st", &s, 0).as_deref(), Some("-state:"));
     }
 
     #[test]
     fn apply_tag_key() {
-        let s = suggest("o", &fleet(), &known_tag_keys(&fleet()));
+        let s = suggest("o", &fleet_instances(), &known_tag_keys(&fleet_instances()));
         assert_eq!(apply_suggestion("o", &s, 0).as_deref(), Some("owner:"));
     }
 
     #[test]
     fn apply_out_of_range_is_none() {
-        let s = suggest("st", &fleet(), &known_tag_keys(&fleet()));
+        let s = suggest(
+            "st",
+            &fleet_instances(),
+            &known_tag_keys(&fleet_instances()),
+        );
         assert_eq!(apply_suggestion("st", &s, 99), None);
     }
 
@@ -866,8 +956,8 @@ mod tests {
         );
     }
 
-    fn spaced_fleet() -> Vec<EC2Instance> {
-        let base = fleet()[0].clone();
+    fn spaced_fleet() -> Vec<Instance> {
+        let base = fleet_instances()[0].clone();
         [
             vec![("Team", "Data Platform")],
             vec![("Team", "search")],
@@ -876,12 +966,9 @@ mod tests {
         .into_iter()
         .map(|tags| {
             let mut instance = base.clone();
-            instance.tags = tags
+            instance.labels = tags
                 .into_iter()
-                .map(|(key, value)| EC2InstanceTag {
-                    key: key.to_string(),
-                    value: value.to_string(),
-                })
+                .map(|(key, value)| Label { key: key.to_string(), value: Some(value.to_string()) })
                 .collect();
             instance
         })
@@ -930,10 +1017,7 @@ mod tests {
     #[test]
     fn tag_key_with_double_quote_is_not_suggested() {
         let mut instances = spaced_fleet();
-        instances[2].tags = vec![EC2InstanceTag {
-            key: "Bo\"b".to_string(),
-            value: "x".to_string(),
-        }];
+        instances[2].labels = vec![Label { key: "Bo\"b".to_string(), value: Some("x".to_string()) }];
         let keys = ["Bo\"b", "Team"].map(String::from);
         let s = suggest("tag:", &instances, &keys);
         assert_eq!(
@@ -949,15 +1033,9 @@ mod tests {
     #[test]
     fn tag_key_with_comma_or_equals_is_not_suggested() {
         let mut instances = spaced_fleet();
-        instances[2].tags = vec![
-            EC2InstanceTag {
-                key: "Cost,Center".to_string(),
-                value: "x".to_string(),
-            },
-            EC2InstanceTag {
-                key: "a=b".to_string(),
-                value: "y".to_string(),
-            },
+        instances[2].labels = vec![
+            Label { key: "Cost,Center".to_string(), value: Some("x".to_string()) },
+            Label { key: "a=b".to_string(), value: Some("y".to_string()) },
         ];
         let keys = ["Cost,Center", "a=b", "Team"].map(String::from);
         let s = suggest("tag:", &instances, &keys);
@@ -970,10 +1048,7 @@ mod tests {
     #[test]
     fn tag_value_with_double_quote_is_not_suggested() {
         let mut instances = spaced_fleet();
-        instances[2].tags = vec![EC2InstanceTag {
-            key: "Team".to_string(),
-            value: "Bob \"B\" Smith".to_string(),
-        }];
+        instances[2].labels = vec![Label { key: "Team".to_string(), value: Some("Bob \"B\" Smith".to_string()) }];
         let s = suggest("tag:team=", &instances, &known_tag_keys(&instances));
         assert_eq!(
             s.items.iter().map(|i| i.label.as_str()).collect::<Vec<_>>(),
@@ -986,10 +1061,7 @@ mod tests {
     #[test]
     fn tag_value_with_comma_is_not_suggested() {
         let mut instances = spaced_fleet();
-        instances[2].tags = vec![EC2InstanceTag {
-            key: "Team".to_string(),
-            value: "Ops,Tier1".to_string(),
-        }];
+        instances[2].labels = vec![Label { key: "Team".to_string(), value: Some("Ops,Tier1".to_string()) }];
         let s = suggest("tag:team=", &instances, &known_tag_keys(&instances));
         assert_eq!(
             s.items.iter().map(|i| i.label.as_str()).collect::<Vec<_>>(),

@@ -3,7 +3,7 @@
 use std::time::SystemTime;
 
 use clouddeck_core::{
-    EC2Instance, QueryField, RECENT_INSTANCES_SHOWN, facet_selection, known_tag_keys,
+    Instance, QueryField, RECENT_INSTANCES_SHOWN, facet_selection, known_tag_keys,
     remove_field_value, resolve_recent_instances, set_field_value, state_facet_counts, top_types,
     type_facet_counts,
 };
@@ -88,7 +88,7 @@ impl Render for Sidebar {
         let type_value = selection.instance_type.as_deref();
         let types = visible_types(&type_counts, self.show_all_types, type_value);
         let pins = state.pinned_searches.clone();
-        let recent: Vec<EC2Instance> = resolve_recent_instances(&state.recent_instances, instances)
+        let recent: Vec<Instance> = resolve_recent_instances(&state.recent_instances, instances)
             .into_iter()
             .take(RECENT_INSTANCES_SHOWN)
             .cloned()
@@ -340,14 +340,14 @@ fn pin_row(
 
 fn recent_row(
     index: usize,
-    instance: &EC2Instance,
+    instance: &Instance,
     palette: &Palette,
     cx: &Context<Sidebar>,
 ) -> impl IntoElement {
-    let key = instance.id();
+    let key = instance.id.clone();
     let click_key = key.clone();
-    let name = instance.name().unwrap_or("unnamed").to_string();
-    let dot = palette.state_dot(instance.state.as_deref().unwrap_or_default());
+    let name = instance.name.as_deref().unwrap_or("unnamed").to_string();
+    let dot = palette.state_dot(&instance.state.raw);
     div()
         .id(SharedString::from(format!("sidebar.recent.{index}")))
         .debug_selector(move || format!("sidebar.recent.{index}"))
@@ -369,50 +369,12 @@ mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    use clouddeck_core::{EC2InstanceTag, MockComputeService};
+    use clouddeck_core::MockComputeService;
     use gpui::{Entity, TestAppContext, VisualTestContext};
 
     use super::*;
+    use crate::test_support::ec2_fleet;
     use crate::view_models::InstanceListViewModel;
-
-    fn instance(id: &str, name: &str, state: &str, instance_type: &str) -> EC2Instance {
-        EC2Instance {
-            instance_id: id.to_string(),
-            region: Some("us-east-1".to_string()),
-            instance_type: Some(instance_type.to_string()),
-            state: Some(state.to_string()),
-            launch_time: None,
-            public_ip_address: None,
-            private_ip_address: None,
-            vpc_id: None,
-            subnet_id: None,
-            security_groups: vec![],
-            tags: vec![EC2InstanceTag {
-                key: "Name".to_string(),
-                value: name.to_string(),
-            }],
-            iam_instance_profile_arn: None,
-            private_dns_name: None,
-            public_dns_name: None,
-            availability_zone: None,
-            image_id: None,
-            key_name: None,
-            architecture: None,
-            state_transition_reason: None,
-        }
-    }
-
-    fn fleet() -> Vec<EC2Instance> {
-        vec![
-            instance("i-1", "api-server", "running", "t3.medium"),
-            instance("i-2", "web-frontend", "running", "t3.micro"),
-            instance("i-3", "worker", "running", "m6i.large"),
-            instance("i-4", "cache", "running", "t3.small"),
-            instance("i-5", "bastion", "stopped", "t3.micro"),
-            instance("i-6", "batch", "stopped", "g5.xlarge"),
-            instance("i-7", "indexer", "pending", "r6i.xlarge"),
-        ]
-    }
 
     const STATE_KEYS: [&str; 4] = [
         "sidebar.state.all",
@@ -434,7 +396,18 @@ mod tests {
         cx: &mut TestAppContext,
         configure: impl FnOnce(&mut FleetState),
     ) -> (Entity<FleetState>, Entity<Sidebar>, &mut VisualTestContext) {
-        let mut vm = InstanceListViewModel::new(Box::new(MockComputeService::new(fleet(), None)));
+        let mut vm = InstanceListViewModel::new(Box::new(MockComputeService::new(
+            ec2_fleet(&[
+                ("i-1", "api-server", "running", "t3.medium"),
+                ("i-2", "web-frontend", "running", "t3.micro"),
+                ("i-3", "worker", "running", "m6i.large"),
+                ("i-4", "cache", "running", "t3.small"),
+                ("i-5", "bastion", "stopped", "t3.micro"),
+                ("i-6", "batch", "stopped", "g5.xlarge"),
+                ("i-7", "indexer", "pending", "r6i.xlarge"),
+            ]),
+            None,
+        )));
         let rt = tokio::runtime::Builder::new_current_thread()
             .build()
             .unwrap();

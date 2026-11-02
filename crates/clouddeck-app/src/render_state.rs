@@ -138,7 +138,8 @@ pub(crate) fn apply_render_state(
             .visible_rows()
             .first()
             .expect("fleet has a visible row")
-            .id()
+            .id
+            .clone()
     };
     match state {
         State::MainRowSelected => {

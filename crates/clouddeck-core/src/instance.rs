@@ -1,4 +1,6 @@
-pub use clouddeck_provider_api::{Address, AddressKind, ExtrasSection, Instance, Label};
+pub use clouddeck_provider_api::{
+    Address, AddressKind, ExtrasSection, Instance, Label, State, StateKind,
+};
 
 use crate::models::EC2Instance;
 
@@ -57,7 +59,11 @@ impl From<&EC2Instance> for Instance {
                 .name()
                 .filter(|name| !name.is_empty())
                 .map(str::to_string),
-            state: instance.state.clone(),
+            group: non_empty(&instance.vpc_id),
+            state: State {
+                kind: aws_state_kind(instance.state.as_deref()),
+                raw: instance.state.clone().unwrap_or_default(),
+            },
             state_reason: instance.state_transition_reason.clone(),
             instance_type: instance.instance_type.clone(),
             region: instance.region.clone(),
@@ -69,7 +75,7 @@ impl From<&EC2Instance> for Instance {
                 .iter()
                 .map(|tag| Label {
                     key: tag.key.clone(),
-                    value: tag.value.clone(),
+                    value: Some(tag.value.clone()),
                 })
                 .collect(),
             extras,
@@ -85,6 +91,25 @@ fn entry(key: &str, value: &Option<String>) -> (String, String) {
     (key.to_string(), value.clone().unwrap_or_default())
 }
 
+/// The provider's own id: the part after the last colon, or the whole id.
+pub fn native_id(instance: &Instance) -> &str {
+    instance
+        .id
+        .rsplit_once(':')
+        .map_or(instance.id.as_str(), |(_, native)| native)
+}
+
+fn aws_state_kind(state: Option<&str>) -> StateKind {
+    match state.unwrap_or_default().to_ascii_lowercase().as_str() {
+        "running" => StateKind::Running,
+        "pending" => StateKind::Starting,
+        "stopping" | "shutting-down" => StateKind::Stopping,
+        "stopped" => StateKind::Stopped,
+        "terminated" => StateKind::Terminated,
+        _ => StateKind::Unknown,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -97,7 +122,9 @@ mod tests {
 
         assert_eq!(converted.id, "us-east-1:i-0000000000000001");
         assert_eq!(converted.name.as_deref(), Some("api-gateway-01"));
-        assert_eq!(converted.state.as_deref(), Some("running"));
+        assert_eq!(converted.state.raw, "running");
+        assert_eq!(converted.state.kind, StateKind::Running);
+        assert_eq!(converted.group.as_deref(), Some("vpc-0aaa1111"));
         assert_eq!(converted.instance_type.as_deref(), Some("t3.medium"));
         assert_eq!(converted.region.as_deref(), Some("us-east-1"));
         assert_eq!(converted.location.as_deref(), Some("us-east-1a"));
@@ -117,7 +144,50 @@ mod tests {
         );
         assert_eq!(converted.labels.len(), source.tags.len());
         assert_eq!(converted.labels[0].key, "Name");
-        assert_eq!(converted.labels[0].value, "api-gateway-01");
+        assert_eq!(converted.labels[0].value.as_deref(), Some("api-gateway-01"));
+    }
+
+    #[test]
+    fn aws_states_map_to_state_kinds() {
+        let cases = [
+            ("running", StateKind::Running),
+            ("RUNNING", StateKind::Running),
+            ("pending", StateKind::Starting),
+            ("stopping", StateKind::Stopping),
+            ("shutting-down", StateKind::Stopping),
+            ("stopped", StateKind::Stopped),
+            ("terminated", StateKind::Terminated),
+            ("rebooting", StateKind::Unknown),
+            ("", StateKind::Unknown),
+        ];
+        for (raw, kind) in cases {
+            assert_eq!(aws_state_kind(Some(raw)), kind, "state {raw:?}");
+        }
+        assert_eq!(aws_state_kind(None), StateKind::Unknown);
+    }
+
+    #[test]
+    fn native_id_is_the_part_after_the_last_colon() {
+        let mut instance = Instance::from(&fleet()[0]);
+        assert_eq!(native_id(&instance), "i-0000000000000001");
+        instance.id = "plain".to_string();
+        assert_eq!(native_id(&instance), "plain");
+    }
+
+    #[test]
+    fn absent_state_is_default_state() {
+        let mut source = fleet()[0].clone();
+        source.state = None;
+        assert_eq!(Instance::from(&source).state, State::default());
+    }
+
+    #[test]
+    fn group_is_none_without_vpc() {
+        let mut source = fleet()[0].clone();
+        source.vpc_id = Some(String::new());
+        assert_eq!(Instance::from(&source).group, None);
+        source.vpc_id = None;
+        assert_eq!(Instance::from(&source).group, None);
     }
 
     #[test]

@@ -1,7 +1,7 @@
 //! Dense sortable instance table (design/images/01).
 
 use clouddeck_core::{
-    CellText, Column, EC2Instance, SortState, cell_text, is_stale_instance, layout_rules,
+    CellText, Column, Instance, SortState, cell_text, is_stale_instance, layout_rules,
     visible_columns_fit,
 };
 use gpui::{
@@ -63,7 +63,7 @@ impl InstanceTable {
         if let Some(ix) = state
             .visible_rows()
             .iter()
-            .position(|instance| Some(instance.id().as_str()) == selected)
+            .position(|instance| Some(instance.id.as_str()) == selected)
         {
             self.scroll.scroll_to_item(ix, ScrollStrategy::Center);
         }
@@ -143,7 +143,7 @@ impl Render for InstanceTable {
             range
                 .map(|ix| {
                     let instance = &rows[ix];
-                    let is_selected = selected.as_deref() == Some(instance.id().as_str());
+                    let is_selected = selected.as_deref() == Some(instance.id.as_str());
                     let is_stale = is_stale_instance(instance, &stale);
                     let (element, records) = row(
                         instance,
@@ -231,7 +231,7 @@ fn header_cell(
 }
 
 fn row(
-    instance: &EC2Instance,
+    instance: &Instance,
     columns: &[Column],
     selected: bool,
     stale: bool,
@@ -239,7 +239,7 @@ fn row(
     state: Entity<FleetState>,
     table: Entity<InstanceTable>,
 ) -> (Stateful<Div>, Vec<(String, Recorded)>) {
-    let key = instance.id();
+    let key = instance.id.clone();
     let row_key = format!("table.row.{key}");
     let menu_key = key.clone();
     let mut row = div()
@@ -294,14 +294,14 @@ fn cell_color(
 }
 
 fn cell(
-    instance: &EC2Instance,
+    instance: &Instance,
     column: Column,
     row_key: &str,
     palette: Palette,
     stale: bool,
 ) -> (Div, Option<(String, Recorded)>) {
     let CellText { text, muted } = cell_text(instance, column);
-    let raw_state = instance.state.as_deref().unwrap_or_default();
+    let raw_state = instance.state.raw.as_str();
     let (fg, color) = cell_color(&palette, column, raw_state, stale, muted);
     let record = match column {
         Column::Name => Some((format!("{row_key}.name"), Some("ui"))),
@@ -360,8 +360,9 @@ fn cell(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::ec2_fleet;
     use crate::view_models::InstanceListViewModel;
-    use clouddeck_core::{EC2InstanceTag, MockComputeService};
+    use clouddeck_core::MockComputeService;
     use gpui::{
         AppContext, Bounds, TestAppContext, VisualTestContext, WindowBounds, WindowOptions, point,
         size,
@@ -372,47 +373,14 @@ mod tests {
     use crate::layout_check::states::{State, build};
     use crate::ui_record::recorded;
 
-    fn instance(id: &str, name: Option<&str>, state: &str) -> EC2Instance {
-        EC2Instance {
-            instance_id: id.to_string(),
-            region: Some("us-east-1".to_string()),
-            instance_type: Some("t3.medium".to_string()),
-            state: Some(state.to_string()),
-            launch_time: None,
-            public_ip_address: None,
-            private_ip_address: None,
-            vpc_id: None,
-            subnet_id: None,
-            security_groups: vec![],
-            tags: name
-                .map(|value| {
-                    vec![EC2InstanceTag {
-                        key: "Name".to_string(),
-                        value: value.to_string(),
-                    }]
-                })
-                .unwrap_or_default(),
-            iam_instance_profile_arn: None,
-            private_dns_name: None,
-            public_dns_name: None,
-            availability_zone: None,
-            image_id: None,
-            key_name: None,
-            architecture: None,
-            state_transition_reason: None,
-        }
-    }
-
-    fn fleet() -> Vec<EC2Instance> {
-        vec![
-            instance("i-1", Some("api-server"), "running"),
-            instance("i-2", None, "stopped"),
-            instance("i-3", Some("worker"), "pending"),
-        ]
-    }
-
     fn loaded_state(cx: &mut TestAppContext) -> Entity<FleetState> {
-        let vm = InstanceListViewModel::new(Box::new(MockComputeService::new(fleet(), None)));
+        let mut records = ec2_fleet(&[
+            ("i-1", "api-server", "running", "t3.medium"),
+            ("i-2", "", "stopped", "t3.medium"),
+            ("i-3", "worker", "pending", "t3.medium"),
+        ]);
+        records[1].tags.clear();
+        let vm = InstanceListViewModel::new(Box::new(MockComputeService::new(records, None)));
         let state = cx.new(|_| FleetState::new(vm, "default".to_string(), true));
         state.update(cx, |state, cx| state.refresh(cx));
         wait_until(cx, |cx| {
@@ -569,7 +537,7 @@ mod tests {
 
     fn visible_keys(state: &Entity<FleetState>, cx: &mut VisualTestContext) -> Vec<String> {
         state.read_with(cx, |state, _| {
-            state.visible_rows().iter().map(|i| i.id()).collect()
+            state.visible_rows().iter().map(|i| i.id.clone()).collect()
         })
     }
 
@@ -692,7 +660,8 @@ mod tests {
                 .visible_rows()
                 .first()
                 .expect("fleet has a visible row")
-                .id()
+                .id
+                .clone()
         });
         let row = format!("table.row.{id}");
 
