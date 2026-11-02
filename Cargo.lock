@@ -1376,11 +1376,13 @@ dependencies = [
  "aws-types",
  "base64",
  "chrono",
+ "clouddeck-extension-api",
  "clouddeck-provider-api",
  "ed25519-dalek",
  "flate2",
  "hex",
  "libc",
+ "libloading",
  "rand_core 0.6.4",
  "semver",
  "serde",
@@ -1407,6 +1409,7 @@ dependencies = [
 name = "clouddeck-extension-toy"
 version = "0.1.0"
 dependencies = [
+ "clouddeck-core",
  "clouddeck-extension-api",
  "serde_json",
 ]

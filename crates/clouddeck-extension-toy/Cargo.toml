@@ -13,4 +13,5 @@ crate-type = ["cdylib", "rlib"]
 clouddeck-extension-api = { path = "../clouddeck-extension-api" }
 
 [dev-dependencies]
+clouddeck-core = { path = "../clouddeck-core" }
 serde_json = "1"
