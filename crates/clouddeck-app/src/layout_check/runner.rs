@@ -1,10 +1,10 @@
 //! The test that checks all layout rules.
 
 use std::cell::RefCell;
-use std::collections::HashSet;
 
 use gpui::{TestAppContext, px, size};
 
+use super::assert_unique_ids;
 use super::rules::{Rule, all_rules, evaluate};
 use super::states::{self, State};
 use crate::ui_record;
@@ -29,27 +29,10 @@ fn classify(rule: &Rule, result: &Result<(), String>) -> Outcome {
     }
 }
 
-/// Panics listing every rule id that appears more than once.
-fn assert_unique_ids(rules: &[Rule]) {
-    let mut seen = HashSet::new();
-    let mut duplicates: Vec<&str> = rules
-        .iter()
-        .filter(|rule| !seen.insert(rule.id))
-        .map(|rule| rule.id)
-        .collect();
-    duplicates.sort_unstable();
-    duplicates.dedup();
-    assert!(
-        duplicates.is_empty(),
-        "duplicate rule ids: {}",
-        duplicates.join(", ")
-    );
-}
-
 #[gpui::test]
 fn layout_rules_hold(cx: &mut TestAppContext) {
     let rules = all_rules();
-    assert_unique_ids(&rules);
+    assert_unique_ids(&rules, |rule| rule.id, "rule");
 
     let mut groups: Vec<RuleGroup<'_>> = Vec::new();
     for rule in &rules {
@@ -198,9 +181,13 @@ mod tests {
 
     #[test]
     fn duplicate_ids_panic() {
-        assert_unique_ids(&[rule("a", None), rule("b", None)]);
+        assert_unique_ids(&[rule("a", None), rule("b", None)], |rule| rule.id, "rule");
         let result = std::panic::catch_unwind(|| {
-            assert_unique_ids(&[rule("a", None), rule("dup", None), rule("dup", None)]);
+            assert_unique_ids(
+                &[rule("a", None), rule("dup", None), rule("dup", None)],
+                |rule| rule.id,
+                "rule",
+            );
         });
         let message = result
             .expect_err("duplicate ids should panic")
