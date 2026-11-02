@@ -434,12 +434,14 @@ fn route(
                 });
                 return;
             }
-            shell::open_main_window(cx, false, shell::DemoScenario::Happy)
+            shell::open_main_window(cx, false, clouddeck_core::DemoFleet::Happy)
         }
         WelcomeEvent::ConnectToAws | WelcomeEvent::SignInWithSso => {
             shell::open_main_window_with_setup(cx)
         }
-        WelcomeEvent::ExploreDemo => shell::open_main_window(cx, true, shell::DemoScenario::Happy),
+        WelcomeEvent::ExploreDemo => {
+            shell::open_main_window(cx, true, clouddeck_core::DemoFleet::Happy)
+        }
     };
     if opened.is_some() {
         let _ = welcome.update(cx, |_, window, _| window.remove_window());

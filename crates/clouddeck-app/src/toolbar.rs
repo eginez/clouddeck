@@ -172,8 +172,7 @@ mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    use crate::test_support::ec2_owned;
-    use clouddeck_core::MockComputeService;
+    use clouddeck_core::fixture_fleet as fleet;
     use gpui::{
         Bounds, Entity, TestAppContext, VisualTestContext, WindowBounds, WindowOptions, point, size,
     };
@@ -185,11 +184,11 @@ mod tests {
 
     fn three_instance_view_model() -> InstanceListViewModel {
         let instances = vec![
-            ec2_owned("i-1", "api-server", "running", Some("esteban")),
-            ec2_owned("i-2", "bastion", "stopped", None),
-            ec2_owned("i-3", "worker", "stopped", None),
+            fleet::owned_instance("i-1", "api-server", "running", Some("esteban")),
+            fleet::owned_instance("i-2", "bastion", "stopped", None),
+            fleet::owned_instance("i-3", "worker", "stopped", None),
         ];
-        let mut vm = InstanceListViewModel::new(Box::new(MockComputeService::new(instances, None)));
+        let mut vm = InstanceListViewModel::new(fleet::static_provider(instances));
         let rt = tokio::runtime::Builder::new_current_thread()
             .build()
             .unwrap();

@@ -1074,25 +1074,31 @@ fn local_offset_minutes() -> i32 {
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
-    use std::future::Future;
-    use std::pin::Pin;
     use std::rc::Rc;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
 
-    use crate::test_support::{ProviderRecords, ec2_fleet};
+    use clouddeck_core::fixture_fleet as fixtures;
     use clouddeck_core::{
-        BoxError, ComputeInstanceFilters, ComputeInstanceLoadResult, ComputeService,
-        MockComputeService,
+        Call, CloudDeckError, Connection, ConnectionId, Dimension, FieldDef, InspectorSectionDef,
+        KindId, KindInfo, ListResult, Provider, ProviderError, ProviderInfo, Selection,
+        whole_load_failure,
     };
     use gpui::{Bounds, Entity, MouseButton, TestAppContext, VisualTestContext, point, size};
 
     use super::*;
     use crate::view_models::InstanceListViewModel;
 
-    fn three_instances() -> ProviderRecords {
-        ec2_fleet(&[
+    fn failed_load(message: &str) -> ListResult {
+        whole_load_failure(
+            &CloudDeckError::from_service_error(&std::io::Error::other(message)),
+            &Selection::new(),
+        )
+    }
+
+    fn three_instances() -> Vec<Instance> {
+        fixtures::instances(&[
             ("i-1", "api-server", "running", "t3.medium"),
             ("i-2", "bastion", "stopped", "t3.medium"),
             ("i-3", "worker", "stopped", "t3.medium"),
@@ -1113,7 +1119,7 @@ mod tests {
     /// Opens the main window at the given size with a refreshed fleet of `instances`.
     fn rooted_main_window(
         cx: &mut TestAppContext,
-        instances: ProviderRecords,
+        instances: Vec<Instance>,
         width: f32,
         height: f32,
     ) -> (
@@ -1121,58 +1127,87 @@ mod tests {
         Entity<MainWindow>,
         &mut VisualTestContext,
     ) {
-        rooted_main_window_with_service(cx, MockComputeService::new(instances, None), width, height)
+        rooted_main_window_with_service(cx, fixtures::static_provider(instances), width, height)
     }
 
-    /// Counts `list_instances` calls, failing the first with `first_call_error` when set.
-    struct CountingService {
+    /// Counts `list` calls, failing the first with `first_call_error` when set.
+    struct CountingProvider {
         calls: Arc<AtomicUsize>,
         first_call_error: Option<&'static str>,
-        inner: MockComputeService,
+        inner: Arc<dyn Provider>,
     }
 
-    impl ComputeService for CountingService {
-        fn list_instances<'life0, 'async_trait>(
-            &'life0 self,
-            filters: Option<ComputeInstanceFilters>,
-        ) -> Pin<
-            Box<
-                dyn Future<Output = Result<ComputeInstanceLoadResult, BoxError>>
-                    + Send
-                    + 'async_trait,
-            >,
-        >
-        where
-            'life0: 'async_trait,
-            Self: 'async_trait,
-        {
+    impl Provider for CountingProvider {
+        fn info(&self) -> ProviderInfo {
+            self.inner.info()
+        }
+
+        fn connections(&self, cx: &Call<'_>) -> Result<Vec<Connection>, ProviderError> {
+            self.inner.connections(cx)
+        }
+
+        fn dimensions(
+            &self,
+            cx: &Call<'_>,
+            connection: &ConnectionId,
+        ) -> Result<Vec<Dimension>, ProviderError> {
+            self.inner.dimensions(cx, connection)
+        }
+
+        fn kinds(&self) -> Vec<KindInfo> {
+            self.inner.kinds()
+        }
+
+        fn list(
+            &self,
+            cx: &Call<'_>,
+            connection: &ConnectionId,
+            kind: &KindId,
+            selection: &Selection,
+        ) -> ListResult {
             let call = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
             match self.first_call_error {
-                Some(message) if call == 1 => {
-                    Box::pin(
-                        async move { Err(Box::new(std::io::Error::other(message)) as BoxError) },
-                    )
-                }
-                _ => self.inner.list_instances(filters),
+                Some(message) if call == 1 => whole_load_failure(
+                    &CloudDeckError::from_service_error(&std::io::Error::other(message)),
+                    selection,
+                ),
+                _ => self.inner.list(cx, connection, kind, selection),
             }
+        }
+
+        fn console_url(
+            &self,
+            connection: &ConnectionId,
+            kind: &KindId,
+            resource: &Instance,
+        ) -> Option<String> {
+            self.inner.console_url(connection, kind, resource)
+        }
+
+        fn fields(&self, kind: &KindId) -> Vec<FieldDef> {
+            self.inner.fields(kind)
+        }
+
+        fn inspector(&self, kind: &KindId) -> Vec<InspectorSectionDef> {
+            self.inner.inspector(kind)
         }
     }
 
     fn counting_service(
         calls: &Arc<AtomicUsize>,
         first_call_error: Option<&'static str>,
-    ) -> CountingService {
-        CountingService {
+    ) -> Arc<dyn Provider> {
+        Arc::new(CountingProvider {
             calls: calls.clone(),
             first_call_error,
-            inner: MockComputeService::new(three_instances(), None),
-        }
+            inner: fixtures::static_provider(three_instances()),
+        })
     }
 
-    /// Opens the main window at the given size with a refreshed fleet backed by `service`.
+    /// Opens the main window at the given size with a refreshed fleet backed by `provider`.
     fn rooted_main_window_with_service(
         cx: &mut TestAppContext,
-        service: impl ComputeService + Send + Sync + 'static,
+        provider: Arc<dyn Provider>,
         width: f32,
         height: f32,
     ) -> (
@@ -1180,7 +1215,7 @@ mod tests {
         Entity<MainWindow>,
         &mut VisualTestContext,
     ) {
-        let vm = InstanceListViewModel::new(Box::new(service));
+        let vm = InstanceListViewModel::new(provider);
         let fleet = cx.new(|_| FleetState::new(vm, "default".to_string(), true));
         fleet.update(cx, |fleet, cx| fleet.refresh(cx));
         wait_until(cx, |cx| {
@@ -1329,23 +1364,17 @@ mod tests {
 
     #[gpui::test]
     fn throttled_load_shows_the_throttled_centered_state(cx: &mut TestAppContext) {
-        let service =
-            MockComputeService::new(vec![], Some(std::io::Error::other("Rate exceeded").into()));
-        let (_fleet, main, cx) = rooted_main_window_with_service(cx, service, 1280.0, 760.0);
+        let provider = fixtures::failing_provider("Rate exceeded");
+        let (_fleet, main, cx) = rooted_main_window_with_service(cx, provider, 1280.0, 760.0);
 
         assert_eq!(center_state_of(&main, cx), Some(CenterState::Throttled));
     }
 
     #[gpui::test]
     fn expired_credentials_load_shows_the_signed_out_centered_state(cx: &mut TestAppContext) {
-        let service = MockComputeService::new(
-            vec![],
-            Some(
-                std::io::Error::other("The security token included in the request is expired")
-                    .into(),
-            ),
-        );
-        let (_fleet, main, cx) = rooted_main_window_with_service(cx, service, 1280.0, 760.0);
+        let provider =
+            fixtures::failing_provider("The security token included in the request is expired");
+        let (_fleet, main, cx) = rooted_main_window_with_service(cx, provider, 1280.0, 760.0);
 
         assert_eq!(center_state_of(&main, cx), Some(CenterState::SignedOut));
     }
@@ -1859,9 +1888,7 @@ mod tests {
         cx.run_until_parked();
 
         fleet.update(cx, |fleet, cx| {
-            fleet
-                .view_model
-                .finish_load(Err(std::io::Error::other("Rate exceeded").into()));
+            fleet.view_model.finish_load(failed_load("Rate exceeded"));
             cx.notify();
         });
         cx.run_until_parked();
@@ -1882,9 +1909,7 @@ mod tests {
         cx.run_until_parked();
 
         fleet.update(cx, |fleet, cx| {
-            fleet
-                .view_model
-                .finish_load(Err(std::io::Error::other("Rate exceeded").into()));
+            fleet.view_model.finish_load(failed_load("Rate exceeded"));
             cx.notify();
         });
         cx.run_until_parked();
@@ -1900,10 +1925,10 @@ mod tests {
         assert_eq!(during_load.as_deref(), Some("Refresh failed: Throttled"));
 
         fleet.update(cx, |fleet, cx| {
-            fleet.view_model.finish_load(Ok(ComputeInstanceLoadResult {
-                instances: three_instances(),
-                partial_failures: vec![],
-            }));
+            fleet.view_model.finish_load(ListResult {
+                resources: three_instances(),
+                failures: vec![],
+            });
             cx.notify();
         });
         cx.run_until_parked();

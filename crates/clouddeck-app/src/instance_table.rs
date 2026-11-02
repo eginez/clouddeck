@@ -360,9 +360,8 @@ fn cell(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::ec2_fleet;
     use crate::view_models::InstanceListViewModel;
-    use clouddeck_core::MockComputeService;
+    use clouddeck_core::fixture_fleet as fleet;
     use gpui::{
         AppContext, Bounds, TestAppContext, VisualTestContext, WindowBounds, WindowOptions, point,
         size,
@@ -374,13 +373,13 @@ mod tests {
     use crate::ui_record::recorded;
 
     fn loaded_state(cx: &mut TestAppContext) -> Entity<FleetState> {
-        let mut records = ec2_fleet(&[
+        let mut records = fleet::instances(&[
             ("i-1", "api-server", "running", "t3.medium"),
             ("i-2", "", "stopped", "t3.medium"),
             ("i-3", "worker", "pending", "t3.medium"),
         ]);
-        records[1].tags.clear();
-        let vm = InstanceListViewModel::new(Box::new(MockComputeService::new(records, None)));
+        records[1].labels.clear();
+        let vm = InstanceListViewModel::new(fleet::static_provider(records));
         let state = cx.new(|_| FleetState::new(vm, "default".to_string(), true));
         state.update(cx, |state, cx| state.refresh(cx));
         wait_until(cx, |cx| {
@@ -513,7 +512,7 @@ mod tests {
 
     #[gpui::test]
     fn empty_fleet_renders_no_rows(cx: &mut TestAppContext) {
-        let vm = InstanceListViewModel::new(Box::new(MockComputeService::new(vec![], None)));
+        let vm = InstanceListViewModel::new(fleet::static_provider(vec![]));
         let state = cx.new(|_| FleetState::new(vm, "default".to_string(), true));
         let cx = open_table(cx, state, 1280.0);
 

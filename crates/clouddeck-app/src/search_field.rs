@@ -770,8 +770,7 @@ mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    use crate::test_support::{ec2_record, ec2_tag};
-    use clouddeck_core::MockComputeService;
+    use clouddeck_core::fixture_fleet as fleet;
     use gpui::{Entity, TestAppContext, VisualTestContext};
 
     use super::*;
@@ -781,11 +780,11 @@ mod tests {
 
     fn loaded_view_model() -> InstanceListViewModel {
         let instances = vec![
-            ec2_record("i-1", "api-server", "running", "t3.medium"),
-            ec2_record("i-2", "bastion", "stopped", "t3.medium"),
-            ec2_record("i-3", "worker", "stopped", "t3.medium"),
+            fleet::instance("i-1", "api-server", "running", "t3.medium"),
+            fleet::instance("i-2", "bastion", "stopped", "t3.medium"),
+            fleet::instance("i-3", "worker", "stopped", "t3.medium"),
         ];
-        let mut vm = InstanceListViewModel::new(Box::new(MockComputeService::new(instances, None)));
+        let mut vm = InstanceListViewModel::new(fleet::static_provider(instances));
         let rt = tokio::runtime::Builder::new_current_thread()
             .build()
             .unwrap();
@@ -795,11 +794,11 @@ mod tests {
 
     fn three_state_view_model() -> InstanceListViewModel {
         let instances = vec![
-            ec2_record("i-1", "api-server", "running", "t3.medium"),
-            ec2_record("i-2", "bastion", "stopped", "t3.medium"),
-            ec2_record("i-3", "batcher", "pending", "t3.medium"),
+            fleet::instance("i-1", "api-server", "running", "t3.medium"),
+            fleet::instance("i-2", "bastion", "stopped", "t3.medium"),
+            fleet::instance("i-3", "batcher", "pending", "t3.medium"),
         ];
-        let mut vm = InstanceListViewModel::new(Box::new(MockComputeService::new(instances, None)));
+        let mut vm = InstanceListViewModel::new(fleet::static_provider(instances));
         let rt = tokio::runtime::Builder::new_current_thread()
             .build()
             .unwrap();
@@ -1085,10 +1084,8 @@ mod tests {
     }
 
     fn owner_view_model() -> InstanceListViewModel {
-        let mut tagged = ec2_record("i-1", "api-server", "running", "t3.medium");
-        tagged.tags.push(ec2_tag("Owner", "platform"));
-        let mut vm =
-            InstanceListViewModel::new(Box::new(MockComputeService::new(vec![tagged], None)));
+        let tagged = fleet::owned_instance("i-1", "api-server", "running", Some("platform"));
+        let mut vm = InstanceListViewModel::new(fleet::static_provider(vec![tagged]));
         let rt = tokio::runtime::Builder::new_current_thread()
             .build()
             .unwrap();

@@ -1,10 +1,12 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::time::SystemTime;
 
 use crate::instance::{Instance, native_id};
+use crate::service_provider::{LoadHost, REGION, cloud_deck_error, join_failure};
 use crate::{
-    CloudDeckError, CompiledQuery, ComputeService, ComputeServicePartialFailure, QueryError,
-    merge_with_previous,
+    Call, CellFailure, CloudDeckError, CompiledQuery, ComputeServicePartialFailure, ConnectionId,
+    KindId, ListResult, Provider, ProviderError, QueryError, Selection, merge_with_previous,
 };
 
 /// Rust port of the Swift oracle's `InstanceListViewModel`
@@ -16,7 +18,9 @@ use crate::{
 /// referenced here. The search text is a query in the field language (see
 /// `crate::compile`).
 pub struct InstanceListViewModel {
-    service: std::sync::Arc<dyn ComputeService + Send + Sync>,
+    provider: Arc<dyn Provider>,
+    connection: ConnectionId,
+    selection: Selection,
     instances: Vec<Instance>,
     is_loading: bool,
     error: Option<CloudDeckError>,
@@ -33,9 +37,11 @@ pub struct InstanceListViewModel {
 }
 
 impl InstanceListViewModel {
-    pub fn new(service: Box<dyn ComputeService + Send + Sync>) -> Self {
+    pub fn new(provider: Arc<dyn Provider>) -> Self {
         Self {
-            service: service.into(),
+            provider,
+            connection: ConnectionId::from("default"),
+            selection: Selection::new(),
             instances: Vec::new(),
             is_loading: false,
             error: None,
@@ -161,7 +167,9 @@ impl InstanceListViewModel {
             .compile_search()
             .filter_instances(&self.instances)
             .into_iter()
-            .filter(|instance| states.is_empty() || states.contains(&instance.state.raw.to_lowercase()))
+            .filter(|instance| {
+                states.is_empty() || states.contains(&instance.state.raw.to_lowercase())
+            })
             .filter(|instance| {
                 instance_types.is_empty()
                     || instance
@@ -224,9 +232,9 @@ impl InstanceListViewModel {
         ))
     }
 
-    /// Loads instances from the compute service, updating state on success
-    /// or failure (Swift: `loadInstances()`).
-    pub fn begin_load(&mut self) -> Option<std::sync::Arc<dyn ComputeService + Send + Sync>> {
+    /// Starts a load (Swift: `loadInstances()`). The returned request must be
+    /// run off the async runtime, because `Provider::list` blocks.
+    pub fn begin_load(&mut self) -> Option<LoadRequest> {
         if self.is_loading {
             return None;
         }
@@ -234,59 +242,56 @@ impl InstanceListViewModel {
         self.error = None;
         self.error_message = None;
 
-        Some(self.service.clone())
+        Some(LoadRequest {
+            provider: self.provider.clone(),
+            connection: self.connection.clone(),
+            selection: self.selection.clone(),
+        })
     }
 
-    pub fn finish_load(
-        &mut self,
-        result: Result<crate::ComputeInstanceLoadResult, crate::BoxError>,
-    ) {
+    pub fn finish_load(&mut self, result: ListResult) {
         self.finish_load_at(result, SystemTime::now());
     }
 
     /// Like `finish_load`, recording `now` as the load's finish time.
-    pub fn finish_load_at(
-        &mut self,
-        result: Result<crate::ComputeInstanceLoadResult, crate::BoxError>,
-        now: SystemTime,
-    ) {
-        match result {
-            Ok(result) => {
-                self.error = None;
-                self.error_message = None;
-                let fresh: Vec<Instance> = result.instances.iter().map(Instance::from).collect();
-                for instance in &fresh {
-                    if let Some(region) = instance.region.as_deref() {
-                        self.region_loaded_at.insert(region.to_string(), now);
-                    }
+    pub fn finish_load_at(&mut self, result: ListResult, now: SystemTime) {
+        if let Some(error) = whole_load_error(&result, &self.selection) {
+            let classified = cloud_deck_error(error);
+            self.error_message = Some(classified.message_for("list instances"));
+            self.error = Some(classified);
+        } else {
+            self.error = None;
+            self.error_message = None;
+            let partial_failures: Vec<ComputeServicePartialFailure> =
+                result.failures.iter().map(partial_failure).collect();
+            for instance in &result.resources {
+                if let Some(region) = instance.region.as_deref() {
+                    self.region_loaded_at.insert(region.to_string(), now);
                 }
-                let merged = merge_with_previous(&self.instances, fresh, &result.partial_failures);
-                self.instances = merged.instances;
-                self.stale_regions = merged.stale_regions;
-                self.known_tag_keys = crate::known_tag_keys(&self.instances);
-                self.partial_failures = result.partial_failures;
-                self.last_success = Some(now);
-                self.reconcile_selected_filters();
-                self.reconcile_selection_with_filtered_instances();
             }
-            Err(error) => {
-                let cloud_deck_error = error
-                    .downcast_ref::<CloudDeckError>()
-                    .cloned()
-                    .unwrap_or_else(|| CloudDeckError::from_service_error(error.as_ref()));
-                self.error_message = Some(cloud_deck_error.message_for("list instances"));
-                self.error = Some(cloud_deck_error);
-            }
+            let merged = merge_with_previous(&self.instances, result.resources, &partial_failures);
+            self.instances = merged.instances;
+            self.stale_regions = merged.stale_regions;
+            self.known_tag_keys = crate::known_tag_keys(&self.instances);
+            self.partial_failures = partial_failures;
+            self.last_success = Some(now);
+            self.reconcile_selected_filters();
+            self.reconcile_selection_with_filtered_instances();
         }
 
         self.is_loading = false;
     }
 
     pub async fn load_instances(&mut self) {
-        if let Some(service) = self.begin_load() {
-            let result = service.list_instances(None).await;
-            self.finish_load(result);
-        }
+        let Some(request) = self.begin_load() else {
+            return;
+        };
+        let selection = request.selection.clone();
+        let result = match tokio::task::spawn_blocking(move || request.run()).await {
+            Ok(result) => result,
+            Err(error) => join_failure(&selection, &error),
+        };
+        self.finish_load(result);
     }
 
     /// Reloads instances (Swift: `refresh()`, which just calls
@@ -328,8 +333,11 @@ impl InstanceListViewModel {
         let Some(selected_id) = self.selected_instance_id.as_deref() else {
             return;
         };
-        let filtered_ids: HashSet<String> =
-            self.filtered_instances().into_iter().map(|i| i.id).collect();
+        let filtered_ids: HashSet<String> = self
+            .filtered_instances()
+            .into_iter()
+            .map(|i| i.id)
+            .collect();
         if !filtered_ids.contains(selected_id) {
             self.selected_instance_id = None;
         }
@@ -349,6 +357,55 @@ impl InstanceListViewModel {
     }
 }
 
+pub struct LoadRequest {
+    provider: Arc<dyn Provider>,
+    connection: ConnectionId,
+    selection: Selection,
+}
+
+impl LoadRequest {
+    pub fn selection(&self) -> &Selection {
+        &self.selection
+    }
+
+    pub fn run(self) -> ListResult {
+        let host = LoadHost;
+        let cx = Call {
+            deadline: None,
+            host: &host,
+        };
+        self.provider
+            .list(&cx, &self.connection, &KindId::instances(), &self.selection)
+    }
+}
+
+fn whole_load_error<'a>(
+    result: &'a ListResult,
+    selection: &Selection,
+) -> Option<&'a ProviderError> {
+    if !result.resources.is_empty() {
+        return None;
+    }
+    result
+        .failures
+        .iter()
+        .find(|failure| &failure.cell == selection)
+        .map(|failure| &failure.error)
+}
+
+fn partial_failure(failure: &CellFailure) -> ComputeServicePartialFailure {
+    ComputeServicePartialFailure {
+        region: failure
+            .cell
+            .values(REGION)
+            .first()
+            .map(|value| value.as_str().to_string())
+            .unwrap_or_default(),
+        message: failure.error.message.clone(),
+        error: cloud_deck_error(&failure.error),
+    }
+}
+
 /// The selected filter value as a lowercase set; empty when nothing is selected.
 fn normalized_selection(selected: &str) -> HashSet<String> {
     let value = selected.trim().to_lowercase();
@@ -362,8 +419,12 @@ fn normalized_selection(selected: &str) -> HashSet<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ComputeService;
     use crate::query::fixtures::bare_ec2;
-    use crate::{ComputeInstanceFilters, DirectoryScenarioCatalog, ScenarioService, TestScenarioKind};
+    use crate::service_provider::{service_provider, whole_load_failure};
+    use crate::{
+        ComputeInstanceFilters, DirectoryScenarioCatalog, ScenarioService, TestScenarioKind,
+    };
     use std::time::{Duration, UNIX_EPOCH};
 
     const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/testdata/ec2-scenarios");
@@ -374,7 +435,7 @@ mod tests {
 
     fn view_model_for(kind: TestScenarioKind) -> InstanceListViewModel {
         let resolved = ScenarioService::for_kind(kind, &catalog()).unwrap();
-        InstanceListViewModel::new(Box::new(resolved.into_service()))
+        InstanceListViewModel::new(service_provider(Box::new(resolved.into_service())))
     }
 
     #[tokio::test]
@@ -402,14 +463,15 @@ mod tests {
 
     #[test]
     fn load_failure_keeps_last_good_instances_and_sets_error_message() {
-        let mut vm =
-            InstanceListViewModel::new(Box::new(crate::MockComputeService::new(vec![], None)));
+        let mut vm = InstanceListViewModel::new(service_provider(Box::new(
+            crate::MockComputeService::new(vec![], None),
+        )));
         vm.finish_load_at(loaded(vec![("us-east-1", "a")], &[]), at(T1_SECS));
         vm.set_search_text("keep-me");
         vm.set_selected_instance_id(Some("us-east-1:a".into()));
 
         vm.begin_load();
-        vm.finish_load_at(Err(Box::new(StubError)), at(T1_SECS + 60));
+        vm.finish_load_at(stub_failure(), at(T1_SECS + 60));
 
         assert!(!vm.is_loading());
         assert_eq!(loaded_ids(&vm), vec!["a"]);
@@ -480,7 +542,7 @@ mod tests {
             .unwrap();
             Box::new(resolved.into_service())
         });
-        let mut vm = InstanceListViewModel::new(Box::new(fleet));
+        let mut vm = InstanceListViewModel::new(service_provider(Box::new(fleet)));
         vm.load_instances().await;
         assert!(vm.instances().is_empty());
         assert_eq!(vm.error(), Some(&CloudDeckError::Throttled));
@@ -497,7 +559,7 @@ mod tests {
             .unwrap();
             Box::new(resolved.into_service())
         });
-        let mut vm = InstanceListViewModel::new(Box::new(fleet));
+        let mut vm = InstanceListViewModel::new(service_provider(Box::new(fleet)));
         vm.load_instances().await;
         assert!(vm.instances().is_empty());
         assert!(vm.partial_failures().is_empty());
@@ -524,7 +586,7 @@ mod tests {
             }
         }
 
-        let mut vm = InstanceListViewModel::new(Box::new(AlreadyClassified));
+        let mut vm = InstanceListViewModel::new(service_provider(Box::new(AlreadyClassified)));
         vm.load_instances().await;
         assert_eq!(
             vm.error(),
@@ -570,10 +632,11 @@ mod tests {
 
     #[tokio::test]
     async fn a_successful_load_after_a_prior_failure_clears_the_stale_error() {
-        let mut vm = InstanceListViewModel::new(Box::new(FailsOnceThenSucceeds {
-            failed_once: std::sync::atomic::AtomicBool::new(false),
-            result: load_result(vec![("us-east-1", "i-recovered")], &[]),
-        }));
+        let mut vm =
+            InstanceListViewModel::new(service_provider(Box::new(FailsOnceThenSucceeds {
+                failed_once: std::sync::atomic::AtomicBool::new(false),
+                result: load_result(vec![("us-east-1", "i-recovered")], &[]),
+            })));
 
         vm.load_instances().await;
         assert!(vm.error_message().is_some(), "first load should fail");
@@ -805,7 +868,8 @@ mod tests {
             .iter()
             .find(|i| native_id(i) == "i-scenario-002")
             .unwrap()
-            .id.clone();
+            .id
+            .clone();
         vm.set_selected_instance_id(Some(stopped_id.clone()));
         assert_eq!(vm.selected_instance_id(), Some(stopped_id.as_str()));
 
@@ -824,7 +888,8 @@ mod tests {
             .iter()
             .find(|i| native_id(i) == "i-scenario-002")
             .unwrap()
-            .id.clone();
+            .id
+            .clone();
         vm.set_selected_instance_id(Some(large_id.clone()));
         assert_eq!(vm.selected_instance_id(), Some(large_id.as_str()));
 
@@ -853,7 +918,9 @@ mod tests {
 
     #[test]
     fn partial_failure_summary_is_none_when_empty() {
-        let vm = InstanceListViewModel::new(Box::new(crate::MockComputeService::new(vec![], None)));
+        let vm = InstanceListViewModel::new(service_provider(Box::new(
+            crate::MockComputeService::new(vec![], None),
+        )));
         assert_eq!(vm.partial_failure_summary(), None);
     }
 
@@ -898,11 +965,31 @@ mod tests {
         UNIX_EPOCH + Duration::from_secs(secs)
     }
 
-    fn loaded(
-        records: Vec<(&str, &str)>,
-        failed_regions: &[&str],
-    ) -> Result<crate::ComputeInstanceLoadResult, crate::BoxError> {
-        Ok(load_result(records, failed_regions))
+    struct Canned(crate::ComputeInstanceLoadResult);
+
+    #[async_trait::async_trait]
+    impl ComputeService for Canned {
+        async fn list_instances(
+            &self,
+            _filters: Option<ComputeInstanceFilters>,
+        ) -> Result<crate::ComputeInstanceLoadResult, crate::BoxError> {
+            Ok(self.0.clone())
+        }
+    }
+
+    fn loaded(records: Vec<(&str, &str)>, failed_regions: &[&str]) -> ListResult {
+        let mut vm = InstanceListViewModel::new(service_provider(Box::new(Canned(load_result(
+            records,
+            failed_regions,
+        )))));
+        vm.begin_load().expect("load starts").run()
+    }
+
+    fn stub_failure() -> ListResult {
+        whole_load_failure(
+            &CloudDeckError::from_service_error(&StubError),
+            &Selection::new(),
+        )
     }
 
     fn load_result(
@@ -926,21 +1013,16 @@ mod tests {
     }
 
     fn loaded_ids(vm: &InstanceListViewModel) -> Vec<&str> {
-        vm.instances()
-            .iter()
-            .map(native_id)
-            .collect()
+        vm.instances().iter().map(native_id).collect()
     }
 
     #[test]
     fn failed_region_keeps_previous_rows_and_is_marked_stale_with_load_times() {
-        let mut vm =
-            InstanceListViewModel::new(Box::new(crate::MockComputeService::new(vec![], None)));
+        let mut vm = InstanceListViewModel::new(service_provider(Box::new(
+            crate::MockComputeService::new(vec![], None),
+        )));
         vm.finish_load_at(
-            loaded(
-                vec![("us-east-1", "a"), ("eu-central-1", "b")],
-                &[],
-            ),
+            loaded(vec![("us-east-1", "a"), ("eu-central-1", "b")], &[]),
             at(T1_SECS),
         );
 
@@ -958,13 +1040,11 @@ mod tests {
 
     #[test]
     fn recovered_region_clears_stale_marker_and_refreshes_its_load_time() {
-        let mut vm =
-            InstanceListViewModel::new(Box::new(crate::MockComputeService::new(vec![], None)));
+        let mut vm = InstanceListViewModel::new(service_provider(Box::new(
+            crate::MockComputeService::new(vec![], None),
+        )));
         vm.finish_load_at(
-            loaded(
-                vec![("us-east-1", "a"), ("eu-central-1", "b")],
-                &[],
-            ),
+            loaded(vec![("us-east-1", "a"), ("eu-central-1", "b")], &[]),
             at(T1_SECS),
         );
         vm.finish_load_at(
@@ -973,10 +1053,7 @@ mod tests {
         );
 
         vm.finish_load_at(
-            loaded(
-                vec![("us-east-1", "a"), ("eu-central-1", "b")],
-                &[],
-            ),
+            loaded(vec![("us-east-1", "a"), ("eu-central-1", "b")], &[]),
             at(T2_SECS),
         );
 
@@ -987,13 +1064,11 @@ mod tests {
 
     #[test]
     fn failed_load_keeps_rows_stale_regions_and_last_success() {
-        let mut vm =
-            InstanceListViewModel::new(Box::new(crate::MockComputeService::new(vec![], None)));
+        let mut vm = InstanceListViewModel::new(service_provider(Box::new(
+            crate::MockComputeService::new(vec![], None),
+        )));
         vm.finish_load_at(
-            loaded(
-                vec![("us-east-1", "a"), ("eu-central-1", "b")],
-                &[],
-            ),
+            loaded(vec![("us-east-1", "a"), ("eu-central-1", "b")], &[]),
             at(T1_SECS),
         );
         vm.finish_load_at(
@@ -1002,7 +1077,7 @@ mod tests {
         );
 
         vm.begin_load();
-        vm.finish_load_at(Err(Box::new(StubError)), at(T2_SECS + 60));
+        vm.finish_load_at(stub_failure(), at(T2_SECS + 60));
 
         assert_eq!(loaded_ids(&vm), vec!["a", "b"]);
         assert_eq!(vm.stale_regions(), ["eu-central-1".to_string()]);
@@ -1013,8 +1088,9 @@ mod tests {
 
     #[test]
     fn finish_load_without_time_records_a_last_success() {
-        let mut vm =
-            InstanceListViewModel::new(Box::new(crate::MockComputeService::new(vec![], None)));
+        let mut vm = InstanceListViewModel::new(service_provider(Box::new(
+            crate::MockComputeService::new(vec![], None),
+        )));
 
         vm.finish_load(loaded(vec![("us-east-1", "a")], &[]));
 

@@ -6,9 +6,9 @@ use crate::{
     theme::SurgicalTheme,
 };
 use clouddeck_core::{
-    AwsSdkComputeService, ComputeService, EC2Instance, EC2Scenario, FLEET_REGIONS,
-    FleetComputeService, InstanceListViewModel, MockComputeService, ProfileInput, RegionScope,
-    Settings, UiState, WindowFrame, WorkspaceContext, fleet_region_timeout, settings_path,
+    DemoFleet, FLEET_REGIONS, InstanceListViewModel, ProfileInput, Provider, RegionScope, Settings,
+    UiState, WindowFrame, WorkspaceContext, demo_profiles, demo_region_names, settings_path,
+    workspace_provider,
 };
 use gpui::{
     AnyWindowHandle, App, Bounds, Context, Entity, IntoElement, KeyBinding, ParentElement, Render,
@@ -34,7 +34,7 @@ pub struct AppShell {
     window_handle: AnyWindowHandle,
     context: WorkspaceContext,
     demo: bool,
-    demo_scenario: DemoScenario,
+    demo_scenario: DemoFleet,
     wizard: Option<Entity<crate::account_window::AccountWindowView>>,
     message: Option<String>,
     ui_state_path: Option<PathBuf>,
@@ -48,29 +48,20 @@ pub struct AppShell {
     applied_scope: RegionScope,
     remembered_scope: Vec<String>,
     request_timeout: Duration,
-    /// Test-only: an optional compute service injected into `apply_context`
+    /// Test-only: an optional provider injected into `apply_context`
     /// so that a test can deterministically hold a picker-driven context
-    /// switch load open (via `GatedComputeService`) and observe the
+    /// switch load open (via a gated provider) and observe the
     /// `is_loading` / `Reloading` transition window that
-    /// `MockComputeService` resolves too fast to reliably catch.
+    /// a static provider resolves too fast to reliably catch.
     #[cfg(test)]
-    test_service_override: Option<std::sync::Arc<dyn ComputeService + Send + Sync>>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DemoScenario {
-    Happy,
-    Empty,
-    Failure,
-    Partial,
-    Large,
+    test_service_override: Option<std::sync::Arc<dyn Provider>>,
 }
 
 /// What the command line asked for.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct LaunchOptions {
     pub demo: bool,
-    pub scenario: DemoScenario,
+    pub scenario: DemoFleet,
     /// Content size of the main window, from `--size WxH`.
     pub size: Option<(f32, f32)>,
     /// State to open the main window in, from `--render-state <Name>`.
@@ -104,11 +95,11 @@ pub(crate) fn parse_launch_options(
             "--version" | "-V" => print_version = true,
             "--demo-scenario" => {
                 explicit_scenario = Some(match args.next().as_deref() {
-                    Some("empty") => DemoScenario::Empty,
-                    Some("failure") => DemoScenario::Failure,
-                    Some("partial") => DemoScenario::Partial,
-                    Some("large") => DemoScenario::Large,
-                    _ => DemoScenario::Happy,
+                    Some("empty") => DemoFleet::Empty,
+                    Some("failure") => DemoFleet::Failure,
+                    Some("partial") => DemoFleet::Partial,
+                    Some("large") => DemoFleet::Large,
+                    _ => DemoFleet::Happy,
                 });
                 demo = true;
             }
@@ -133,7 +124,7 @@ pub(crate) fn parse_launch_options(
     }
     let scenario = explicit_scenario
         .or_else(|| state.map(State::demo_scenario))
-        .unwrap_or(DemoScenario::Happy);
+        .unwrap_or(DemoFleet::Happy);
     Ok(LaunchOptions {
         demo,
         scenario,
@@ -191,16 +182,6 @@ fn restore_ui_state(
     )
 }
 
-fn scenario_for(kind: DemoScenario) -> EC2Scenario {
-    let fixture = match kind {
-        DemoScenario::Empty => {
-            include_str!("../../clouddeck-core/testdata/ec2-scenarios/empty-fleet.json")
-        }
-        _ => include_str!("../../clouddeck-core/testdata/ec2-scenarios/small-happy-path.json"),
-    };
-    clouddeck_core::parse_scenario(fixture).expect("bundled demo")
-}
-
 /// Tests never pass `--demo`, so `cargo test` runs always see real mode here.
 #[cfg(test)]
 fn is_real_mode() -> bool {
@@ -210,7 +191,7 @@ fn is_real_mode() -> bool {
 pub(crate) fn open_main_window(
     cx: &mut App,
     demo: bool,
-    demo_scenario: DemoScenario,
+    demo_scenario: DemoFleet,
 ) -> Option<WindowHandle<Root>> {
     open_main_window_with(cx, demo, demo_scenario, None, None)
 }
@@ -220,7 +201,7 @@ pub(crate) fn open_main_window(
 pub(crate) fn open_main_window_with(
     cx: &mut App,
     demo: bool,
-    demo_scenario: DemoScenario,
+    demo_scenario: DemoFleet,
     size: Option<(f32, f32)>,
     state: Option<State>,
 ) -> Option<WindowHandle<Root>> {
@@ -260,7 +241,7 @@ fn apply_state_when_loaded(handle: WindowHandle<Root>, state: State, cx: &mut Ap
 fn open_window_sized(
     cx: &mut App,
     demo: bool,
-    demo_scenario: DemoScenario,
+    demo_scenario: DemoFleet,
     size_override: Option<(f32, f32)>,
 ) -> Option<WindowHandle<Root>> {
     let restored = (!demo)
@@ -289,7 +270,7 @@ fn open_window_sized(
 }
 
 pub(crate) fn open_main_window_with_setup(cx: &mut App) -> Option<WindowHandle<Root>> {
-    let handle = open_main_window(cx, false, DemoScenario::Happy)?;
+    let handle = open_main_window(cx, false, DemoFleet::Happy)?;
     let shell = handle
         .update(cx, |root, _, _| {
             root.view().clone().downcast::<AppShell>().ok()
@@ -303,55 +284,48 @@ pub(crate) fn open_main_window_with_setup(cx: &mut App) -> Option<WindowHandle<R
 impl AppShell {
     #[cfg(test)]
     fn new_demo(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        Self::build_with_scenario(window, true, DemoScenario::Happy, cx)
+        Self::build_with_scenario(window, true, DemoFleet::Happy, cx)
     }
 
     #[cfg(test)]
     fn new_demo_empty(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        Self::build_with_scenario(window, true, DemoScenario::Empty, cx)
+        Self::build_with_scenario(window, true, DemoFleet::Empty, cx)
     }
 
     #[cfg(test)]
     fn new_demo_failure(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        Self::build_with_scenario(window, true, DemoScenario::Failure, cx)
+        Self::build_with_scenario(window, true, DemoFleet::Failure, cx)
     }
 
     #[cfg(test)]
     fn new_demo_large(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        Self::build_with_scenario(window, true, DemoScenario::Large, cx)
+        Self::build_with_scenario(window, true, DemoFleet::Large, cx)
     }
 
     #[cfg(test)]
     fn new_demo_partial(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        Self::build_with_scenario(window, true, DemoScenario::Partial, cx)
+        Self::build_with_scenario(window, true, DemoFleet::Partial, cx)
     }
 
     fn profiles(
         demo: bool,
-        demo_scenario: DemoScenario,
+        demo_scenario: DemoFleet,
     ) -> Result<Vec<clouddeck_core::AwsProfile>, std::io::Error> {
         if demo {
-            Ok(scenario_for(demo_scenario)
-                .profiles
-                .into_iter()
-                .map(|p| clouddeck_core::AwsProfile {
-                    name: p.name,
-                    region: p.regions.first().map(|r| r.name.clone()),
-                })
-                .collect())
+            Ok(demo_profiles(demo_scenario))
         } else {
             clouddeck_core::load_profiles()
         }
     }
 
-    fn regions(demo: bool, demo_scenario: DemoScenario) -> Vec<String> {
+    fn regions(demo: bool, demo_scenario: DemoFleet) -> Vec<String> {
         if !demo {
             return clouddeck_core::REGIONS
                 .iter()
                 .map(|region| (*region).into())
                 .collect();
         }
-        let partial_regions: Vec<String> = if demo_scenario == DemoScenario::Partial {
+        let partial_regions: Vec<String> = if demo_scenario == DemoFleet::Partial {
             FLEET_REGIONS
                 .iter()
                 .map(|region| (*region).into())
@@ -360,10 +334,8 @@ impl AppShell {
             Vec::new()
         };
         let mut regions = vec!["fleet".to_string()];
-        for region in scenario_for(demo_scenario)
-            .profiles
+        for region in demo_region_names(demo_scenario)
             .into_iter()
-            .flat_map(|profile| profile.regions.into_iter().map(|region| region.name))
             .chain(partial_regions)
         {
             if !regions.iter().any(|known| known == &region) {
@@ -373,7 +345,7 @@ impl AppShell {
         regions
     }
 
-    fn available_regions(demo: bool, demo_scenario: DemoScenario) -> Vec<String> {
+    fn available_regions(demo: bool, demo_scenario: DemoFleet) -> Vec<String> {
         Self::regions(demo, demo_scenario)
             .into_iter()
             .filter(|region| region != "fleet")
@@ -417,175 +389,26 @@ impl AppShell {
         }
     }
 
-    fn instances_for(data: &EC2Scenario, profile: &str, region: &str) -> Vec<EC2Instance> {
-        data.profiles
-            .iter()
-            .find(|candidate| candidate.name == profile)
-            .map(|candidate| {
-                candidate
-                    .regions
-                    .iter()
-                    .filter(|candidate| region == "fleet" || candidate.name == region)
-                    .flat_map(|candidate| {
-                        candidate.instances.iter().cloned().map(|mut instance| {
-                            instance.region = Some(candidate.name.clone());
-                            instance
-                        })
-                    })
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-
-    fn large_instances(mut instances: Vec<EC2Instance>) -> Vec<EC2Instance> {
-        let seed = instances.clone();
-        if seed.is_empty() {
-            return instances;
-        }
-        for index in 4..=120 {
-            let mut instance = seed[(index - 4) % seed.len()].clone();
-            instance.instance_id = format!("i-demo-{index:03}");
-            if let Some(name) = instance.tags.iter_mut().find(|tag| tag.key == "Name") {
-                name.value = format!("demo-{index}");
-            }
-            instances.push(instance);
-        }
-        instances
-    }
-
-    fn demo_service(
-        context: &WorkspaceContext,
-        demo_scenario: DemoScenario,
-        fleet_regions: &[String],
-    ) -> Box<dyn ComputeService + Send + Sync> {
-        Self::failure_demo_service(demo_scenario)
-            .or_else(|| Self::partial_demo_service(context, demo_scenario, fleet_regions))
-            .or_else(|| Self::large_demo_service(context, demo_scenario))
-            .unwrap_or_else(|| Self::plain_demo_service(context, demo_scenario))
-    }
-
-    fn failure_demo_service(
-        demo_scenario: DemoScenario,
-    ) -> Option<Box<dyn ComputeService + Send + Sync>> {
-        (demo_scenario == DemoScenario::Failure).then(|| {
-            Box::new(MockComputeService::new(
-                vec![],
-                Some(std::io::Error::other("Simulated demo load failure").into()),
-            )) as _
-        })
-    }
-
-    fn partial_demo_service(
-        context: &WorkspaceContext,
-        demo_scenario: DemoScenario,
-        fleet_regions: &[String],
-    ) -> Option<Box<dyn ComputeService + Send + Sync>> {
-        (context.region == "fleet" && demo_scenario == DemoScenario::Partial).then(|| {
-            let data = scenario_for(demo_scenario);
-            let profile = context.profile.clone();
-            Box::new(FleetComputeService::new(
-                fleet_regions.to_vec(),
-                move |region| {
-                    if region == "us-east-1" {
-                        Box::new(MockComputeService::new(
-                            Self::instances_for(&data, &profile, region),
-                            None,
-                        ))
-                    } else {
-                        Box::new(MockComputeService::new(
-                            vec![],
-                            Some(
-                                std::io::Error::other(format!("Simulated failure in {region}"))
-                                    .into(),
-                            ),
-                        ))
-                    }
-                },
-            )) as _
-        })
-    }
-
-    fn large_demo_service(
-        context: &WorkspaceContext,
-        demo_scenario: DemoScenario,
-    ) -> Option<Box<dyn ComputeService + Send + Sync>> {
-        (demo_scenario == DemoScenario::Large).then(|| {
-            let instances = Self::instances_for(
-                &scenario_for(demo_scenario),
-                &context.profile,
-                &context.region,
-            );
-            Box::new(MockComputeService::new(
-                Self::large_instances(instances),
-                None,
-            )) as _
-        })
-    }
-
-    fn plain_demo_service(
-        context: &WorkspaceContext,
-        demo_scenario: DemoScenario,
-    ) -> Box<dyn ComputeService + Send + Sync> {
-        let instances = Self::instances_for(
-            &scenario_for(demo_scenario),
-            &context.profile,
-            &context.region,
-        );
-        Box::new(MockComputeService::new(instances, None))
-    }
-
-    fn service(
+    fn provider_for(
         context: &WorkspaceContext,
         demo: bool,
-        demo_scenario: DemoScenario,
+        demo_fleet: DemoFleet,
         fleet_regions: &[String],
         request_timeout: Duration,
-    ) -> Box<dyn ComputeService + Send + Sync> {
-        demo.then(|| Self::demo_service(context, demo_scenario, fleet_regions))
-            .or_else(|| context.profile.is_empty().then(Self::no_profile_service))
-            .or_else(|| {
-                (context.region == "fleet")
-                    .then(|| Self::fleet_aws_service(context, fleet_regions, request_timeout))
-            })
-            .unwrap_or_else(|| Self::aws_service(context, request_timeout))
-    }
-
-    fn no_profile_service() -> Box<dyn ComputeService + Send + Sync> {
-        Box::new(MockComputeService::new(vec![], Some(std::io::Error::other("No AWS profile selected. Use “Connect to AWS” to sign in and choose a profile, or explore the demo without credentials.").into())))
-    }
-
-    fn fleet_aws_service(
-        context: &WorkspaceContext,
-        fleet_regions: &[String],
-        request_timeout: Duration,
-    ) -> Box<dyn ComputeService + Send + Sync> {
-        let profile = context.profile.clone();
-        Box::new(FleetComputeService::with_timeout(
-            fleet_regions.to_vec(),
-            move |region| {
-                Box::new(
-                    AwsSdkComputeService::new(profile.clone(), region)
-                        .with_timeout(request_timeout),
-                )
-            },
-            fleet_region_timeout(request_timeout),
-        ))
-    }
-
-    fn aws_service(
-        context: &WorkspaceContext,
-        request_timeout: Duration,
-    ) -> Box<dyn ComputeService + Send + Sync> {
-        Box::new(
-            AwsSdkComputeService::new(context.profile.clone(), context.region.clone())
-                .with_timeout(request_timeout),
+    ) -> std::sync::Arc<dyn Provider> {
+        workspace_provider(
+            &context.profile,
+            &context.region,
+            demo.then_some(demo_fleet),
+            fleet_regions,
+            request_timeout,
         )
     }
 
     fn build_with_scenario(
         window: &mut Window,
         demo: bool,
-        demo_scenario: DemoScenario,
+        demo_scenario: DemoFleet,
         cx: &mut Context<Self>,
     ) -> Self {
         let ui_state_path = (!demo).then(clouddeck_core::ui_state_path);
@@ -595,7 +418,7 @@ impl AppShell {
     fn build(
         window: &mut Window,
         demo: bool,
-        demo_scenario: DemoScenario,
+        demo_scenario: DemoFleet,
         ui_state_path: Option<PathBuf>,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -606,7 +429,7 @@ impl AppShell {
     fn build_with_profiles(
         window: &mut Window,
         demo: bool,
-        demo_scenario: DemoScenario,
+        demo_scenario: DemoFleet,
         loaded: Result<Vec<clouddeck_core::AwsProfile>, std::io::Error>,
         ui_state_path: Option<PathBuf>,
         cx: &mut Context<Self>,
@@ -632,7 +455,7 @@ impl AppShell {
             .filter(|s| profiles.iter().any(|p| p.name == s.profile))
             .unwrap_or_else(|| WorkspaceContext {
                 profile: profiles.first().map(|p| p.name.clone()).unwrap_or_default(),
-                region: if demo && demo_scenario == DemoScenario::Partial {
+                region: if demo && demo_scenario == DemoFleet::Partial {
                     "fleet".into()
                 } else {
                     profiles
@@ -650,7 +473,7 @@ impl AppShell {
         };
         let fleet_regions = Self::fleet_regions(&scope, &available);
         let request_timeout = Settings::load(&settings_path()).request_timeout();
-        let view_model = InstanceListViewModel::new(Self::service(
+        let view_model = InstanceListViewModel::new(Self::provider_for(
             &context,
             demo,
             demo_scenario,
@@ -811,18 +634,15 @@ impl AppShell {
     /// picker-driven context switch. Must be called before the trigger
     /// that causes `apply_context` to fire.
     #[cfg(test)]
-    pub fn set_test_service_override(
-        &mut self,
-        service: std::sync::Arc<dyn ComputeService + Send + Sync>,
-    ) {
-        self.test_service_override = Some(service);
+    pub fn set_test_service_override(&mut self, provider: std::sync::Arc<dyn Provider>) {
+        self.test_service_override = Some(provider);
     }
 
     fn new_main_window(
         fleet: Entity<FleetState>,
         profiles: Vec<ProfileInput>,
         demo: bool,
-        demo_scenario: DemoScenario,
+        demo_scenario: DemoFleet,
         scope: RegionScope,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -906,35 +726,24 @@ impl AppShell {
             .then(|| self.remembered_scope = Self::remembered_regions(&scope, &available));
         self.applied_scope = scope.clone();
         #[cfg(test)]
-        let service: Box<dyn ComputeService + Send + Sync> = self
-            .test_service_override
-            .as_ref()
-            .map(|s| {
-                // Wrap the shared `Arc<dyn>` in `ArcComputeService` so each
-                // context switch gets its own `Box<dyn>` handle over the same
-                // underlying service.
-                Box::new(crate::test_support::ArcComputeService::new(
-                    std::sync::Arc::clone(s),
-                )) as _
-            })
-            .unwrap_or_else(|| {
-                Self::service(
-                    &self.context,
-                    self.demo,
-                    self.demo_scenario,
-                    &fleet_regions,
-                    self.request_timeout,
-                )
-            });
+        let provider = self.test_service_override.clone().unwrap_or_else(|| {
+            Self::provider_for(
+                &self.context,
+                self.demo,
+                self.demo_scenario,
+                &fleet_regions,
+                self.request_timeout,
+            )
+        });
         #[cfg(not(test))]
-        let service: Box<dyn ComputeService + Send + Sync> = Self::service(
+        let provider = Self::provider_for(
             &self.context,
             self.demo,
             self.demo_scenario,
             &fleet_regions,
             self.request_timeout,
         );
-        let vm = InstanceListViewModel::new(service);
+        let vm = InstanceListViewModel::new(provider);
         let profile = self.context.profile.clone();
         let demo = self.demo;
         let previous = self.fleet.read(cx);
@@ -1093,7 +902,7 @@ impl Render for AppShell {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::GatedComputeService;
+    use clouddeck_core::fixture_fleet::{Gate, gated_provider};
     use gpui::VisualTestContext;
     use gpui::{AppContext, TestAppContext};
 
@@ -1127,14 +936,14 @@ mod tests {
         let options = parse(&["--render-state", "MainEmpty", "--size", "800x600"]).unwrap();
         assert_eq!(options.state, Some(State::MainEmpty));
         assert!(options.demo);
-        assert_eq!(options.scenario, DemoScenario::Empty);
+        assert_eq!(options.scenario, DemoFleet::Empty);
         assert_eq!(options.size, Some((800.0, 600.0)));
     }
 
     #[test]
     fn explicit_demo_scenario_beats_the_state_scenario() {
         let options = parse(&["--demo-scenario", "large", "--render-state", "MainEmpty"]).unwrap();
-        assert_eq!(options.scenario, DemoScenario::Large);
+        assert_eq!(options.scenario, DemoFleet::Large);
     }
 
     #[test]
@@ -1287,16 +1096,12 @@ mod tests {
 
     #[gpui::test]
     fn a_superseded_context_load_does_not_overwrite_the_current_context(cx: &mut TestAppContext) {
-        let gate = std::sync::Arc::new(tokio::sync::Notify::new());
+        let gate = Gate::new();
         let (shell, cx) = add_rooted_shell(cx, AppShell::new_demo);
         wait_for_row(cx, "table.row.us-east-1:i-scenario-001");
 
         shell.update(cx, |shell, _| {
-            shell.set_test_service_override(std::sync::Arc::new(GatedComputeService {
-                gate: gate.clone(),
-                instances: vec![],
-                error: None,
-            }));
+            shell.set_test_service_override(gated_provider(vec![], None, gate.clone()));
         });
         emit_main_window_event(
             cx,
@@ -1316,7 +1121,7 @@ mod tests {
             })
         });
 
-        gate.notify_one();
+        gate.open();
         for _ in 0..20 {
             cx.run_until_parked();
             std::thread::sleep(std::time::Duration::from_millis(5));
@@ -1374,33 +1179,13 @@ mod tests {
         // Mirrors the startup path: the fleet entity is built and refreshed,
         // so the load is spawned instead of blocking the UI thread on
         // `cx.background_executor().block(...)`.
-        let gate = std::sync::Arc::new(tokio::sync::Notify::new());
-        let service = GatedComputeService {
-            gate: gate.clone(),
-            instances: vec![EC2Instance {
-                instance_id: "i-gated".to_string(),
-                region: Some("us-east-1".to_string()),
-                instance_type: None,
-                state: None,
-                launch_time: None,
-                public_ip_address: None,
-                private_ip_address: None,
-                vpc_id: None,
-                subnet_id: None,
-                security_groups: vec![],
-                tags: vec![],
-                availability_zone: None,
-                image_id: None,
-                key_name: None,
-                architecture: None,
-                state_transition_reason: None,
-                iam_instance_profile_arn: None,
-                private_dns_name: None,
-                public_dns_name: None,
-            }],
-            error: None,
-        };
-        let view_model = InstanceListViewModel::new(Box::new(service));
+        let gate = Gate::new();
+        let provider = gated_provider(
+            clouddeck_core::fixture_fleet::instances(&[("i-gated", "", "", "")]),
+            None,
+            gate.clone(),
+        );
+        let view_model = InstanceListViewModel::new(provider);
         let fleet = cx.new(|_| FleetState::new(view_model, "scenario-default".into(), false));
         fleet.update(cx, |fleet, cx| fleet.refresh(cx));
 
@@ -1413,7 +1198,7 @@ mod tests {
             "data should not be populated synchronously while the gated load is in flight"
         );
 
-        gate.notify_one();
+        gate.open();
         let mut loaded = false;
         for _ in 0..200 {
             cx.run_until_parked();
@@ -1478,11 +1263,11 @@ mod tests {
     #[test]
     fn demo_regions_only_include_fixture_regions_and_fleet() {
         assert_eq!(
-            AppShell::regions(true, DemoScenario::Happy),
+            AppShell::regions(true, DemoFleet::Happy),
             vec!["fleet".to_string(), "us-east-1".to_string()]
         );
         assert!(
-            AppShell::regions(true, DemoScenario::Happy)
+            AppShell::regions(true, DemoFleet::Happy)
                 .iter()
                 .all(|region| region == "fleet" || region == "us-east-1")
         );
@@ -1496,18 +1281,29 @@ mod tests {
         };
 
         let fleet_regions: Vec<String> = FLEET_REGIONS.iter().map(|r| (*r).into()).collect();
-        let failure = AppShell::demo_service(&context, DemoScenario::Failure, &fleet_regions);
-        let failure = crate::runtime::runtime()
-            .block_on(failure.list_instances(None))
-            .expect_err("failure scenario should fail visibly");
-        assert!(failure.to_string().contains("Simulated demo load failure"));
+        let failure = loaded_demo(&context, DemoFleet::Failure, &fleet_regions);
+        assert!(
+            failure
+                .error_message()
+                .is_some_and(|message| message.contains("Simulated demo load failure")),
+            "failure scenario should fail visibly"
+        );
 
-        let partial = AppShell::demo_service(&context, DemoScenario::Partial, &fleet_regions);
-        let partial = crate::runtime::runtime()
-            .block_on(partial.list_instances(None))
-            .expect("partial scenario should retain successful regions");
-        assert_eq!(partial.instances.len(), 3);
-        assert_eq!(partial.partial_failures.len(), 3);
+        let partial = loaded_demo(&context, DemoFleet::Partial, &fleet_regions);
+        assert_eq!(partial.instances().len(), 3);
+        assert_eq!(partial.partial_failures().len(), 3);
+    }
+
+    fn loaded_demo(
+        context: &WorkspaceContext,
+        demo: DemoFleet,
+        fleet_regions: &[String],
+    ) -> InstanceListViewModel {
+        let provider =
+            AppShell::provider_for(context, true, demo, fleet_regions, Duration::from_secs(5));
+        let mut view_model = InstanceListViewModel::new(provider);
+        crate::runtime::runtime().block_on(view_model.load_instances());
+        view_model
     }
 
     #[test]
@@ -1516,11 +1312,8 @@ mod tests {
             profile: "scenario-default".into(),
             region: "us-east-1".into(),
         };
-        let service = AppShell::demo_service(&context, DemoScenario::Large, &[]);
-        let result = crate::runtime::runtime()
-            .block_on(service.list_instances(None))
-            .expect("large demo should load");
-        assert_eq!(result.instances.len(), 120);
+        let view_model = loaded_demo(&context, DemoFleet::Large, &[]);
+        assert_eq!(view_model.instances().len(), 120);
     }
 
     #[gpui::test]
@@ -1585,13 +1378,13 @@ mod tests {
                 AppShell::build_with_profiles(
                     window,
                     false,
-                    DemoScenario::Happy,
+                    DemoFleet::Happy,
                     Ok(Vec::new()),
                     Some(build_path),
                     cx,
                 )
             } else {
-                AppShell::build_with_scenario(window, true, DemoScenario::Empty, cx)
+                AppShell::build_with_scenario(window, true, DemoFleet::Empty, cx)
             }
         });
 
@@ -1654,7 +1447,7 @@ mod tests {
 
         let build_path = path.clone();
         let (shell, cx) = add_rooted_shell(cx, move |window, cx| {
-            AppShell::build(window, true, DemoScenario::Partial, Some(build_path), cx)
+            AppShell::build(window, true, DemoFleet::Partial, Some(build_path), cx)
         });
 
         shell.read_with(cx, |shell, cx| {
@@ -1680,7 +1473,7 @@ mod tests {
         let path = temp_ui_state_path("debounce");
         let build_path = path.clone();
         let (shell, cx) = add_rooted_shell(cx, move |window, cx| {
-            AppShell::build(window, true, DemoScenario::Happy, Some(build_path), cx)
+            AppShell::build(window, true, DemoFleet::Happy, Some(build_path), cx)
         });
         wait_until(cx, "the startup load to settle", |cx| {
             shell.read_with(cx, |shell, cx| {
@@ -1725,7 +1518,7 @@ mod tests {
         let path = temp_ui_state_path("quit-flush");
         let build_path = path.clone();
         let (shell, cx) = add_rooted_shell(cx, move |window, cx| {
-            AppShell::build(window, true, DemoScenario::Happy, Some(build_path), cx)
+            AppShell::build(window, true, DemoFleet::Happy, Some(build_path), cx)
         });
         wait_until(cx, "the startup load to settle", |cx| {
             shell.read_with(cx, |shell, cx| {
@@ -1761,7 +1554,7 @@ mod tests {
         std::fs::write(&path, b"not json").unwrap();
         let build_path = path.clone();
         let (shell, cx) = add_rooted_shell(cx, move |window, cx| {
-            AppShell::build(window, true, DemoScenario::Happy, Some(build_path), cx)
+            AppShell::build(window, true, DemoFleet::Happy, Some(build_path), cx)
         });
         wait_until(cx, "the startup load to settle", |cx| {
             shell.read_with(cx, |shell, cx| {
@@ -1807,7 +1600,7 @@ mod tests {
         .unwrap();
         let build_path = path.clone();
         let (shell, cx) = add_rooted_shell(cx, move |window, cx| {
-            AppShell::build(window, true, DemoScenario::Partial, Some(build_path), cx)
+            AppShell::build(window, true, DemoFleet::Partial, Some(build_path), cx)
         });
 
         let mut on_disk = UiState::load(&path);
@@ -1857,7 +1650,7 @@ mod tests {
         wait_until_context_settled(cx, &shell);
 
         let main_window = shell.read_with(cx, |shell, _| shell.main_window.clone());
-        let available = AppShell::available_regions(true, DemoScenario::Partial);
+        let available = AppShell::available_regions(true, DemoFleet::Partial);
         let selected = vec!["us-east-1".to_string(), "eu-west-1".to_string()];
         main_window.update(cx, |main_window, _| {
             main_window.scope = RegionScope::from_selected(&selected, &available);
@@ -2189,7 +1982,7 @@ mod tests {
     /// simulated error once the gate is released.
     #[gpui::test]
     fn region_change_shows_loading_state_during_failure_load(cx: &mut TestAppContext) {
-        let gate = std::sync::Arc::new(tokio::sync::Notify::new());
+        let gate = Gate::new();
         let (shell, cx) = add_rooted_shell(cx, AppShell::new_demo_failure);
         wait_until(cx, "error to render after startup", |cx| {
             fleet_error(cx, &shell).is_some()
@@ -2202,15 +1995,11 @@ mod tests {
         );
 
         shell.update(cx, |shell, _| {
-            let service = GatedComputeService {
-                gate: gate.clone(),
-                instances: vec![],
-                error: Some(std::sync::Arc::new(std::io::Error::other(
-                    "Simulated demo load failure",
-                ))
-                    as std::sync::Arc<dyn std::error::Error + Send + Sync>),
-            };
-            shell.set_test_service_override(std::sync::Arc::new(service));
+            shell.set_test_service_override(gated_provider(
+                vec![],
+                Some("Simulated demo load failure".to_string()),
+                gate.clone(),
+            ));
         });
 
         emit_main_window_event(
@@ -2238,7 +2027,7 @@ mod tests {
             "the error state must not be visible before the gate is released"
         );
 
-        gate.notify_one();
+        gate.open();
         wait_until(cx, "the gated failure load to settle", |cx| {
             fleet_error(cx, &shell).is_some()
         });

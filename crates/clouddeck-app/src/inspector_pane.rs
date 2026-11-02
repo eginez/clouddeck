@@ -502,10 +502,9 @@ fn copy_button(
 mod tests {
     use super::*;
     use crate::layout_check::states::{self, State};
-    use crate::test_support::ec2_inspector_fixture;
     use crate::ui_record::recorded;
     use crate::view_models::InstanceListViewModel;
-    use clouddeck_core::MockComputeService;
+    use clouddeck_core::fixture_fleet as fleet;
     use gpui::{
         Bounds, TestAppContext, VisualTestContext, WindowBounds, WindowOptions, point, size,
     };
@@ -527,10 +526,7 @@ mod tests {
     }
 
     fn loaded_state(cx: &mut TestAppContext) -> Entity<FleetState> {
-        let vm = InstanceListViewModel::new(Box::new(MockComputeService::new(
-            ec2_inspector_fixture(),
-            None,
-        )));
+        let vm = InstanceListViewModel::new(fleet::static_provider(fleet::inspector_instances()));
         let state = cx.new(|_| FleetState::new(vm, "prod-readonly".to_string(), true));
         state.update(cx, |state, cx| state.refresh(cx));
         wait_until(cx, |cx| {

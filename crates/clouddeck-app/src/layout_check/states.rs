@@ -2,12 +2,10 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::Duration;
 
-use clouddeck_core::{
-    ComputeService, DirectoryScenarioCatalog, EC2Instance, EC2InstanceTag, MockComputeService,
-    ProfileInput, RegionScope, ScenarioService, TestScenarioKind,
-};
+use clouddeck_core::{ProfileInput, Provider, RegionScope, TestScenarioKind, fixture_fleet};
 use gpui::{AppContext, Bounds, Entity, TestAppContext, VisualTestContext, point, px, size};
 
 use crate::fleet_state::FleetState;
@@ -18,49 +16,8 @@ use crate::welcome_window::WelcomeWindow;
 
 pub(crate) use crate::render_state::State;
 
-/// The fixture scenario catalog shipped with clouddeck-core.
-fn catalog() -> DirectoryScenarioCatalog {
-    DirectoryScenarioCatalog::new(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../clouddeck-core/testdata/ec2-scenarios"
-    ))
-}
-
-/// Resolves a fixture-backed scenario kind.
-fn resolve(kind: TestScenarioKind) -> ScenarioService {
-    ScenarioService::for_kind(kind, &catalog()).expect("fixture scenario should load")
-}
-
-/// 120 instances cloned from the first small-happy-path instance.
-fn large_fleet() -> Vec<EC2Instance> {
-    let resolved = resolve(TestScenarioKind::SmallHappyPath);
-    let scenario = resolved.scenario().expect("fixture-backed scenario");
-    let (profile, region) = scenario
-        .default_selection()
-        .expect("fixture has a default selection");
-    let template = scenario
-        .instances(Some(&profile), &region)
-        .expect("fixture instances should load")
-        .into_iter()
-        .next()
-        .expect("fixture has at least one instance");
-    (0..120)
-        .map(|n| {
-            let mut instance = template.clone();
-            instance.instance_id = format!("i-large-{n:03}");
-            instance.state = Some(if n % 2 == 0 { "running" } else { "stopped" }.to_string());
-            instance.tags.retain(|tag| tag.key != "Name");
-            instance.tags.push(EC2InstanceTag {
-                key: "Name".to_string(),
-                value: format!("large-instance-{n:03}"),
-            });
-            instance
-        })
-        .collect()
-}
-
-/// The compute service and region list that back `state`.
-fn service_for(state: State) -> (Box<dyn ComputeService + Send + Sync>, Vec<String>) {
+/// The provider and region list that back `state`.
+fn service_for(state: State) -> (Arc<dyn Provider>, Vec<String>) {
     let us_east = vec!["us-east-1".to_string()];
     match state {
         State::MainIdle
@@ -72,19 +29,16 @@ fn service_for(state: State) -> (Box<dyn ComputeService + Send + Sync>, Vec<Stri
         | State::OverlayRegion
         | State::OverlayPalette
         | State::OverlayRowMenu => (
-            Box::new(resolve(TestScenarioKind::SmallHappyPath).into_service()),
+            fixture_fleet::scenario_provider(TestScenarioKind::SmallHappyPath),
             us_east,
         ),
-        State::MainEmpty => (Box::new(MockComputeService::new(vec![], None)), us_east),
+        State::MainEmpty => (fixture_fleet::static_provider(vec![]), us_east),
         State::MainFailure => (
-            Box::new(MockComputeService::new(
-                vec![],
-                Some(std::io::Error::other("Simulated demo load failure").into()),
-            )),
+            fixture_fleet::failing_provider("Simulated demo load failure"),
             us_east,
         ),
         State::MainPartial | State::OverlayFailure => (
-            Box::new(resolve(TestScenarioKind::MultiRegionPartialFailure).into_service()),
+            fixture_fleet::scenario_provider(TestScenarioKind::MultiRegionPartialFailure),
             vec![
                 "us-east-1".to_string(),
                 "eu-west-1".to_string(),
@@ -92,7 +46,7 @@ fn service_for(state: State) -> (Box<dyn ComputeService + Send + Sync>, Vec<Stri
             ],
         ),
         State::MainLarge => (
-            Box::new(MockComputeService::new(large_fleet(), None)),
+            fixture_fleet::static_provider(fixture_fleet::large_fleet()),
             us_east,
         ),
         State::Welcome => unreachable!("the welcome window has no fleet service"),

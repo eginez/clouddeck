@@ -369,11 +369,10 @@ mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    use clouddeck_core::MockComputeService;
+    use clouddeck_core::fixture_fleet as fleet;
     use gpui::{Entity, TestAppContext, VisualTestContext};
 
     use super::*;
-    use crate::test_support::ec2_fleet;
     use crate::view_models::InstanceListViewModel;
 
     const STATE_KEYS: [&str; 4] = [
@@ -396,18 +395,15 @@ mod tests {
         cx: &mut TestAppContext,
         configure: impl FnOnce(&mut FleetState),
     ) -> (Entity<FleetState>, Entity<Sidebar>, &mut VisualTestContext) {
-        let mut vm = InstanceListViewModel::new(Box::new(MockComputeService::new(
-            ec2_fleet(&[
-                ("i-1", "api-server", "running", "t3.medium"),
-                ("i-2", "web-frontend", "running", "t3.micro"),
-                ("i-3", "worker", "running", "m6i.large"),
-                ("i-4", "cache", "running", "t3.small"),
-                ("i-5", "bastion", "stopped", "t3.micro"),
-                ("i-6", "batch", "stopped", "g5.xlarge"),
-                ("i-7", "indexer", "pending", "r6i.xlarge"),
-            ]),
-            None,
-        )));
+        let mut vm = InstanceListViewModel::new(fleet::static_provider(fleet::instances(&[
+            ("i-1", "api-server", "running", "t3.medium"),
+            ("i-2", "web-frontend", "running", "t3.micro"),
+            ("i-3", "worker", "running", "m6i.large"),
+            ("i-4", "cache", "running", "t3.small"),
+            ("i-5", "bastion", "stopped", "t3.micro"),
+            ("i-6", "batch", "stopped", "g5.xlarge"),
+            ("i-7", "indexer", "pending", "r6i.xlarge"),
+        ])));
         let rt = tokio::runtime::Builder::new_current_thread()
             .build()
             .unwrap();

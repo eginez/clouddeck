@@ -8,7 +8,7 @@ use gpui::{App, Entity, Pixels, Point, Window, point, px};
 
 use crate::fleet_state::FleetState;
 use crate::main_window::{MainWindow, Overlay};
-use crate::shell::DemoScenario;
+use clouddeck_core::DemoFleet;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum State {
@@ -94,13 +94,13 @@ impl State {
     }
 
     /// The demo scenario whose data this state needs.
-    pub(crate) fn demo_scenario(self) -> DemoScenario {
+    pub(crate) fn demo_scenario(self) -> DemoFleet {
         match self {
-            State::MainEmpty => DemoScenario::Empty,
-            State::MainFailure => DemoScenario::Failure,
-            State::MainPartial | State::OverlayFailure => DemoScenario::Partial,
-            State::MainLarge => DemoScenario::Large,
-            _ => DemoScenario::Happy,
+            State::MainEmpty => DemoFleet::Empty,
+            State::MainFailure => DemoFleet::Failure,
+            State::MainPartial | State::OverlayFailure => DemoFleet::Partial,
+            State::MainLarge => DemoFleet::Large,
+            _ => DemoFleet::Happy,
         }
     }
 }

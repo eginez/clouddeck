@@ -30,8 +30,6 @@ mod search_field;
 mod settings_window;
 mod shell;
 mod sidebar;
-#[cfg(test)]
-mod test_support;
 mod theme;
 mod tokens;
 mod toolbar;

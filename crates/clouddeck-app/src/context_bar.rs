@@ -323,9 +323,8 @@ fn status_element(item: &StatusItem, palette: &Palette, cx: &Context<ContextBar>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::ec2_record;
     use crate::view_models::InstanceListViewModel;
-    use clouddeck_core::MockComputeService;
+    use clouddeck_core::fixture_fleet as fleet;
     use gpui::{
         Bounds, TestAppContext, VisualTestContext, WindowBounds, WindowOptions, point, size,
     };
@@ -339,11 +338,11 @@ mod tests {
 
     fn loaded_state(cx: &mut TestAppContext) -> Entity<FleetState> {
         let instances = vec![
-            ec2_record("i-1", "api-server", "running", "t3.medium"),
-            ec2_record("i-2", "bastion", "stopped", "t3.medium"),
-            ec2_record("i-3", "worker", "stopped", "t3.medium"),
+            fleet::instance("i-1", "api-server", "running", "t3.medium"),
+            fleet::instance("i-2", "bastion", "stopped", "t3.medium"),
+            fleet::instance("i-3", "worker", "stopped", "t3.medium"),
         ];
-        let vm = InstanceListViewModel::new(Box::new(MockComputeService::new(instances, None)));
+        let vm = InstanceListViewModel::new(fleet::static_provider(instances));
         let state = cx.new(|_| FleetState::new(vm, "prod-readonly".to_string(), true));
         state.update(cx, |state, cx| state.refresh(cx));
         wait_until(cx, |cx| {

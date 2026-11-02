@@ -10,7 +10,7 @@
 //! the clouddeck-rs-w6s.18 acceptance criteria explicitly rule out.
 //!
 //! The SDK-backed backend this module calls
-//! (`AwsIdentityService`/`AwsSdkComputeService`/`aws_provider`/
+//! (`AwsIdentityService`/`verify_instance_access`/`aws_provider`/
 //! `login_guidance`) already existed from clouddeck-rs-wz2.2; this module is
 //! the missing wiring, not a new auth implementation. Kept out of
 //! `account_window.rs` (pure UI state, easy to unit test without gpui) and
@@ -25,9 +25,9 @@ use gpui::{App, AsyncApp, Entity};
 
 use crate::account_window::{AccountBrowserLoginPrompt, AccountConnectionError, AccountWindowView};
 use clouddeck_core::{
-    AuthAnswer, AuthInput, AuthStep, AwsCredentialKind, AwsIdentityService, AwsSdkComputeService,
-    Call, ComputeService, ConnectionId, FlowId, Host, LogLevel, LoginGuidance, Provider,
-    ProviderError, aws_provider, login_guidance,
+    AuthAnswer, AuthInput, AuthStep, AwsCredentialKind, AwsIdentityService, Call, ConnectionId,
+    FlowId, Host, LogLevel, LoginGuidance, Provider, ProviderError, aws_provider, login_guidance,
+    verify_instance_access,
 };
 
 /// Consumes whichever one-shot request flags the wizard has set since the
@@ -396,14 +396,13 @@ async fn run_identity_and_access_check(
         return;
     }
 
-    let service = AwsSdkComputeService::new(profile, region);
     let access_result = crate::runtime::runtime()
-        .spawn(async move { service.list_instances(None).await })
+        .spawn(verify_instance_access(profile, region))
         .await
         .unwrap_or_else(|error| Err(std::io::Error::other(error.to_string()).into()));
 
     match access_result {
-        Ok(_) => {
+        Ok(()) => {
             let _ = wizard.update(cx, |view, cx| {
                 if view.complete_connection_for_attempt(attempt, account_id.clone()) {
                     cx.notify();

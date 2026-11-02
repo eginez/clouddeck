@@ -45,8 +45,17 @@ pub use service::{BoxError, ComputeService};
 mod instance_detail_view_model;
 mod instance_list_view_model;
 pub use instance_detail_view_model::InstanceDetailViewModel;
-pub use instance_list_view_model::InstanceListViewModel;
+pub use instance_list_view_model::{InstanceListViewModel, LoadRequest};
+mod service_provider;
+pub use service_provider::{
+    LoadHost, cloud_deck_error, join_failure, service_provider, whole_load_failure,
+};
+mod workspace_provider;
+pub use workspace_provider::{
+    DemoFleet, demo_profiles, demo_region_names, verify_instance_access, workspace_provider,
+};
 mod aws_fields;
+pub mod fixture_fleet;
 pub use aws_fields::aws_fields;
 mod aws_auth;
 mod aws_identity;

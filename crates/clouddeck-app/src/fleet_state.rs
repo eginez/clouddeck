@@ -7,7 +7,7 @@ use std::time::Instant;
 use std::time::{Duration, SystemTime};
 
 use clouddeck_core::{
-    CloudDeckError, Column, Instance, RECENT_INSTANCE_LIMIT, SortState, push_recent,
+    CloudDeckError, Column, Instance, RECENT_INSTANCE_LIMIT, SortState, join_failure, push_recent,
     sort_instances, throttle_retry_delay,
 };
 use gpui::{App, Context};
@@ -158,18 +158,18 @@ impl FleetState {
 
     /// Reloads instances from the compute service in the background.
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
-        let Some(service) = self.view_model.begin_load() else {
+        let Some(request) = self.view_model.begin_load() else {
             return;
         };
         self.retry_generation += 1;
         self.retry_in_seconds = None;
         cx.notify();
-        let task =
-            crate::runtime::runtime().spawn(async move { service.list_instances(None).await });
+        let selection = request.selection().clone();
+        let task = crate::runtime::runtime().spawn_blocking(move || request.run());
         cx.spawn(async move |this, cx| {
             let result = task
                 .await
-                .unwrap_or_else(|error| Err(std::io::Error::other(error.to_string()).into()));
+                .unwrap_or_else(|error| join_failure(&selection, &error));
             let _ = this.update(cx, |this, cx| {
                 let now = this.now(cx);
                 this.view_model.finish_load_at(result, now);
@@ -235,20 +235,16 @@ impl FleetState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_support::ec2_fleet;
-    use clouddeck_core::{MockComputeService, native_id};
+    use clouddeck_core::{fixture_fleet as fleet, native_id};
     use gpui::{AppContext, Entity, TestAppContext};
 
     fn new_state(cx: &mut TestAppContext) -> Entity<FleetState> {
-        let vm = InstanceListViewModel::new(Box::new(MockComputeService::new(
-            ec2_fleet(&[
-                ("i-1", "api-server", "running", "t3.medium"),
-                ("i-2", "bastion", "stopped", "t3.medium"),
-                ("i-3", "worker", "stopped", "t3.medium"),
-                ("i-4", "cache", "running", "t3.medium"),
-            ]),
-            None,
-        )));
+        let vm = InstanceListViewModel::new(fleet::static_provider(fleet::instances(&[
+            ("i-1", "api-server", "running", "t3.medium"),
+            ("i-2", "bastion", "stopped", "t3.medium"),
+            ("i-3", "worker", "stopped", "t3.medium"),
+            ("i-4", "cache", "running", "t3.medium"),
+        ])));
         cx.new(|_| FleetState::new(vm, "default".to_string(), true))
     }
 
