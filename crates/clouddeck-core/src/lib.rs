@@ -53,6 +53,10 @@ mod aws_identity;
 mod aws_sdk;
 mod aws_sso_login;
 pub use aws_auth::aws_provider;
+mod demo_provider;
+#[cfg(test)]
+mod demo_provider_tests;
+pub use demo_provider::{DemoProvider, builtin_providers, demo_provider};
 mod console_url;
 mod context;
 mod inspector;
