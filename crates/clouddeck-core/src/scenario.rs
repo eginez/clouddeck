@@ -200,43 +200,6 @@ impl DirectoryScenarioCatalog {
             root: Some(root.into()),
         }
     }
-
-    /// Loads every `<name>.json` in `root`, keyed by the in-file `name`
-    /// (which matches the file stem by convention).
-    pub fn load_all(root: impl Into<std::path::PathBuf>) -> Result<Vec<EC2Scenario>, BoxError> {
-        let root = root.into();
-        let mut scenarios = Vec::new();
-        for entry in fs::read_dir(&root).map_err(|err| {
-            std::io::Error::new(
-                err.kind(),
-                format!(
-                    "Could not list scenario directory '{}': {err}",
-                    root.display()
-                ),
-            )
-        })? {
-            let entry = entry?;
-            let file_name = entry.file_name();
-            let file_name = file_name.to_string_lossy();
-            let is_json = file_name.ends_with(".json");
-            if !is_json {
-                continue;
-            }
-
-            let path = entry.path();
-            let contents = fs::read_to_string(&path).map_err(|err| {
-                std::io::Error::new(
-                    err.kind(),
-                    format!("Could not read scenario '{}': {err}", path.display()),
-                )
-            })?;
-            let scenario = parse_scenario(&contents)?;
-            scenarios.push(scenario);
-        }
-
-        scenarios.sort_by(|a, b| a.name.cmp(&b.name));
-        Ok(scenarios)
-    }
 }
 
 impl EC2ScenarioCatalog for DirectoryScenarioCatalog {

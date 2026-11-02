@@ -5,9 +5,7 @@ use clouddeck_provider_api::{
     Scope, ScopeFailure,
 };
 
-use crate::aws_sdk::AwsSdkComputeService;
 use crate::console_url::console_url_for_instance;
-use crate::context::{REGIONS, load_profiles};
 use crate::error::CloudDeckError;
 use crate::fleet_compute::FleetComputeService;
 use crate::models::{ComputeInstanceFilters, ComputeInstanceLoadResult};
@@ -58,26 +56,6 @@ impl ComputeServiceProvider {
             Box::new(Forwarding(service.clone()))
         })
     }
-}
-
-pub fn aws_provider() -> ComputeServiceProvider {
-    let connections = load_profiles()
-        .unwrap_or_default()
-        .into_iter()
-        .map(|profile| Connection {
-            id: profile.name.clone(),
-            display_name: profile.name,
-        })
-        .collect();
-    let scopes = REGIONS
-        .iter()
-        .filter(|region| **region != "fleet")
-        .map(|region| scope(region.to_string()))
-        .collect();
-    ComputeServiceProvider::new("aws", connections, scopes, |profile, region| {
-        Box::new(AwsSdkComputeService::new(profile, region))
-    })
-    .with_console_url(true)
 }
 
 fn scope(id: String) -> Scope {

@@ -9,7 +9,7 @@ pub use clouddeck_provider_api::{
     Connection, FieldDef, FieldKind, InspectorRowDef, InspectorSectionDef, InspectorValue,
     ListResult, MatchMode, Provider, ProviderError, Scope, ScopeFailure,
 };
-pub use provider::{ComputeServiceProvider, aws_provider};
+pub use provider::ComputeServiceProvider;
 mod mock;
 mod models;
 mod query;

@@ -31,16 +31,6 @@ impl FaultError {
         Self(Arc::from(error))
     }
 
-    pub fn boxed(error: BoxError) -> Self {
-        Self(Arc::from(error))
-    }
-
-    /// The configured error as a boxed error (re-boxed per call).
-    pub fn into_box(self) -> BoxError {
-        let inner: Box<dyn std::error::Error + Send + Sync> = Box::new(self.0.clone());
-        inner
-    }
-
     /// The error's `Display` output.
     pub fn display(&self) -> String {
         self.0.to_string()
@@ -74,11 +64,6 @@ impl Default for FaultInjectionBehavior {
 }
 
 impl FaultInjectionBehavior {
-    /// Passthrough with no delay.
-    pub fn passthrough() -> Self {
-        Self::default()
-    }
-
     /// Set the injected delay applied before the outcome (consumes self).
     pub fn with_delay(mut self, delay: Option<Duration>) -> Self {
         self.delay = delay;

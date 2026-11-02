@@ -30,12 +30,6 @@ impl MockComputeService {
         &self.instances
     }
 
-    pub fn list_instances_error(&self) -> Option<BoxError> {
-        self.list_instances_error
-            .as_ref()
-            .map(|error| Box::new(error.clone()) as BoxError)
-    }
-
     /// Sorts by instance ID ascending with a case-insensitive comparison
     /// (Swift: `localizedCaseInsensitiveCompare`).
     fn sort_by_instance_id(instances: &mut [EC2Instance]) {

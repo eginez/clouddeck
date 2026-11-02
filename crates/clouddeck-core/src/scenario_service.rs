@@ -224,12 +224,6 @@ impl ScenarioService {
     pub fn into_service(self) -> SharedService {
         self.service
     }
-
-    /// A boxed compute service, for view models that take
-    /// `Box<dyn ComputeService>`.
-    pub fn boxed_service(&self) -> Box<dyn ComputeService> {
-        Box::new(self.service.clone())
-    }
 }
 
 /// Serves the scenario's default-region instances through a plain
