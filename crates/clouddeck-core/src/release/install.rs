@@ -12,7 +12,11 @@ const UNSUPPORTED_ENTRY: &str = "unsupported entry type in archive";
 const TOO_MANY_ENTRIES: &str = "archive has too many entries";
 const FILE_TOO_LARGE: &str = "archive file is larger than the size limit";
 const TOTAL_TOO_LARGE: &str = "archive expands past the size limit";
+const EXTENSION_TOO_LARGE: &str = "archive extension header is larger than the size limit";
+const PAX_SIZE_OVERRIDE: &str = "archive pax header overrides entry size";
 
+const BLOCK: u64 = 512;
+const MAX_EXTENSION_HEADER_BYTES: u64 = 64 * 1024;
 const MIB: u64 = 1024 * 1024;
 const GIB: u64 = 1024 * MIB;
 
@@ -37,10 +41,10 @@ pub const EXTENSION_UNPACK_LIMITS: UnpackLimits = UnpackLimits {
 /// directories are accepted; links and special files are refused. On error, `dest`
 /// may hold partial output, so callers pass a scratch directory.
 pub fn unpack(tar_gz: &[u8], dest: &Path, limits: UnpackLimits) -> Result<(), String> {
-    let decoded = Budget {
+    let decoded = ExtensionGuard::new(Budget {
         inner: GzDecoder::new(tar_gz),
         remaining: limits.max_total_bytes,
-    };
+    });
     let mut archive = tar::Archive::new(decoded);
     let entries = archive.entries().map_err(|e| e.to_string())?;
     for (index, entry) in entries.enumerate() {
@@ -85,6 +89,126 @@ impl<R: Read> Read for Budget<R> {
             .ok_or_else(|| io::Error::other(TOTAL_TOO_LARGE))?;
         Ok(n)
     }
+}
+
+/// The tar crate buffers extension-header bodies (GNU long names, PAX records) without
+/// a size check. This reader follows the 512-byte block framing of the bytes it passes
+/// through, so an oversized extension body is refused before it is buffered.
+struct ExtensionGuard<R> {
+    inner: R,
+    header: [u8; BLOCK as usize],
+    header_len: usize,
+    body_left: u64,
+    body_kind: Option<u8>,
+    body_declared: u64,
+    body: Vec<u8>,
+}
+
+impl<R> ExtensionGuard<R> {
+    fn new(inner: R) -> Self {
+        Self {
+            inner,
+            header: [0; BLOCK as usize],
+            header_len: 0,
+            body_left: 0,
+            body_kind: None,
+            body_declared: 0,
+            body: Vec::new(),
+        }
+    }
+
+    fn observe(&mut self, mut bytes: &[u8]) -> io::Result<()> {
+        while !bytes.is_empty() {
+            if self.body_left > 0 {
+                let take = self.body_left.min(bytes.len() as u64) as usize;
+                if self.body_kind.is_some() {
+                    self.body.extend_from_slice(&bytes[..take]);
+                }
+                self.body_left -= take as u64;
+                bytes = &bytes[take..];
+                if self.body_left == 0 {
+                    self.finish_body()?;
+                }
+                continue;
+            }
+            let take = (BLOCK as usize - self.header_len).min(bytes.len());
+            self.header[self.header_len..self.header_len + take].copy_from_slice(&bytes[..take]);
+            self.header_len += take;
+            bytes = &bytes[take..];
+            if self.header_len == BLOCK as usize {
+                self.header_len = 0;
+                self.start_entry()?;
+            }
+        }
+        Ok(())
+    }
+
+    fn start_entry(&mut self) -> io::Result<()> {
+        let size = parse_header_size(&self.header[124..136])?;
+        let kind = self.header[156];
+        let is_extension = matches!(kind, b'L' | b'K' | b'x' | b'g');
+        if is_extension && size > MAX_EXTENSION_HEADER_BYTES {
+            return Err(io::Error::other(EXTENSION_TOO_LARGE));
+        }
+        self.body_kind = is_extension.then_some(kind);
+        self.body_declared = size;
+        self.body.clear();
+        self.body_left = size.div_ceil(BLOCK).saturating_mul(BLOCK);
+        if self.body_left == 0 && self.body_kind.is_some() {
+            self.finish_body()?;
+        }
+        Ok(())
+    }
+
+    fn finish_body(&mut self) -> io::Result<()> {
+        if matches!(self.body_kind, Some(b'x' | b'g')) {
+            let declared = &self.body[..self.body_declared as usize];
+            if declared.windows(5).any(|w| w == b"size=") {
+                return Err(io::Error::other(PAX_SIZE_OVERRIDE));
+            }
+        }
+        self.body_kind = None;
+        self.body.clear();
+        Ok(())
+    }
+}
+
+impl<R: Read> Read for ExtensionGuard<R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        self.observe(&buf[..n])?;
+        Ok(n)
+    }
+}
+
+fn parse_header_size(field: &[u8]) -> io::Result<u64> {
+    if field[0] & 0x80 != 0 {
+        let mut value = u64::from(field[0] & 0x7f);
+        for &byte in &field[1..] {
+            if value > u64::MAX >> 8 {
+                return Err(io::Error::other("archive entry size is out of range"));
+            }
+            value = (value << 8) | u64::from(byte);
+        }
+        return Ok(value);
+    }
+    let invalid = || io::Error::other("invalid archive entry size");
+    let end = field
+        .iter()
+        .position(|&b| b == 0 || b == b' ')
+        .unwrap_or(field.len());
+    if field[end..].iter().any(|&b| b != 0 && b != b' ') {
+        return Err(invalid());
+    }
+    field[..end].iter().try_fold(0u64, |value, &digit| {
+        if !(b'0'..=b'7').contains(&digit) {
+            return Err(invalid());
+        }
+        value
+            .checked_mul(8)
+            .and_then(|v| v.checked_add(u64::from(digit - b'0')))
+            .ok_or_else(invalid)
+    })
 }
 
 #[cfg(unix)]
@@ -228,10 +352,7 @@ impl StagingDir {
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0);
-        let path = parent.join(format!(
-            ".clouddeck-install-{}-{nanos}",
-            std::process::id()
-        ));
+        let path = parent.join(format!(".clouddeck-install-{}-{nanos}", std::process::id()));
         fs::create_dir(&path).map_err(|e| format!("could not create staging directory: {e}"))?;
         Ok(Self(path))
     }
@@ -307,6 +428,52 @@ mod tests {
         header.set_size(0);
         builder.append_link(&mut header, path, target).unwrap();
         builder.into_inner().unwrap().finish().unwrap()
+    }
+
+    fn archive_with_path(path: &str) -> Vec<u8> {
+        let mut builder = tar::Builder::new(GzEncoder::new(Vec::new(), Compression::default()));
+        let mut header = tar::Header::new_gnu();
+        header.set_mode(0o644);
+        header.set_size(1);
+        builder.append_data(&mut header, path, &b"x"[..]).unwrap();
+        builder.into_inner().unwrap().finish().unwrap()
+    }
+
+    #[test]
+    fn unpack_accepts_long_path_under_extension_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = format!("{}f.txt", "d/".repeat(200));
+        unpack(&archive_with_path(&path), dir.path(), APP_UNPACK_LIMITS).unwrap();
+        assert!(dir.path().join(&path).is_file());
+    }
+
+    #[test]
+    fn unpack_refuses_extension_header_over_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = format!("{}f.txt", "d/".repeat(40_000));
+        assert_eq!(
+            unpack(&archive_with_path(&path), dir.path(), APP_UNPACK_LIMITS),
+            Err(EXTENSION_TOO_LARGE.to_string())
+        );
+        assert!(only_entries(dir.path()).is_empty());
+    }
+
+    #[test]
+    fn unpack_refuses_pax_size_override() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut builder = tar::Builder::new(GzEncoder::new(Vec::new(), Compression::default()));
+        builder
+            .append_pax_extensions([("size", b"1".as_slice())])
+            .unwrap();
+        let mut header = tar::Header::new_gnu();
+        header.set_mode(0o644);
+        header.set_size(1);
+        builder.append_data(&mut header, "f", &b"x"[..]).unwrap();
+        let tgz = builder.into_inner().unwrap().finish().unwrap();
+        assert_eq!(
+            unpack(&tgz, dir.path(), APP_UNPACK_LIMITS),
+            Err(PAX_SIZE_OVERRIDE.to_string())
+        );
     }
 
     #[test]
