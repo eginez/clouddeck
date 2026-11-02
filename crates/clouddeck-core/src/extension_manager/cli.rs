@@ -164,13 +164,32 @@ fn execute(manager: &Manager, command: Command, out: &mut dyn Write) -> Result<(
 
 fn report(out: &mut dyn Write, outcome: Outcome) -> std::io::Result<()> {
     match outcome {
-        Outcome::Installed(installed) => writeln!(
-            out,
-            "installed {} {} ({} capabilities); it stays disabled until enabled",
-            installed.id,
-            installed.version,
-            installed.capabilities.len()
-        ),
+        Outcome::Installed(installed) => {
+            writeln!(
+                out,
+                "installed {} {} ({} capabilities); it stays disabled until enabled",
+                installed.id,
+                installed.version,
+                installed.capabilities.len()
+            )?;
+            writeln!(
+                out,
+                "  repository: {}",
+                installed.repository.as_deref().unwrap_or("-")
+            )?;
+            writeln!(
+                out,
+                "  author key: {}",
+                installed.author_key.as_deref().unwrap_or("-")
+            )?;
+            for capability in &installed.capabilities {
+                writeln!(out, "  capability: {capability:?}")?;
+            }
+            writeln!(
+                out,
+                "Extensions are native code and are NOT sandboxed. A signature proves who published it, not that it is safe."
+            )
+        }
         Outcome::UpToDate { version } => writeln!(out, "already up to date at {version}"),
     }
 }
@@ -192,6 +211,11 @@ fn listing_line(listing: &Listing) -> String {
     if listing.crash_disabled {
         line.push_str(" crash-disabled");
     }
+    line.push_str(&format!(
+        " {} {}",
+        listing.repository.as_deref().unwrap_or("-"),
+        listing.author_key.as_deref().unwrap_or("-")
+    ));
     line
 }
 
@@ -251,6 +275,33 @@ mod tests {
             parse(&args(&["remove", "toy"])).unwrap(),
             Command::Remove("toy".to_string())
         );
+    }
+
+    #[test]
+    fn listing_line_shows_repository_and_key() {
+        let mut listing = Listing {
+            id: "toy".to_string(),
+            version: "0.1.0".to_string(),
+            enabled: true,
+            dev: true,
+            crash_disabled: false,
+            repository: Some("https://github.com/a/b".to_string()),
+            author_key: Some("KEY1".to_string()),
+        };
+        let line = listing_line(&listing);
+        for part in [
+            "toy",
+            "0.1.0",
+            "enabled",
+            "dev",
+            "https://github.com/a/b",
+            "KEY1",
+        ] {
+            assert!(line.contains(part), "{line}");
+        }
+        listing.repository = None;
+        listing.author_key = None;
+        assert!(listing_line(&listing).ends_with(" - -"));
     }
 
     #[test]
