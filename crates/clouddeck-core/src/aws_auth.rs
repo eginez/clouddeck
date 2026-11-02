@@ -20,6 +20,7 @@ use crate::aws_sso_login::{
     sso_cache_path,
 };
 use crate::context::{aws_file_paths, read_profile_auth};
+use crate::demo_scenarios::list_scenario;
 use crate::scoped_provider::ScopeSettings;
 use crate::workspace_provider::routed_list;
 use crate::{
@@ -265,6 +266,11 @@ impl Provider for AwsProvider {
         selection: &Selection,
     ) -> ListResult {
         match ScopeSettings::from_host(cx.host) {
+            Some(ScopeSettings {
+                demo: Some(demo),
+                fleet,
+                ..
+            }) => list_scenario(demo, connection, kind, selection, fleet),
             Some(settings) => routed_list(cx, connection, kind, selection, &settings),
             None => self.inner.list(cx, connection, kind, selection),
         }

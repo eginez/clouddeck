@@ -71,6 +71,7 @@ pub use bound_provider::{BoundProvider, bound_provider};
 mod demo_provider;
 #[cfg(test)]
 mod demo_provider_tests;
+mod demo_scenarios;
 #[cfg(test)]
 mod workspace_provider_tests;
 pub use demo_provider::{DemoProvider, builtin_providers, demo_provider};

@@ -7,10 +7,9 @@ use clouddeck_provider_api::{
 
 use crate::aws_sdk::AwsSdkComputeService;
 use crate::context::AwsProfile;
+use crate::demo_scenarios::scenario_data;
 use crate::fleet_compute::FleetComputeService;
 use crate::mock::MockComputeService;
-use crate::models::EC2Instance;
-use crate::scenario::{EC2Scenario, parse_scenario};
 use crate::scoped_provider::{ScopeSettings, scoped_provider};
 use crate::service::{BoxError, ComputeService};
 use crate::service_provider::{REGION, service_provider};
@@ -52,7 +51,7 @@ impl DemoFleet {
 type Service = Box<dyn ComputeService + Send + Sync>;
 
 pub fn demo_profiles(demo: DemoFleet) -> Vec<AwsProfile> {
-    scenario_for(demo)
+    scenario_data(demo)
         .profiles
         .into_iter()
         .map(|profile| AwsProfile {
@@ -63,7 +62,7 @@ pub fn demo_profiles(demo: DemoFleet) -> Vec<AwsProfile> {
 }
 
 pub fn demo_region_names(demo: DemoFleet) -> Vec<String> {
-    scenario_for(demo)
+    scenario_data(demo)
         .profiles
         .into_iter()
         .flat_map(|profile| profile.regions.into_iter().map(|region| region.name))
@@ -91,25 +90,6 @@ pub fn workspace_provider(
         fleet,
         demo,
     };
-    let id = if demo.is_some() { "demo" } else { "aws" };
-    let entry = providers
-        .iter()
-        .find(|provider| provider.info().id == id)
-        .or_else(|| {
-            providers
-                .iter()
-                .find(|provider| provider.info().id == "aws")
-        });
-    let Some(entry) = entry else {
-        eprintln!("no aws or demo provider is registered; listing without the registry");
-        return service_provider(service(
-            profile,
-            region,
-            demo,
-            fleet_regions,
-            request_timeout,
-        ));
-    };
     let selection = if fleet {
         Selection::new().with(
             REGION,
@@ -122,11 +102,31 @@ pub fn workspace_provider(
         Selection::new().with(REGION, vec![ValueId::from(region)])
     };
     scoped_provider(
-        Arc::clone(entry),
+        registry_entry(providers, demo),
         ConnectionId::from(profile),
         selection,
         settings,
     )
+}
+
+fn registry_entry(providers: &[Arc<dyn Provider>], demo: Option<DemoFleet>) -> Arc<dyn Provider> {
+    let id = if demo.is_some() { "demo" } else { "aws" };
+    providers
+        .iter()
+        .find(|provider| provider.info().id == id)
+        .or_else(|| {
+            providers
+                .iter()
+                .find(|provider| provider.info().id == "aws")
+        })
+        .map(Arc::clone)
+        .unwrap_or_else(|| -> Arc<dyn Provider> {
+            if demo.is_some() {
+                Arc::new(crate::demo_provider())
+            } else {
+                crate::aws_provider()
+            }
+        })
 }
 
 pub(crate) fn routed_list(
@@ -150,7 +150,6 @@ pub(crate) fn routed_list(
     service_provider(service(
         connection.as_str(),
         &region,
-        settings.demo,
         &fleet_regions,
         settings.request_timeout,
     ))
@@ -160,99 +159,16 @@ pub(crate) fn routed_list(
 pub(crate) fn service(
     profile: &str,
     region: &str,
-    demo: Option<DemoFleet>,
     fleet_regions: &[String],
     request_timeout: Duration,
 ) -> Service {
-    demo.map(|demo| demo_service(profile, region, demo, fleet_regions))
-        .or_else(|| profile.is_empty().then(no_profile_service))
+    profile
+        .is_empty()
+        .then(no_profile_service)
         .or_else(|| {
             (region == "fleet").then(|| fleet_aws_service(profile, fleet_regions, request_timeout))
         })
         .unwrap_or_else(|| aws_service(profile, region, request_timeout))
-}
-
-fn demo_service(profile: &str, region: &str, demo: DemoFleet, fleet_regions: &[String]) -> Service {
-    match demo {
-        DemoFleet::Failure => Box::new(MockComputeService::new(
-            vec![],
-            Some(std::io::Error::other("Simulated demo load failure").into()),
-        )),
-        DemoFleet::Partial if region == "fleet" => partial_service(profile, demo, fleet_regions),
-        DemoFleet::Large => Box::new(MockComputeService::new(
-            large_instances(instances_for(&scenario_for(demo), profile, region)),
-            None,
-        )),
-        _ => Box::new(MockComputeService::new(
-            instances_for(&scenario_for(demo), profile, region),
-            None,
-        )),
-    }
-}
-
-fn partial_service(profile: &str, demo: DemoFleet, fleet_regions: &[String]) -> Service {
-    let data = scenario_for(demo);
-    let profile = profile.to_string();
-    Box::new(FleetComputeService::new(
-        fleet_regions.to_vec(),
-        move |region| {
-            if region == "us-east-1" {
-                Box::new(MockComputeService::new(
-                    instances_for(&data, &profile, region),
-                    None,
-                ))
-            } else {
-                Box::new(MockComputeService::new(
-                    vec![],
-                    Some(std::io::Error::other(format!("Simulated failure in {region}")).into()),
-                ))
-            }
-        },
-    ))
-}
-
-fn scenario_for(demo: DemoFleet) -> EC2Scenario {
-    let fixture = match demo {
-        DemoFleet::Empty => include_str!("../testdata/ec2-scenarios/empty-fleet.json"),
-        _ => include_str!("../testdata/ec2-scenarios/small-happy-path.json"),
-    };
-    parse_scenario(fixture).expect("bundled demo")
-}
-
-fn instances_for(data: &EC2Scenario, profile: &str, region: &str) -> Vec<EC2Instance> {
-    data.profiles
-        .iter()
-        .find(|candidate| candidate.name == profile)
-        .map(|candidate| {
-            candidate
-                .regions
-                .iter()
-                .filter(|candidate| region == "fleet" || candidate.name == region)
-                .flat_map(|candidate| {
-                    candidate.instances.iter().cloned().map(|mut instance| {
-                        instance.region = Some(candidate.name.clone());
-                        instance
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-fn large_instances(mut instances: Vec<EC2Instance>) -> Vec<EC2Instance> {
-    let seed = instances.clone();
-    if seed.is_empty() {
-        return instances;
-    }
-    for index in 4..=120 {
-        let mut instance = seed[(index - 4) % seed.len()].clone();
-        instance.instance_id = format!("i-demo-{index:03}");
-        if let Some(name) = instance.tags.iter_mut().find(|tag| tag.key == "Name") {
-            name.value = format!("demo-{index}");
-        }
-        instances.push(instance);
-    }
-    instances
 }
 
 fn no_profile_service() -> Service {

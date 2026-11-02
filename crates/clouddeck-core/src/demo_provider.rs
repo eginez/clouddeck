@@ -7,10 +7,11 @@ use clouddeck_provider_api::{
     ProviderError, ProviderInfo, ResourceId, Selection, ValueId,
 };
 
+use crate::demo_scenarios::list_scenario;
 use crate::parse_scenario;
 use crate::scoped_provider::ScopeSettings;
 use crate::service::BoxError;
-use crate::workspace_provider::{DemoFleet, routed_list};
+use crate::workspace_provider::DemoFleet;
 
 const REGION: &str = "region";
 const DEMO_METHOD: &str = "demo";
@@ -119,7 +120,7 @@ fn region_cell(region: &str) -> Selection {
     Selection::new().with(REGION, vec![ValueId::from(region)])
 }
 
-fn requested_regions(selection: &Selection) -> Vec<String> {
+pub(crate) fn requested_regions(selection: &Selection) -> Vec<String> {
     let mut regions: Vec<String> = Vec::new();
     for value in selection.values(REGION) {
         let region = value.as_str().trim();
@@ -207,11 +208,7 @@ impl Provider for DemoProvider {
         if demo == DemoFleet::Happy && !settings.fleet && !connection.as_str().is_empty() {
             return self.list_fixture(connection, kind, selection);
         }
-        let settings = ScopeSettings {
-            demo: Some(demo),
-            ..settings
-        };
-        routed_list(cx, connection, kind, selection, &settings)
+        list_scenario(demo, connection, kind, selection, settings.fleet)
     }
 
     fn describe(

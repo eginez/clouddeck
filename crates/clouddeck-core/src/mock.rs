@@ -46,7 +46,7 @@ impl MockComputeService {
 
     /// Sorts by instance ID ascending with a case-insensitive comparison
     /// (Swift: `localizedCaseInsensitiveCompare`).
-    fn sort_by_instance_id(instances: &mut [EC2Instance]) {
+    pub(crate) fn sort_by_instance_id(instances: &mut [EC2Instance]) {
         instances.sort_by(|a, b| {
             a.instance_id
                 .to_lowercase()

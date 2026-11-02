@@ -11,7 +11,7 @@ use crate::console_url::console_url_for_instance;
 use crate::scoped_provider::{ScopeHost, ScopeSettings};
 use crate::workspace_provider::service;
 use crate::{
-    DemoFleet, bound_provider, builtin_providers, demo_provider, service_provider,
+    DemoFleet, FLEET_REGIONS, bound_provider, builtin_providers, demo_provider, service_provider,
     workspace_provider,
 };
 
@@ -218,73 +218,86 @@ fn scope_settings_round_trip_through_the_host() {
     assert_eq!(ScopeSettings::from_host(&HOST), None);
 }
 
-fn previous_listing(
-    profile: &str,
-    region: &str,
-    demo: Option<DemoFleet>,
-    fleet_regions: &[String],
-    request_timeout: Duration,
-) -> ListResult {
-    let connection = ConnectionId::from(profile);
-    let provider: Arc<dyn Provider> =
-        if demo == Some(DemoFleet::Happy) && region != "fleet" && !profile.is_empty() {
-            bound_provider(
-                Arc::new(demo_provider()),
-                connection.clone(),
-                region_selection(&[region]),
-            )
-        } else {
-            service_provider(service(
-                profile,
-                region,
-                demo,
-                fleet_regions,
-                request_timeout,
-            ))
-        };
-    provider.list(
+fn list_demo(demo: DemoFleet, region: &str, fleet_regions: &[String]) -> ListResult {
+    let providers = builtin_providers(true);
+    workspace_provider(
+        &providers,
+        "scenario-default",
+        region,
+        Some(demo),
+        fleet_regions,
+        Duration::from_secs(5),
+    )
+    .list(
         &call(),
-        &connection,
+        &ConnectionId::from("scenario-default"),
         &KindId::instances(),
         &Selection::new(),
     )
 }
 
 #[test]
-fn scoped_listing_matches_the_old_paths() {
+fn demo_scenarios_list_their_expected_shapes() {
+    let fleet_regions: Vec<String> = FLEET_REGIONS.iter().map(|r| r.to_string()).collect();
+
+    assert_eq!(
+        list_demo(DemoFleet::Empty, "fleet", &fleet_regions),
+        ListResult::default()
+    );
+
+    let failure = list_demo(DemoFleet::Failure, "fleet", &fleet_regions);
+    assert!(failure.resources.is_empty());
+    assert_eq!(failure.failures.len(), 1);
+    assert_eq!(failure.failures[0].cell, Selection::new());
+
+    assert_eq!(
+        list_demo(DemoFleet::Large, "fleet", &[]).resources.len(),
+        120
+    );
+
+    let partial = list_demo(DemoFleet::Partial, "fleet", &fleet_regions);
+    assert_eq!(
+        instance_ids(&partial),
+        [
+            "us-east-1:i-scenario-001",
+            "us-east-1:i-scenario-002",
+            "us-east-1:i-scenario-003"
+        ]
+    );
+    assert_eq!(
+        partial
+            .failures
+            .iter()
+            .map(|failure| failure.cell.clone())
+            .collect::<Vec<_>>(),
+        [
+            region_selection(&["eu-central-1"]),
+            region_selection(&["eu-west-1"]),
+            region_selection(&["us-west-2"]),
+        ]
+    );
+
+    let partial_single = list_demo(DemoFleet::Partial, "us-east-1", &[]);
+    assert_eq!(instance_ids(&partial_single).len(), 3);
+    assert!(partial_single.failures.is_empty());
+
+    let happy_fleet = list_demo(DemoFleet::Happy, "fleet", &fleet_regions);
+    assert_eq!(instance_ids(&happy_fleet).len(), 3);
+    assert!(happy_fleet.failures.is_empty());
+}
+
+#[test]
+fn no_profile_listing_stays_on_the_aws_service() {
     let providers = builtin_providers(true);
     let timeout = Duration::from_secs(5);
     let fleet_regions = ["us-east-1".to_string(), "eu-west-1".to_string()];
-    let scenarios = [
-        DemoFleet::Happy,
-        DemoFleet::Empty,
-        DemoFleet::Failure,
-        DemoFleet::Partial,
-        DemoFleet::Large,
-    ];
-    for demo in scenarios {
-        for (region, regions) in [("us-east-1", &[][..]), ("fleet", &fleet_regions[..])] {
-            let expected =
-                previous_listing("scenario-default", region, Some(demo), regions, timeout);
-            let actual = workspace_provider(
-                &providers,
-                "scenario-default",
-                region,
-                Some(demo),
-                regions,
-                timeout,
-            )
-            .list(
-                &call(),
-                &ConnectionId::from("scenario-default"),
-                &KindId::instances(),
-                &Selection::new(),
-            );
-            assert_eq!(actual, expected, "{demo:?} {region}");
-        }
-    }
     for region in ["us-east-1", "fleet"] {
-        let expected = previous_listing("", region, None, &fleet_regions, timeout);
+        let expected = service_provider(service("", region, &fleet_regions, timeout)).list(
+            &call(),
+            &ConnectionId::from(""),
+            &KindId::instances(),
+            &Selection::new(),
+        );
         let actual = workspace_provider(&providers, "", region, None, &fleet_regions, timeout)
             .list(
                 &call(),
@@ -482,4 +495,29 @@ fn extension_shaped_demo_entry_lists_from_connection_and_selection() {
             deadline: false,
         }]
     );
+}
+
+#[test]
+fn demo_scenarios_stay_demo_data_without_a_demo_entry() {
+    let providers = builtin_providers(false);
+    let list = |demo| {
+        workspace_provider(
+            &providers,
+            "scenario-default",
+            "us-east-1",
+            Some(demo),
+            &[],
+            Duration::from_secs(5),
+        )
+        .list(
+            &call(),
+            &ConnectionId::from("scenario-default"),
+            &KindId::instances(),
+            &Selection::new(),
+        )
+    };
+    assert_eq!(list(DemoFleet::Empty), ListResult::default());
+    let failure = list(DemoFleet::Failure);
+    assert!(failure.resources.is_empty());
+    assert_eq!(failure.failures.len(), 1);
 }
