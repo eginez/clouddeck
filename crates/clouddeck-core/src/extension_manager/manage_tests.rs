@@ -58,7 +58,12 @@ fn disable_remove_and_list_keep_the_pin() {
     manager.enable_with("toy", true).unwrap();
 
     let (listed, refusals) = manager.list().unwrap();
-    assert!(refusals.is_empty());
+    assert_eq!(refusals.len(), 1);
+    assert!(
+        refusals[0]
+            .message
+            .contains("external extensions are turned off")
+    );
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].id, "toy");
     assert!(listed[0].enabled && !listed[0].dev);

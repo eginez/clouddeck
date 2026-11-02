@@ -10,6 +10,7 @@ use clouddeck_provider_api::Provider;
 
 use crate::builtin_providers;
 use crate::context::config_home;
+use crate::extension_manager::install::EXTERNAL_EXTENSIONS_ALLOWED;
 
 use super::manifest::{MANIFEST_FILE, Manifest};
 use super::remote::{NOT_RESPONDING, Plugin, RemoteProvider};
@@ -29,17 +30,23 @@ pub struct ProviderRegistry {
     plugins: Vec<Arc<Plugin>>,
     provider_ids: BTreeSet<String>,
     refusals: Vec<Refusal>,
+    allow_external: bool,
 }
 
 impl ProviderRegistry {
     pub fn with_builtins(demo: bool) -> Self {
-        let mut registry = Self::default();
+        let mut registry = Self::default().with_external(EXTERNAL_EXTENSIONS_ALLOWED);
         for provider in builtin_providers(demo) {
             let id = provider.info().id;
             registry.provider_ids.insert(id);
             registry.providers.push(provider);
         }
         registry
+    }
+
+    pub fn with_external(mut self, allowed: bool) -> Self {
+        self.allow_external = allowed;
+        self
     }
 
     pub fn providers(&self) -> &[Arc<dyn Provider>] {
@@ -118,6 +125,9 @@ impl ProviderRegistry {
         );
         if !state.read(|s| s.enabled) {
             return Ok(());
+        }
+        if !self.allow_external {
+            return Err("external extensions are turned off in this build".to_string());
         }
         if state.read(State::crash_disabled) {
             return Err(format!(
@@ -239,6 +249,46 @@ mod tests {
     }
 
     #[test]
+    fn enabled_external_extension_is_not_loaded_while_external_is_off() {
+        let root = tempfile::tempdir().unwrap();
+        let state_root = tempfile::tempdir().unwrap();
+        install(root.path(), "toy", &manifest_text("toy", API_VERSION));
+        enable(state_root.path(), "toy", |s| s.enabled = true);
+
+        let mut registry = ProviderRegistry::default();
+        registry.discover(root.path(), state_root.path()).unwrap();
+
+        assert!(registry.providers().is_empty());
+        assert_eq!(registry.refusals().len(), 1);
+        assert!(
+            registry.refusals()[0]
+                .message
+                .contains("external extensions are turned off in this build")
+        );
+    }
+
+    #[test]
+    fn enabled_external_extension_loads_when_external_is_allowed() {
+        let root = tempfile::tempdir().unwrap();
+        let state_root = tempfile::tempdir().unwrap();
+        install(root.path(), "toy", &manifest_text("toy", API_VERSION));
+        enable(state_root.path(), "toy", |s| s.enabled = true);
+
+        let mut registry = ProviderRegistry::default().with_external(true);
+        registry.discover(root.path(), state_root.path()).unwrap();
+
+        assert!(registry.refusals().is_empty());
+        assert_eq!(registry.providers().len(), 1);
+    }
+
+    #[test]
+    fn builtin_providers_are_unaffected_by_external_gate() {
+        let registry = ProviderRegistry::with_builtins(true);
+        assert!(!registry.providers().is_empty());
+        assert!(registry.refusals().is_empty());
+    }
+
+    #[test]
     fn discover_skips_dot_folders() {
         let root = tempfile::tempdir().unwrap();
         let state_root = tempfile::tempdir().unwrap();
@@ -267,7 +317,7 @@ mod tests {
             s.crashes = CRASH_LIMIT;
         });
 
-        let mut registry = ProviderRegistry::default();
+        let mut registry = ProviderRegistry::default().with_external(true);
         registry.discover(root.path(), state_root.path()).unwrap();
 
         assert!(registry.providers().is_empty());
@@ -306,7 +356,7 @@ mod tests {
             s.crashes = 1;
         });
 
-        let mut registry = ProviderRegistry::default();
+        let mut registry = ProviderRegistry::default().with_external(true);
         registry.discover(root.path(), state_root.path()).unwrap();
         registry.shutdown();
 

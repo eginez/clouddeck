@@ -16,7 +16,7 @@ fn connect(root: &Path, state_root: &Path) -> Result<(), ProviderError> {
         .unwrap()
         .update(|state| state.enabled = true)
         .unwrap();
-    let mut registry = ProviderRegistry::default();
+    let mut registry = ProviderRegistry::default().with_external(true);
     registry.discover(root, state_root).unwrap();
     assert!(registry.refusals().is_empty(), "{:?}", registry.refusals());
     let host = NoHost;

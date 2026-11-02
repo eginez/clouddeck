@@ -16,7 +16,7 @@ fn installed_extension_loads_on_first_use_and_serves_calls() {
         .update(|state| state.enabled = true)
         .unwrap();
 
-    let mut registry = ProviderRegistry::default();
+    let mut registry = ProviderRegistry::default().with_external(true);
     registry.discover(root.path(), state_root.path()).unwrap();
     assert!(registry.refusals().is_empty(), "{:?}", registry.refusals());
     let provider = &registry.providers()[0];
