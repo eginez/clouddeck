@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use clouddeck_provider_api::{
     Call, Connection, ConnectionId, Dimension, ErrorKind, FieldDef, Host, Instance, KindId,
@@ -8,7 +8,7 @@ use clouddeck_provider_api::{
 };
 
 use crate::console_url::console_url_for_instance;
-use crate::scoped_provider::{DEMO_SCENARIO_KEY, FLEET_KEY, REGIONS_KEY, REQUEST_TIMEOUT_KEY};
+use crate::scoped_provider::{ScopeHost, ScopeSettings};
 use crate::workspace_provider::service;
 use crate::{
     DemoFleet, bound_provider, builtin_providers, demo_provider, service_provider,
@@ -54,13 +54,17 @@ fn call() -> Call<'static> {
     }
 }
 
+fn call_with_deadline() -> Call<'static> {
+    Call {
+        deadline: Some(Instant::now() + Duration::from_secs(60)),
+        host: &HOST,
+    }
+}
+
 fn region_selection(regions: &[&str]) -> Selection {
     Selection::new().with(
         "region",
-        regions
-            .iter()
-            .map(|region| ValueId::from(*region))
-            .collect(),
+        regions.iter().map(|region| ValueId::from(*region)).collect(),
     )
 }
 
@@ -202,6 +206,18 @@ fn bound_provider_uses_a_non_empty_incoming_selection() {
     assert_eq!(result.failures[0].error.kind, ErrorKind::NotFound);
 }
 
+#[test]
+fn scope_settings_round_trip_through_the_host() {
+    let settings = ScopeSettings {
+        request_timeout: Duration::from_millis(7000),
+        fleet: true,
+        demo: Some(DemoFleet::Partial),
+    };
+    let host = ScopeHost::new(&HOST, settings);
+    assert_eq!(ScopeSettings::from_host(&host), Some(settings));
+    assert_eq!(ScopeSettings::from_host(&HOST), None);
+}
+
 fn previous_listing(
     profile: &str,
     region: &str,
@@ -235,25 +251,26 @@ fn previous_listing(
 }
 
 #[test]
-fn scoped_listings_match_the_previous_service_path() {
+fn scoped_listing_matches_the_old_paths() {
     let providers = builtin_providers(true);
     let timeout = Duration::from_secs(5);
     let fleet_regions = ["us-east-1".to_string(), "eu-west-1".to_string()];
     let scenarios = [
-        Some(DemoFleet::Happy),
-        Some(DemoFleet::Empty),
-        Some(DemoFleet::Failure),
-        Some(DemoFleet::Partial),
-        Some(DemoFleet::Large),
+        DemoFleet::Happy,
+        DemoFleet::Empty,
+        DemoFleet::Failure,
+        DemoFleet::Partial,
+        DemoFleet::Large,
     ];
     for demo in scenarios {
         for (region, regions) in [("us-east-1", &[][..]), ("fleet", &fleet_regions[..])] {
-            let expected = previous_listing("scenario-default", region, demo, regions, timeout);
+            let expected =
+                previous_listing("scenario-default", region, Some(demo), regions, timeout);
             let actual = workspace_provider(
                 &providers,
                 "scenario-default",
                 region,
-                demo,
+                Some(demo),
                 regions,
                 timeout,
             )
@@ -286,17 +303,24 @@ struct Seen {
     request_timeout: Option<String>,
     fleet: Option<String>,
     demo: Option<String>,
+    deadline: bool,
 }
 
 struct Spy {
     id: &'static str,
+    answer: Vec<Instance>,
     seen: Mutex<Vec<Seen>>,
 }
 
 impl Spy {
     fn new(id: &'static str) -> Arc<Self> {
+        Self::returning(id, Vec::new())
+    }
+
+    fn returning(id: &'static str, answer: Vec<Instance>) -> Arc<Self> {
         Arc::new(Self {
             id,
+            answer,
             seen: Mutex::new(Vec::new()),
         })
     }
@@ -337,23 +361,24 @@ impl Provider for Spy {
         cx: &Call<'_>,
         connection: &ConnectionId,
         _kind: &KindId,
-        _selection: &Selection,
+        selection: &Selection,
     ) -> ListResult {
         self.seen.lock().unwrap().push(Seen {
             connection: connection.as_str().to_string(),
-            regions: cx
-                .host
-                .setting(REGIONS_KEY)
-                .unwrap_or_default()
-                .split(',')
-                .filter(|region| !region.is_empty())
-                .map(str::to_string)
+            regions: selection
+                .values("region")
+                .iter()
+                .map(|value| value.as_str().to_string())
                 .collect(),
-            request_timeout: cx.host.setting(REQUEST_TIMEOUT_KEY),
-            fleet: cx.host.setting(FLEET_KEY),
-            demo: cx.host.setting(DEMO_SCENARIO_KEY),
+            request_timeout: cx.host.setting("clouddeck.request_timeout_ms"),
+            fleet: cx.host.setting("clouddeck.fleet"),
+            demo: cx.host.setting("clouddeck.demo_scenario"),
+            deadline: cx.deadline.is_some(),
         });
-        ListResult::default()
+        ListResult {
+            resources: self.answer.clone(),
+            failures: Vec::new(),
+        }
     }
 
     fn console_url(
@@ -371,113 +396,90 @@ impl Provider for Spy {
 }
 
 #[test]
-fn demo_listing_goes_through_the_demo_entry_with_its_region() {
-    let demo = Spy::new("demo");
+fn listing_goes_through_the_registry_entry() {
     let aws = Spy::new("aws");
-    let providers: Vec<Arc<dyn Provider>> = vec![demo.clone(), aws.clone()];
+    let providers: Vec<Arc<dyn Provider>> = vec![aws.clone()];
+    let fleet_regions = ["us-east-1".to_string(), "eu-west-1".to_string()];
     workspace_provider(
         &providers,
-        "scenario-default",
-        "us-east-1",
-        Some(DemoFleet::Failure),
-        &[],
-        Duration::from_secs(5),
+        "prof",
+        "fleet",
+        None,
+        &fleet_regions,
+        Duration::from_secs(7),
     )
     .list(
+        &call_with_deadline(),
+        &ConnectionId::from("default"),
+        &KindId::instances(),
+        &Selection::new(),
+    );
+    workspace_provider(
+        &providers,
+        "prof",
+        "us-west-2",
+        None,
+        &[],
+        Duration::from_secs(7),
+    )
+    .list(
+        &call_with_deadline(),
+        &ConnectionId::from("default"),
+        &KindId::instances(),
+        &Selection::new(),
+    );
+    assert_eq!(
+        aws.seen(),
+        [
+            Seen {
+                connection: "prof".to_string(),
+                regions: fleet_regions.to_vec(),
+                request_timeout: Some("7000".to_string()),
+                fleet: Some("true".to_string()),
+                demo: None,
+                deadline: true,
+            },
+            Seen {
+                connection: "prof".to_string(),
+                regions: vec!["us-west-2".to_string()],
+                request_timeout: Some("7000".to_string()),
+                fleet: Some("false".to_string()),
+                demo: None,
+                deadline: true,
+            },
+        ]
+    );
+}
+
+#[test]
+fn extension_shaped_demo_entry_lists_from_connection_and_selection() {
+    let instance = demo_provider()
+        .list(
+            &call(),
+            &ConnectionId::from("scenario-default"),
+            &KindId::instances(),
+            &region_selection(&["us-east-1"]),
+        )
+        .resources
+        .remove(0);
+    let demo = Spy::returning("demo", vec![instance.clone()]);
+    let providers: Vec<Arc<dyn Provider>> = vec![demo.clone()];
+    let result = happy_provider(&providers, "us-east-1").list(
         &call(),
         &ConnectionId::from("default"),
         &KindId::instances(),
         &Selection::new(),
     );
+    assert_eq!(result.resources, vec![instance]);
     assert_eq!(
         demo.seen(),
         [Seen {
             connection: "scenario-default".to_string(),
             regions: vec!["us-east-1".to_string()],
             request_timeout: Some("5000".to_string()),
-            fleet: None,
-            demo: Some("failure".to_string()),
-        }]
-    );
-    assert!(aws.seen().is_empty());
-}
-
-#[test]
-fn fleet_listing_passes_every_fleet_region_and_the_fleet_flag() {
-    let aws = Spy::new("aws");
-    let providers: Vec<Arc<dyn Provider>> = vec![aws.clone()];
-    let fleet_regions = ["us-east-1".to_string(), "eu-west-1".to_string()];
-    workspace_provider(
-        &providers,
-        "work",
-        "fleet",
-        None,
-        &fleet_regions,
-        Duration::from_secs(30),
-    )
-    .list(
-        &call(),
-        &ConnectionId::from("default"),
-        &KindId::instances(),
-        &Selection::new(),
-    );
-    assert_eq!(
-        aws.seen(),
-        [Seen {
-            connection: "work".to_string(),
-            regions: fleet_regions.to_vec(),
-            request_timeout: Some("30000".to_string()),
-            fleet: Some("true".to_string()),
-            demo: None,
-        }]
-    );
-}
-
-#[test]
-fn demo_listing_falls_back_to_the_aws_entry_without_a_demo_entry() {
-    let aws = Spy::new("aws");
-    let providers: Vec<Arc<dyn Provider>> = vec![aws.clone()];
-    workspace_provider(
-        &providers,
-        "work",
-        "us-east-1",
-        Some(DemoFleet::Happy),
-        &[],
-        Duration::from_secs(5),
-    )
-    .list(
-        &call(),
-        &ConnectionId::from("default"),
-        &KindId::instances(),
-        &Selection::new(),
-    );
-    assert_eq!(
-        aws.seen(),
-        [Seen {
-            connection: "work".to_string(),
-            regions: vec!["us-east-1".to_string()],
-            request_timeout: Some("5000".to_string()),
-            fleet: None,
+            fleet: Some("false".to_string()),
             demo: Some("happy".to_string()),
+            deadline: false,
         }]
     );
-}
-
-#[test]
-fn routed_listing_ignores_a_callers_region_selection() {
-    let providers = builtin_providers(true);
-    let provider = workspace_provider(
-        &providers,
-        "scenario-default",
-        "us-east-1",
-        Some(DemoFleet::Large),
-        &[],
-        Duration::from_secs(5),
-    );
-    let connection = ConnectionId::from("default");
-    let kind = KindId::instances();
-    let own = provider.list(&call(), &connection, &kind, &Selection::new());
-    let caller = provider.list(&call(), &connection, &kind, &region_selection(&["mars-1"]));
-    assert!(!own.resources.is_empty());
-    assert_eq!(caller, own);
 }

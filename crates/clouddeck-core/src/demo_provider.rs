@@ -8,8 +8,9 @@ use clouddeck_provider_api::{
 };
 
 use crate::parse_scenario;
+use crate::scoped_provider::ScopeSettings;
 use crate::service::BoxError;
-use crate::workspace_provider::routed_request;
+use crate::workspace_provider::{DemoFleet, routed_list};
 
 const REGION: &str = "region";
 const DEMO_METHOD: &str = "demo";
@@ -59,6 +60,33 @@ impl DemoProvider {
         self.profiles
             .iter()
             .find(|profile| profile.name == connection.as_str())
+    }
+
+    fn list_fixture(
+        &self,
+        connection: &ConnectionId,
+        kind: &KindId,
+        selection: &Selection,
+    ) -> ListResult {
+        if kind.as_str() != INSTANCES {
+            return failed(selection, ProviderError::unsupported());
+        }
+        let Some(profile) = self.profile(connection) else {
+            return failed(selection, not_found());
+        };
+
+        let mut result = ListResult::default();
+        for region in requested_regions(selection) {
+            match profile.instances(&region) {
+                Some(instances) => result.resources.extend(instances.iter().cloned()),
+                None => result.failures.push(CellFailure {
+                    cell: region_cell(&region),
+                    error: not_found(),
+                }),
+            }
+        }
+        result.resources.sort_by(|a, b| a.id.cmp(&b.id));
+        result
     }
 }
 
@@ -172,30 +200,18 @@ impl Provider for DemoProvider {
         kind: &KindId,
         selection: &Selection,
     ) -> ListResult {
-        if let Some(request) = routed_request(cx, connection)
-            && !request.is_demo_fixture()
-        {
-            return request.list(cx, connection, kind);
-        }
-        if kind.as_str() != INSTANCES {
-            return failed(selection, ProviderError::unsupported());
-        }
-        let Some(profile) = self.profile(connection) else {
-            return failed(selection, not_found());
+        let Some(settings) = ScopeSettings::from_host(cx.host) else {
+            return self.list_fixture(connection, kind, selection);
         };
-
-        let mut result = ListResult::default();
-        for region in requested_regions(selection) {
-            match profile.instances(&region) {
-                Some(instances) => result.resources.extend(instances.iter().cloned()),
-                None => result.failures.push(CellFailure {
-                    cell: region_cell(&region),
-                    error: not_found(),
-                }),
-            }
+        let demo = settings.demo.unwrap_or(DemoFleet::Happy);
+        if demo == DemoFleet::Happy && !settings.fleet && !connection.as_str().is_empty() {
+            return self.list_fixture(connection, kind, selection);
         }
-        result.resources.sort_by(|a, b| a.id.cmp(&b.id));
-        result
+        let settings = ScopeSettings {
+            demo: Some(demo),
+            ..settings
+        };
+        routed_list(cx, connection, kind, selection, &settings)
     }
 
     fn describe(

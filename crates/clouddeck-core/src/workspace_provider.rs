@@ -6,15 +6,12 @@ use clouddeck_provider_api::{
 };
 
 use crate::aws_sdk::AwsSdkComputeService;
-use crate::bound_provider::bound_provider;
 use crate::context::AwsProfile;
 use crate::fleet_compute::FleetComputeService;
 use crate::mock::MockComputeService;
 use crate::models::EC2Instance;
 use crate::scenario::{EC2Scenario, parse_scenario};
-use crate::scoped_provider::{
-    DEMO_SCENARIO_KEY, FLEET_KEY, REGIONS_KEY, REQUEST_TIMEOUT_KEY, ScopeSettings, scoped_provider,
-};
+use crate::scoped_provider::{ScopeSettings, scoped_provider};
 use crate::service::{BoxError, ComputeService};
 use crate::service_provider::{REGION, service_provider};
 use crate::settings::fleet_region_timeout;
@@ -88,6 +85,12 @@ pub fn workspace_provider(
     fleet_regions: &[String],
     request_timeout: Duration,
 ) -> Arc<dyn Provider> {
+    let fleet = region == "fleet";
+    let settings = ScopeSettings {
+        request_timeout,
+        fleet,
+        demo,
+    };
     let id = if demo.is_some() { "demo" } else { "aws" };
     let entry = providers
         .iter()
@@ -96,90 +99,62 @@ pub fn workspace_provider(
             providers
                 .iter()
                 .find(|provider| provider.info().id == "aws")
-        })
-        .expect("the aws provider is registered");
-    let fleet = region == "fleet";
-    let regions = if fleet {
-        fleet_regions.to_vec()
-    } else {
-        vec![region.to_string()]
-    };
-    let selection = Selection::new().with(
-        REGION,
-        regions
-            .iter()
-            .map(|region| ValueId::from(region.as_str()))
-            .collect(),
-    );
-    scoped_provider(
-        bound_provider(Arc::clone(entry), ConnectionId::from(profile), selection),
-        ScopeSettings {
-            request_timeout,
-            fleet,
+        });
+    let Some(entry) = entry else {
+        eprintln!("no aws or demo provider is registered; listing without the registry");
+        return service_provider(service(
+            profile,
+            region,
             demo,
-            regions,
-        },
+            fleet_regions,
+            request_timeout,
+        ));
+    };
+    let selection = if fleet {
+        Selection::new().with(
+            REGION,
+            fleet_regions
+                .iter()
+                .map(|region| ValueId::from(region.as_str()))
+                .collect(),
+        )
+    } else {
+        Selection::new().with(REGION, vec![ValueId::from(region)])
+    };
+    scoped_provider(
+        Arc::clone(entry),
+        ConnectionId::from(profile),
+        selection,
+        settings,
     )
 }
 
-pub(crate) struct RoutedRequest {
-    profile: String,
-    region: String,
-    regions: Vec<String>,
-    request_timeout: Duration,
-    demo: Option<DemoFleet>,
-}
-
-pub(crate) fn routed_request(cx: &Call<'_>, connection: &ConnectionId) -> Option<RoutedRequest> {
-    let request_timeout =
-        Duration::from_millis(cx.host.setting(REQUEST_TIMEOUT_KEY)?.parse().ok()?);
-    let fleet = cx.host.setting(FLEET_KEY).is_some();
-    let regions: Vec<String> = cx
-        .host
-        .setting(REGIONS_KEY)
-        .unwrap_or_default()
-        .split(',')
-        .filter(|region| !region.is_empty())
-        .map(str::to_string)
+pub(crate) fn routed_list(
+    cx: &Call<'_>,
+    connection: &ConnectionId,
+    kind: &KindId,
+    selection: &Selection,
+    settings: &ScopeSettings,
+) -> ListResult {
+    let regions: Vec<String> = selection
+        .values(REGION)
+        .iter()
+        .map(|value| value.as_str().to_string())
         .collect();
-    let region = if fleet {
-        "fleet".to_string()
+    let (region, fleet_regions) = if settings.fleet {
+        ("fleet".to_string(), regions)
     } else {
-        regions.first().cloned().unwrap_or_default()
+        (regions.first().cloned().unwrap_or_default(), Vec::new())
     };
-    let demo = cx
-        .host
-        .setting(DEMO_SCENARIO_KEY)
-        .and_then(|key| DemoFleet::from_key(&key));
-    Some(RoutedRequest {
-        profile: connection.as_str().to_string(),
-        region,
-        regions,
-        request_timeout,
-        demo,
-    })
-}
-
-impl RoutedRequest {
-    pub(crate) fn is_demo_fixture(&self) -> bool {
-        self.demo == Some(DemoFleet::Happy) && self.region != "fleet" && !self.profile.is_empty()
-    }
-
-    pub(crate) fn list(
-        &self,
-        cx: &Call<'_>,
-        connection: &ConnectionId,
-        kind: &KindId,
-    ) -> ListResult {
-        service_provider(service(
-            &self.profile,
-            &self.region,
-            self.demo,
-            &self.regions,
-            self.request_timeout,
-        ))
-        .list(cx, connection, kind, &Selection::new())
-    }
+    // The whole-load failure cell is the empty selection, which is what the view-model LoadRequest sends.
+    service_provider(service(
+        connection.as_str(),
+        &region,
+        settings.demo,
+        &fleet_regions,
+        settings.request_timeout,
+    ))
+    .list(cx, connection, kind, &Selection::new())
 }
 
 pub(crate) fn service(
