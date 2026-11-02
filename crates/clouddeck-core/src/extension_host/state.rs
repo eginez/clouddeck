@@ -29,6 +29,14 @@ pub struct State {
     pub granted: Vec<Capability>,
     #[serde(default)]
     pub settings: BTreeMap<String, String>,
+    /// The author public key pinned on first install; later installs and updates must match it.
+    #[serde(default)]
+    pub author_key: Option<String>,
+    #[serde(default)]
+    pub repository: Option<String>,
+    /// Installed from a local folder rather than a signed release.
+    #[serde(default)]
+    pub dev: bool,
 }
 
 impl State {

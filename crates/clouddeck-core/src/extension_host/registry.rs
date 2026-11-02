@@ -85,7 +85,7 @@ impl ProviderRegistry {
         let mut dirs: Vec<PathBuf> = entries
             .filter_map(Result::ok)
             .map(|entry| entry.path())
-            .filter(|path| path.is_dir())
+            .filter(|path| path.is_dir() && !is_hidden(path))
             .collect();
         dirs.sort();
         for dir in dirs {
@@ -165,6 +165,11 @@ impl ProviderRegistry {
             self.providers.push(Arc::new(provider));
         }
     }
+}
+
+fn is_hidden(path: &Path) -> bool {
+    path.file_name()
+        .is_some_and(|name| name.to_string_lossy().starts_with('.'))
 }
 
 /// Where installed extensions live, next to the rest of CloudDeck's configuration.

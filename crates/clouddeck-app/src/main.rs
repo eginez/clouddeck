@@ -52,6 +52,13 @@ use gpui::{App, Application, actions};
 actions!(clouddeck, [Quit]);
 
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("extension") {
+        std::process::exit(clouddeck_core::extension_manager::cli::run(
+            &args[2..],
+            &mut std::io::stdout(),
+        ));
+    }
     Application::new()
         .with_assets(assets::Assets)
         .run(|cx: &mut App| {

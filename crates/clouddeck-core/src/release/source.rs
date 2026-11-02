@@ -174,7 +174,7 @@ impl UpdateSource for GithubSource {
     }
 }
 
-fn read_body(
+pub(crate) fn read_body(
     response: ureq::Response,
     max_bytes: u64,
     progress: &mut dyn FnMut(u64, u64),
@@ -225,7 +225,7 @@ fn ensure_token_host(asset_url: &str) -> Result<(), String> {
     }
 }
 
-fn http_error(error: ureq::Error) -> String {
+pub(crate) fn http_error(error: ureq::Error) -> String {
     match error {
         ureq::Error::Status(code, _) => format!("GitHub request failed with HTTP {code}"),
         ureq::Error::Transport(transport) => format!("GitHub request failed: {transport}"),
