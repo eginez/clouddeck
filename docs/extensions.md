@@ -75,6 +75,24 @@ that second rename fails. A `state.json` in the archive is ignored.
   lock file is harmless.
 - Extensions are not sandboxed. Install only from authors you trust.
 
+## Resource ids and state
+
+`describe(connection, kind, id)` receives only the connection, the kind and a `ResourceId`. It has no
+zone, region or other scope. If a cloud's names are unique only within a parent (GCP names are unique
+per zone), encode the parent in the id, for example `zone/name` (`us-east1-b/web-1`).
+
+- `Instance.id` must equal the `ResourceId` that `describe` receives for that resource. `describe`
+  must accept every id that `list` returns.
+- Ids must be unique within a connection. Use the parent-qualified form whenever the bare name is not.
+- `describe` returns `ProviderError` kind `NotFound` for an id it does not know.
+
+`StateKind` maps a provider's states as follows:
+
+- `Terminated` means gone for good: it cannot be started again.
+- A state the provider calls "terminated" but that can be started again maps to `Stopped`. GCP's
+  `TERMINATED` is an example: it is a stopped VM, so it maps to `Stopped` with `raw` set to `TERMINATED`.
+- Keep the provider's own text in `State.raw`, whichever kind it maps to.
+
 ## Selections and dimension trees
 
 A dimension value with `parent: None` is a root. A value with `parent: Some(p)` is a child of `p`.
