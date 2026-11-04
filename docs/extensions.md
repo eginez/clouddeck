@@ -75,6 +75,28 @@ that second rename fails. A `state.json` in the archive is ignored.
   lock file is harmless.
 - Extensions are not sandboxed. Install only from authors you trust.
 
+## Selections and dimension trees
+
+A dimension value with `parent: None` is a root. A value with `parent: Some(p)` is a child of `p`.
+Values form a forest: parents must exist and there must be no cycles.
+
+- Selecting a parent selects all of its descendants. `region = [us]` lists everything under `us`,
+  including `us-east` when that is a child of `us`.
+- Selecting a child alone lists only that child's resources. Its parent is implied for identity and
+  labelling, but it does not widen the listing.
+- Selecting a parent together with some of its children lists the same resources as selecting the
+  parent alone.
+- `list()` works at the finest level. The provider expands a selection into finest-level cells
+  internally, and no resource is listed under two finest-level values.
+- `CellFailure.cell` names the finest-level values that failed. Every value it names must be covered
+  by the selection: either selected itself or a descendant of a selected value.
+
+The conformance kit checks these rules for every hierarchical dimension and every kind: parents exist,
+there are no cycles, finest-level leaves list disjoint resources, a parent lists exactly the union of its children,
+a parent with its children equals the parent alone, and failure cells are covered by the selection and
+are not parents. Which resource belongs to which value is the provider's business, so the kit cannot
+check that a child's resources are the right ones, only that they are consistent with the tree.
+
 ## Deadlines
 
 Each provider call runs on its own thread. When the deadline passes the call returns a timeout

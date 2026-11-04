@@ -9,9 +9,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use clouddeck_provider_api::{
-    AuthAnswer, AuthInput, AuthMethod, AuthStep, Call, ConnectionId, DimensionId, ErrorKind,
-    FlowId, Host, Instance, KindId, LogLevel, Provider, ProviderError, ResourceId, Selection,
-    ValueId,
+    AuthAnswer, AuthInput, AuthMethod, AuthStep, Call, ConnectionId, Dimension, DimensionId,
+    ErrorKind, FlowId, Host, Instance, KindId, ListResult, LogLevel, Provider, ProviderError,
+    ResourceId, Selection, ValueId,
 };
 
 const MISSING: &str = "conformance-no-such-value";
@@ -162,6 +162,9 @@ fn check_connection(
                 dim.id
             ));
         }
+        if has_cycle(dim) {
+            r.fail(format!("dimension {} has a parent cycle", dim.id));
+        }
     }
 
     let mut listing = Vec::new();
@@ -178,7 +181,152 @@ fn check_connection(
             check_bad_selection(p, cx, r, conn, kind, &dim.id);
         }
     }
+    for kind in kinds {
+        for dim in &dims {
+            check_selection_tree(p, cx, r, conn, kind, dim);
+        }
+    }
     listing
+}
+
+fn is_parent(dim: &Dimension, value: &ValueId) -> bool {
+    dim.values.iter().any(|v| v.parent.as_ref() == Some(value))
+}
+
+fn children(dim: &Dimension, value: &ValueId) -> Vec<ValueId> {
+    dim.values
+        .iter()
+        .filter(|v| v.parent.as_ref() == Some(value))
+        .map(|v| v.id.clone())
+        .collect()
+}
+
+fn has_cycle(dim: &Dimension) -> bool {
+    let parents: BTreeMap<&ValueId, Option<&ValueId>> = dim
+        .values
+        .iter()
+        .map(|v| (&v.id, v.parent.as_ref()))
+        .collect();
+    dim.values.iter().any(|start| {
+        let mut current = parents.get(&start.id).copied().flatten();
+        for _ in 0..dim.values.len() {
+            match current {
+                None => return false,
+                Some(id) if id == &start.id => return true,
+                Some(id) => current = parents.get(id).copied().flatten(),
+            }
+        }
+        true
+    })
+}
+
+fn covered(dim: &Dimension, selected: &[ValueId]) -> BTreeSet<ValueId> {
+    let mut out: BTreeSet<ValueId> = selected.iter().cloned().collect();
+    let mut frontier = selected.to_vec();
+    while let Some(value) = frontier.pop() {
+        for child in children(dim, &value) {
+            if out.insert(child.clone()) {
+                frontier.push(child);
+            }
+        }
+    }
+    out
+}
+
+fn check_failure_cells(r: &mut Report, dim: &Dimension, selection: &Selection, list: &ListResult) {
+    let allowed = covered(dim, selection.values(dim.id.as_str()));
+    for failure in &list.failures {
+        for value in failure.cell.values(dim.id.as_str()) {
+            if !allowed.contains(value) {
+                r.fail(format!(
+                    "dimension {}: CellFailure names {value}, which the selection does not cover",
+                    dim.id
+                ));
+            }
+            if is_parent(dim, value) {
+                r.fail(format!(
+                    "dimension {}: CellFailure names {value}, which is not a finest-level value",
+                    dim.id
+                ));
+            }
+        }
+    }
+}
+
+fn check_selection_tree(
+    p: &dyn Provider,
+    cx: &Call<'_>,
+    r: &mut Report,
+    conn: &ConnectionId,
+    kind: &KindId,
+    dim: &Dimension,
+) {
+    if dim.values.iter().all(|v| v.parent.is_none()) || has_cycle(dim) {
+        return;
+    }
+    let mut members: BTreeMap<ValueId, BTreeSet<String>> = BTreeMap::new();
+    for value in &dim.values {
+        let selection = Selection::new().with(dim.id.clone(), vec![value.id.clone()]);
+        let Some(list) = r.guard("list() for a dimension value", || {
+            p.list(cx, conn, kind, &selection)
+        }) else {
+            return;
+        };
+        check_failure_cells(r, dim, &selection, &list);
+        let ids = list.resources.iter().map(|i| i.id.clone()).collect();
+        members.insert(value.id.clone(), ids);
+    }
+
+    let leaves: Vec<&ValueId> = dim
+        .values
+        .iter()
+        .map(|v| &v.id)
+        .filter(|v| !is_parent(dim, v))
+        .collect();
+    for (i, a) in leaves.iter().enumerate() {
+        for b in &leaves[i + 1..] {
+            if !members[*a].is_disjoint(&members[*b]) {
+                r.fail(format!(
+                    "dimension {}: {a} and {b} both list the same resources",
+                    dim.id
+                ));
+            }
+        }
+    }
+
+    for parent in dim
+        .values
+        .iter()
+        .map(|v| &v.id)
+        .filter(|v| is_parent(dim, v))
+    {
+        let kids = children(dim, parent);
+        let under_children: BTreeSet<String> = kids
+            .iter()
+            .flat_map(|c| members[c].iter().cloned())
+            .collect();
+        if members[parent] != under_children {
+            r.fail(format!(
+                "dimension {}: selecting {parent} does not list exactly its children's resources",
+                dim.id
+            ));
+        }
+        let mut both = kids;
+        both.insert(0, parent.clone());
+        let selection = Selection::new().with(dim.id.clone(), both);
+        if let Some(list) = r.guard("list() for a parent with its children", || {
+            p.list(cx, conn, kind, &selection)
+        }) {
+            check_failure_cells(r, dim, &selection, &list);
+            let ids: BTreeSet<String> = list.resources.iter().map(|i| i.id.clone()).collect();
+            if ids != members[parent] {
+                r.fail(format!(
+                    "dimension {}: selecting {parent} with its children lists different resources than {parent} alone",
+                    dim.id
+                ));
+            }
+        }
+    }
 }
 
 fn check_bad_selection(

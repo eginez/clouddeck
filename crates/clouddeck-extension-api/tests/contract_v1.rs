@@ -12,7 +12,8 @@ use clouddeck_extension_api::{
     ValueId,
 };
 
-const REGIONS: [&str; 3] = ["us", "us-east", "eu"];
+const REGION_TREE: [(&str, Option<&str>); 3] =
+    [("us", None), ("us-east", Some("us")), ("eu", None)];
 
 #[derive(Default)]
 struct Fake {
@@ -21,6 +22,30 @@ struct Fake {
     signed_out: bool,
     ignores_cancel: bool,
     hangs_on_cancel: bool,
+    flat_regions: bool,
+    parent_cycle: bool,
+    failure_outside_selection: bool,
+}
+
+fn region_parent(region: &str) -> Option<&'static str> {
+    REGION_TREE
+        .iter()
+        .find(|(id, _)| *id == region)
+        .and_then(|(_, parent)| *parent)
+}
+
+fn selects(selected: &str, region: &str, flat: bool) -> bool {
+    if flat {
+        return selected == region;
+    }
+    let mut current = Some(region);
+    while let Some(id) = current {
+        if id == selected {
+            return true;
+        }
+        current = region_parent(id);
+    }
+    false
 }
 
 fn instances() -> Vec<Instance> {
@@ -92,16 +117,19 @@ impl Provider for Fake {
     }
 
     fn dimensions(&self, _: &Call<'_>, _: &ConnectionId) -> Result<Vec<Dimension>, ProviderError> {
+        let mut tree: Vec<DimValue> = REGION_TREE
+            .iter()
+            .map(|(id, parent)| value(id, *parent))
+            .collect();
+        if self.parent_cycle {
+            tree[0].parent = Some("us-east".into());
+        }
         Ok(vec![Dimension {
             id: "region".into(),
             label: "Region".into(),
             multi: true,
             optional: true,
-            values: vec![
-                value("us", None),
-                value("us-east", Some("us")),
-                value("eu", None),
-            ],
+            values: tree,
         }])
     }
 
@@ -127,23 +155,33 @@ impl Provider for Fake {
         let regions = sel.values("region");
         let unknown: Vec<ValueId> = regions
             .iter()
-            .filter(|r| !REGIONS.contains(&r.as_str()))
+            .filter(|r| !REGION_TREE.iter().any(|(id, _)| *id == r.as_str()))
             .cloned()
             .collect();
-        let failures = match unknown.is_empty() {
+        let mut failures = match unknown.is_empty() {
             true => vec![],
             false => vec![CellFailure {
                 cell: Selection::new().with("region", unknown),
                 error: ProviderError::of(ErrorKind::NotFound),
             }],
         };
+        if self.failure_outside_selection {
+            failures.push(CellFailure {
+                cell: Selection::new().with("region", vec!["eu".into()]),
+                error: ProviderError::of(ErrorKind::Other),
+            });
+        }
         let mut resources: Vec<Instance> = instances()
             .into_iter()
             .filter(|i| {
                 regions.is_empty()
-                    || regions
-                        .iter()
-                        .any(|r| Some(r.as_str()) == i.region.as_deref())
+                    || regions.iter().any(|r| {
+                        selects(
+                            r.as_str(),
+                            i.region.as_deref().unwrap_or_default(),
+                            self.flat_regions,
+                        )
+                    })
             })
             .collect();
         if self.duplicate_ids {
@@ -288,6 +326,49 @@ fn checker_reports_list_that_hangs_after_cancellation() {
         violations
             .iter()
             .any(|v| v.contains("did not return") && v.contains("after the host cancelled")),
+        "{violations:?}"
+    );
+}
+
+#[test]
+fn checker_reports_flat_parent_selection() {
+    let fake = Fake {
+        flat_regions: true,
+        ..Fake::default()
+    };
+    let violations = check_provider(Arc::new(fake));
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("does not list exactly its children's resources")),
+        "{violations:?}"
+    );
+}
+
+#[test]
+fn checker_reports_parent_cycle() {
+    let fake = Fake {
+        parent_cycle: true,
+        ..Fake::default()
+    };
+    let violations = check_provider(Arc::new(fake));
+    assert!(
+        violations.iter().any(|v| v.contains("parent cycle")),
+        "{violations:?}"
+    );
+}
+
+#[test]
+fn checker_reports_failure_outside_selection() {
+    let fake = Fake {
+        failure_outside_selection: true,
+        ..Fake::default()
+    };
+    let violations = check_provider(Arc::new(fake));
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("which the selection does not cover")),
         "{violations:?}"
     );
 }
