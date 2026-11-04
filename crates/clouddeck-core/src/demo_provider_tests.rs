@@ -92,7 +92,7 @@ fn auth_is_a_no_op_sign_in() {
     assert_eq!(methods[0].id, "demo");
 
     let input = || AuthInput {
-        connection: profile(),
+        connection: Some(profile()),
         values: BTreeMap::new(),
     };
     assert_eq!(

@@ -192,6 +192,10 @@ impl Provider for ScopedProvider {
         method: &AuthMethod,
         input: AuthInput,
     ) -> Result<AuthStep, ProviderError> {
+        let input = AuthInput {
+            connection: Some(self.connection.clone()),
+            ..input
+        };
         self.inner.begin_auth(cx, method, input)
     }
 

@@ -13,7 +13,7 @@ pub struct AuthMethod {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuthInput {
-    pub connection: ConnectionId,
+    pub connection: Option<ConnectionId>,
     pub values: BTreeMap<String, String>,
 }
 

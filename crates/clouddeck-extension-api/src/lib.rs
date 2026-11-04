@@ -11,7 +11,7 @@ mod table_host;
 pub mod wire;
 
 /// Boundary version; a host refuses an extension whose `api_version()` differs.
-pub const API_VERSION: u32 = 1;
+pub const API_VERSION: u32 = 2;
 
 pub trait Extension: Send + Sync + 'static {
     fn new() -> Self;

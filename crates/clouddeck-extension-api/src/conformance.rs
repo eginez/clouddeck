@@ -287,7 +287,8 @@ fn check_auth(p: &dyn Provider, cx: &Call<'_>, r: &mut Report) {
         .unwrap_or_default();
     r.unique("auth_methods()", methods.iter().map(|m| m.id.clone()));
     for method in &methods {
-        check_auth_flow(p, cx, r, &conn, method);
+        check_auth_flow(p, cx, r, None, method);
+        check_auth_flow(p, cx, r, Some(&conn), method);
     }
     let unknown = FlowId::from("conformance-no-such-flow");
     if let Some(Ok(_)) = r.guard("continue_auth() unknown FlowId", || {
@@ -303,14 +304,27 @@ fn check_auth_flow(
     p: &dyn Provider,
     cx: &Call<'_>,
     r: &mut Report,
-    conn: &ConnectionId,
+    conn: Option<&ConnectionId>,
     method: &AuthMethod,
 ) {
     let input = AuthInput {
-        connection: conn.clone(),
+        connection: conn.cloned(),
         values: BTreeMap::new(),
     };
-    let Some(mut step) = r.ok("begin_auth()", || p.begin_auth(cx, method, input)) else {
+    let begun = if conn.is_some() {
+        r.ok("begin_auth()", || p.begin_auth(cx, method, input))
+    } else {
+        match r.guard("begin_auth(None)", || p.begin_auth(cx, method, input)) {
+            Some(Ok(step)) => Some(step),
+            Some(Err(error)) if error.kind == ErrorKind::Unsupported => None,
+            Some(Err(error)) => {
+                r.fail(format!("begin_auth(None) failed: {error}"));
+                None
+            }
+            None => None,
+        }
+    };
+    let Some(mut step) = begun else {
         return;
     };
     for _ in 0..4 {

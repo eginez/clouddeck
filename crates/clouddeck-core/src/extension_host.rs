@@ -162,6 +162,18 @@ mod tests {
     }
 
     #[test]
+    fn refuses_previous_api_version_naming_both_versions() {
+        let error = check_api_version(API_VERSION - 1).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "extension targets boundary version {}; this host requires {API_VERSION}",
+                API_VERSION - 1
+            )
+        );
+    }
+
+    #[test]
     fn accepts_unwind_builds() {
         assert!(check_build_info(b"panic=unwind").is_ok());
     }

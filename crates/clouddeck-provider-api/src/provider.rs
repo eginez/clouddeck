@@ -337,7 +337,7 @@ mod tests {
             label: "Method".to_string(),
         };
         let input = AuthInput {
-            connection: ConnectionId::from("default"),
+            connection: Some(ConnectionId::from("default")),
             values: Default::default(),
         };
         assert!(EmptyProvider.auth_methods().is_empty());

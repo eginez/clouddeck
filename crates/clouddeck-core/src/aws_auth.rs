@@ -78,7 +78,13 @@ impl AwsAuth {
         if method.id != SSO_METHOD_ID {
             return Err(ProviderError::unsupported());
         }
-        let kind = self.credential_kind(input.connection.as_str())?;
+        let Some(connection) = input.connection else {
+            return Err(ProviderError::new(
+                ErrorKind::Unsupported,
+                "Choose a profile to sign in to.",
+            ));
+        };
+        let kind = self.credential_kind(connection.as_str())?;
         match login_guidance(&kind) {
             LoginGuidance::BrowserSignIn(_) => {}
             LoginGuidance::AlreadyConfigured => {
@@ -404,7 +410,7 @@ credential_process = /usr/local/bin/creds
 
     fn input(profile: &str) -> AuthInput {
         AuthInput {
-            connection: ConnectionId::from(profile),
+            connection: Some(ConnectionId::from(profile)),
             values: Default::default(),
         }
     }

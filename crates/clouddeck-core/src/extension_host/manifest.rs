@@ -144,7 +144,7 @@ id = "toy"
 name = "Toy"
 version = "0.1.0"
 schema_version = 1
-api_version = 1
+api_version = 2
 authors = ["Esteban"]
 
 [providers.toy]
@@ -183,7 +183,7 @@ kind = "secrets"
     #[test]
     fn api_mismatch_asks_for_rebuild() {
         let manifest = Manifest::parse(MANIFEST).unwrap();
-        let message = manifest.check_api(2, "0.3.0").unwrap_err();
+        let message = manifest.check_api(1, "0.3.0").unwrap_err();
         assert!(
             message.contains("Rebuild toy for CloudDeck 0.3.0"),
             "{message}"

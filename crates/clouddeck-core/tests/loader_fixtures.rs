@@ -39,7 +39,7 @@ fn refuses_a_library_exporting_another_api_version() {
     let library = build_fixture("version-extension", "clouddeck_fixture_version");
     assert!(matches!(
         load_extension(&library),
-        Err(LoadError::ApiVersion { found: 2 })
+        Err(LoadError::ApiVersion { found: 1 })
     ));
 }
 

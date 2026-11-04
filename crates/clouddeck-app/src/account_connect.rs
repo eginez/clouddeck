@@ -287,7 +287,7 @@ fn begin_device_flow(provider: &dyn Provider, profile: &str) -> Result<AuthStep,
             call,
             &method,
             AuthInput {
-                connection: ConnectionId::from(profile),
+                connection: Some(ConnectionId::from(profile)),
                 values: BTreeMap::new(),
             },
         )

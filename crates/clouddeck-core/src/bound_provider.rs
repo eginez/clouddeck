@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use clouddeck_provider_api::{
     AuthAnswer, AuthInput, AuthMethod, AuthStatus, AuthStep, Call, Connection, ConnectionId,
-    Dimension, ExtrasSection, FieldDef, FlowId, InspectorSectionDef, Instance,
-    KindId, KindInfo, ListResult, Provider, ProviderError, ProviderInfo, ResourceId, Selection,
+    Dimension, ExtrasSection, FieldDef, FlowId, InspectorSectionDef, Instance, KindId, KindInfo,
+    ListResult, Provider, ProviderError, ProviderInfo, ResourceId, Selection,
 };
 
 use crate::service_provider::console_url;
@@ -82,6 +82,10 @@ impl Provider for BoundProvider {
         method: &AuthMethod,
         input: AuthInput,
     ) -> Result<AuthStep, ProviderError> {
+        let input = AuthInput {
+            connection: Some(self.connection.clone()),
+            ..input
+        };
         self.inner.begin_auth(cx, method, input)
     }
 
