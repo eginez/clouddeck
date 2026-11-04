@@ -83,14 +83,16 @@ per zone), encode the parent in the id, for example `zone/name` (`us-east1-b/web
 
 - `Instance.id` must equal the `ResourceId` that `describe` receives for that resource. `describe`
   must accept every id that `list` returns.
-- Ids must be unique within a connection. Use the parent-qualified form whenever the bare name is not.
-- `describe` returns `ProviderError` kind `NotFound` for an id it does not know.
+- Ids must be unique within a connection. Use the parent-qualified form whenever the bare name
+  is not.
+- For an id it does not know, `describe` returns an error of kind `NotFound` or `Unsupported`.
 
 `StateKind` maps a provider's states as follows:
 
 - `Terminated` means gone for good: it cannot be started again.
 - A state the provider calls "terminated" but that can be started again maps to `Stopped`. GCP's
-  `TERMINATED` is an example: it is a stopped VM, so it maps to `Stopped` with `raw` set to `TERMINATED`.
+  `TERMINATED` is an example: it is a stopped VM, so it maps to `Stopped`, with `raw` set to
+  `TERMINATED`.
 - Keep the provider's own text in `State.raw`, whichever kind it maps to.
 
 ## Selections and dimension trees
