@@ -9,10 +9,8 @@ use clouddeck_provider_api::{
 
 use crate::console_url::console_url_for_instance;
 use crate::scoped_provider::{ScopeHost, ScopeSettings};
-use crate::workspace_provider::service;
 use crate::{
-    DemoFleet, FLEET_REGIONS, bound_provider, builtin_providers, demo_provider, service_provider,
-    workspace_provider,
+    DemoFleet, FLEET_REGIONS, bound_provider, builtin_providers, demo_provider, workspace_provider,
 };
 
 struct NullHost;
@@ -64,7 +62,10 @@ fn call_with_deadline() -> Call<'static> {
 fn region_selection(regions: &[&str]) -> Selection {
     Selection::new().with(
         "region",
-        regions.iter().map(|region| ValueId::from(*region)).collect(),
+        regions
+            .iter()
+            .map(|region| ValueId::from(*region))
+            .collect(),
     )
 }
 
@@ -180,12 +181,6 @@ fn other_demo_paths_list_through_the_demo_entry() {
         );
         assert_eq!(provider.info().id, "demo", "{scenario:?}");
     }
-}
-
-#[test]
-fn happy_demo_falls_back_to_aws_without_a_demo_provider() {
-    let providers = builtin_providers(false);
-    assert_eq!(happy_provider(&providers, "us-east-1").info().id, "aws");
 }
 
 #[test]
@@ -416,29 +411,6 @@ fn demo_scenarios_list_their_expected_shapes() {
     let happy_fleet = list_demo(DemoFleet::Happy, "fleet", &fleet_regions);
     assert_eq!(instance_ids(&happy_fleet).len(), 3);
     assert!(happy_fleet.failures.is_empty());
-}
-
-#[test]
-fn no_profile_listing_stays_on_the_aws_service() {
-    let providers = builtin_providers(true);
-    let timeout = Duration::from_secs(5);
-    let fleet_regions = ["us-east-1".to_string(), "eu-west-1".to_string()];
-    for region in ["us-east-1", "fleet"] {
-        let expected = service_provider(service("", region, &fleet_regions, timeout)).list(
-            &call(),
-            &ConnectionId::from(""),
-            &KindId::instances(),
-            &Selection::new(),
-        );
-        let actual = workspace_provider(&providers, "", region, None, &fleet_regions, timeout)
-            .list(
-                &call(),
-                &ConnectionId::from(""),
-                &KindId::instances(),
-                &Selection::new(),
-            );
-        assert_eq!(actual, expected, "no profile {region}");
-    }
 }
 
 #[derive(Debug, PartialEq)]

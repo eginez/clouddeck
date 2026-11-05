@@ -37,7 +37,11 @@ impl AppProviders {
 
 impl Default for AppProviders {
     fn default() -> Self {
-        Self::new(app_registry(&extensions_root(), &extension_state_root()))
+        Self::new(app_registry(
+            clouddeck_aws::builtin_providers(true),
+            &extensions_root(),
+            &extension_state_root(),
+        ))
     }
 }
 

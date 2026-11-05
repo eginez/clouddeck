@@ -14,16 +14,17 @@ max_suppression_ratio = 0.05
 fail_on_warnings = false
 
 # ── Architecture ─────────────────────────────────────────────────────────
-# Dependency direction: provider_api <- extension_api <- core <- app. Each layer may
+# Dependency direction: provider_api <- extension_api <- core <- aws_plugin <- app. Each layer may
 # use the ones listed before it; nothing may import outward. extension_examples
 # (the toy extension) is a leaf that sits after everything: only tests and other
-# examples may depend on it, and the app may not.
+# examples may depend on it, and the app may not. aws_plugin is the statically linked
+# AWS provider (extensions/aws); it may use core but core may not use it.
 
 [architecture]
 enabled = true
 
 [architecture.layers]
-order = ["provider_api", "extension_api", "core", "app", "extension_examples", "plugins"]
+order = ["provider_api", "extension_api", "core", "aws_plugin", "app", "extension_examples", "plugins"]
 unmatched_behavior = "strict_error"
 
 [architecture.layers.provider_api]
@@ -35,6 +36,9 @@ paths = ["crates/clouddeck-extension-api/**"]
 [architecture.layers.core]
 paths = ["crates/clouddeck-core/**"]
 
+[architecture.layers.aws_plugin]
+paths = ["extensions/aws/**"]
+
 [architecture.layers.app]
 paths = ["crates/clouddeck-app/**"]
 
@@ -43,7 +47,7 @@ paths = ["crates/clouddeck-extension-toy/**"]
 
 [architecture.layers.plugins]
 # First-party bundled plugins (extensions/<id>/): leaves that depend on the two API crates only.
-paths = ["extensions/**"]
+paths = ["extensions/gcp/**"]
 
 [architecture.external_crates]
 clouddeck_provider_api = "provider_api"
@@ -52,9 +56,10 @@ clouddeck_core = "core"
 clouddeck_app = "app"
 clouddeck_extension_toy = "extension_examples"
 clouddeck_gcp = "plugins"
+clouddeck_aws = "aws_plugin"
 
-# The app reaches AWS only through clouddeck-core. The list is the aws-* crates in Cargo.lock;
-# keep it in step when the SDK adds crates. The AWS provider code in core is not restricted here.
+# The app reaches AWS only through clouddeck-aws. The list is the aws-* crates in Cargo.lock;
+# keep it in step when the SDK adds crates.
 [[architecture.pattern]]
 name = "no_aws_sdk_in_app"
 forbid_path_prefix = [
@@ -66,7 +71,20 @@ forbid_path_prefix = [
     "aws_smithy_types", "aws_smithy_xml", "aws_types",
 ]
 forbidden_in = ["crates/clouddeck-app/**"]
-reason = "The app reaches AWS through clouddeck-core; AWS SDK crates stay inside core's AWS provider code"
+reason = "The app reaches AWS through clouddeck-aws; AWS SDK crates stay inside the AWS provider crate"
+
+[[architecture.pattern]]
+name = "no_aws_sdk_in_core"
+forbid_path_prefix = [
+    "aws_config", "aws_credential_types", "aws_lc_rs", "aws_lc_sys", "aws_runtime",
+    "aws_sdk_ec2", "aws_sdk_sso", "aws_sdk_ssooidc", "aws_sdk_sts", "aws_sigv4",
+    "aws_smithy_async", "aws_smithy_http", "aws_smithy_http_client", "aws_smithy_json",
+    "aws_smithy_observability", "aws_smithy_query", "aws_smithy_runtime",
+    "aws_smithy_runtime_api", "aws_smithy_runtime_api_macros", "aws_smithy_schema",
+    "aws_smithy_types", "aws_smithy_xml", "aws_types",
+]
+forbidden_in = ["crates/clouddeck-core/**"]
+reason = "Core stays provider-neutral; the AWS SDK lives in the clouddeck-aws crate"
 
 # Example extensions are loaded as cdylibs by the host, never linked into the app.
 [[architecture.pattern]]
@@ -78,7 +96,7 @@ reason = "The app loads extensions at runtime through the host loader; example e
 # rustqual cannot match a crate-name wildcard, so each new provider crate is added here when created.
 [[architecture.pattern]]
 name = "no_provider_crates_in_app"
-forbid_path_prefix = ["clouddeck_provider_aws"]
+forbid_path_prefix = ["clouddeck_provider_aws", "clouddeck_gcp"]
 forbidden_in = ["crates/clouddeck-app/**"]
 reason = "The app registers providers through clouddeck-core and never imports a provider crate"
 

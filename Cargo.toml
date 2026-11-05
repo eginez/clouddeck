@@ -6,6 +6,7 @@ members = [
     "crates/clouddeck-extension-toy",
     "crates/clouddeck-core",
     "crates/clouddeck-app",
+    "extensions/aws",
     "extensions/gcp",
 ]
 

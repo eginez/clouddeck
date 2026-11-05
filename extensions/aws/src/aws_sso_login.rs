@@ -16,10 +16,10 @@
 //! be reimplemented here, only the initial browser sign-in.
 
 use crate::aws_sdk::sdk_error_detail;
-use crate::{AwsCredentialKind, AwsSsoConfiguration, BoxError, CloudDeckError};
 use aws_config::BehaviorVersion;
 use aws_sdk_ssooidc::operation::create_token::CreateTokenError;
 use aws_types::region::Region;
+use clouddeck_core::{AwsCredentialKind, AwsSsoConfiguration, BoxError, CloudDeckError};
 use sha1::{Digest, Sha1};
 use std::{
     path::{Path, PathBuf},

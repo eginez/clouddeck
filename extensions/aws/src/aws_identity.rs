@@ -1,9 +1,9 @@
 //! AWS account identity resolution used to verify onboarding credentials.
 
 use crate::aws_sdk::sdk_error_detail;
-use crate::{BoxError, CloudDeckError};
 use aws_config::BehaviorVersion;
 use aws_types::region::Region;
+use clouddeck_core::{BoxError, CloudDeckError};
 use std::{sync::Arc, time::Duration};
 
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);

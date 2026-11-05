@@ -200,14 +200,17 @@ fn is_hidden(path: &Path) -> bool {
 }
 
 /// Built-ins are registered before discovery so an extension claiming their id is refused.
-pub fn app_registry(root: &Path, state_root: &Path) -> ProviderRegistry {
+pub fn app_registry(
+    builtins: Vec<Arc<dyn Provider>>,
+    root: &Path,
+    state_root: &Path,
+) -> ProviderRegistry {
     let mut registry = ProviderRegistry::default().with_external(EXTERNAL_EXTENSIONS_ALLOWED);
-    registry
-        .register_builtin(crate::aws_provider())
-        .expect("aws is the first builtin");
-    registry
-        .register_builtin(Arc::new(crate::demo_provider()))
-        .expect("demo is distinct from aws");
+    for provider in builtins {
+        registry
+            .register_builtin(provider)
+            .expect("builtin provider ids are unique");
+    }
     if let Err(error) = registry.discover(root, state_root) {
         eprintln!("Could not read installed extensions: {error}");
     }
@@ -227,6 +230,7 @@ pub fn extension_state_root() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{ComputeServiceProvider, MockComputeService};
 
     fn manifest_text(id: &str, api_version: u32) -> String {
         format!(
@@ -435,7 +439,9 @@ mod tests {
     #[test]
     fn register_builtin_refuses_a_duplicate_id() {
         let mut registry = ProviderRegistry::default();
-        registry.register_builtin(Arc::new(crate::demo_provider())).unwrap();
+        registry
+            .register_builtin(Arc::new(crate::demo_provider()))
+            .unwrap();
 
         let error = registry
             .register_builtin(Arc::new(crate::demo_provider()))
@@ -448,7 +454,9 @@ mod tests {
     #[test]
     fn register_builtin_adds_a_provider() {
         let mut registry = ProviderRegistry::default();
-        registry.register_builtin(Arc::new(crate::demo_provider())).unwrap();
+        registry
+            .register_builtin(Arc::new(crate::demo_provider()))
+            .unwrap();
 
         assert!(registry.provider("demo").is_some());
         assert!(registry.provider("aws").is_none());
@@ -457,7 +465,10 @@ mod tests {
     #[test]
     fn with_builtins_matches_builtin_providers() {
         let ids = |providers: Vec<Arc<dyn Provider>>| -> Vec<String> {
-            providers.iter().map(|provider| provider.info().id).collect()
+            providers
+                .iter()
+                .map(|provider| provider.info().id)
+                .collect()
         };
         for demo in [true, false] {
             let registry = ProviderRegistry::with_builtins(demo);
@@ -475,7 +486,12 @@ mod tests {
         install(root.path(), "aws", &manifest_text("aws", API_VERSION));
         enable(state_root.path(), "aws", |s| s.enabled = true);
 
-        let builtin = crate::aws_provider();
+        let builtin: Arc<dyn Provider> = Arc::new(ComputeServiceProvider::new(
+            "aws",
+            vec![],
+            vec![],
+            |_, _| Box::new(MockComputeService::new(vec![], None)),
+        ));
         let mut registry = ProviderRegistry::default().with_external(true);
         registry.register_builtin(Arc::clone(&builtin)).unwrap();
         registry.discover(root.path(), state_root.path()).unwrap();
@@ -497,7 +513,9 @@ mod tests {
         enable(state_root.path(), "demo", |s| s.enabled = true);
 
         let mut registry = ProviderRegistry::default().with_external(true);
-        registry.register_builtin(Arc::new(crate::demo_provider())).unwrap();
+        registry
+            .register_builtin(Arc::new(crate::demo_provider()))
+            .unwrap();
         registry.discover(root.path(), state_root.path()).unwrap();
 
         assert_eq!(registry.providers().len(), 1);
@@ -514,7 +532,16 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let state_root = tempfile::tempdir().unwrap();
 
-        let registry = app_registry(&root.path().join("absent"), state_root.path());
+        let builtins: Vec<Arc<dyn Provider>> = vec![
+            Arc::new(ComputeServiceProvider::new(
+                "aws",
+                vec![],
+                vec![],
+                |_, _| Box::new(MockComputeService::new(vec![], None)),
+            )),
+            Arc::new(crate::demo_provider()),
+        ];
+        let registry = app_registry(builtins, &root.path().join("absent"), state_root.path());
 
         let ids: Vec<String> = registry
             .providers()

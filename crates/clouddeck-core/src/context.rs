@@ -311,7 +311,7 @@ pub fn read_profile_auth(
         .map_err(|error| error.into_io_error(config_path, credentials_path))
 }
 
-pub(crate) fn aws_file_paths() -> (PathBuf, PathBuf) {
+pub fn aws_file_paths() -> (PathBuf, PathBuf) {
     let home = std::env::var_os("HOME")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)

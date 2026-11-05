@@ -7,28 +7,6 @@ repository.workspace = true
 
 [dependencies]
 async-trait = "0.1"
-aws-config = { version = "1.11.0", default-features = false, features = [
-    "behavior-version-latest",
-    "default-https-client",
-    "rt-tokio",
-    "sso",
-] }
-aws-sdk-ec2 = { version = "1.250.0", default-features = false, features = [
-    "behavior-version-latest",
-    "default-https-client",
-    "rt-tokio",
-] }
-aws-sdk-ssooidc = { version = "1.110.0", default-features = false, features = [
-    "behavior-version-latest",
-    "default-https-client",
-    "rt-tokio",
-] }
-aws-sdk-sts = { version = "1.113.0", default-features = false, features = [
-    "behavior-version-latest",
-    "default-https-client",
-    "rt-tokio",
-] }
-aws-types = "1.5.0"
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 clouddeck-extension-api = { path = "../clouddeck-extension-api" }
@@ -42,7 +20,6 @@ rand_core = { version = "0.6", features = ["getrandom"] }
 semver = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sha1 = "0.10"
 sha2 = "0.10"
 tar = "0.4"
 toml = "0.8"

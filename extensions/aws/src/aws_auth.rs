@@ -15,18 +15,17 @@ use clouddeck_provider_api::{
     Provider, ProviderError, ProviderInfo, Selection,
 };
 
+use clouddeck_core::{
+    AwsCredentialKind, AwsSsoConfiguration, ComputeServiceProvider, Dimension, REGIONS,
+    ScopeSettings, aws_file_paths, list_scenario, load_profiles, read_profile_auth,
+};
+
+use crate::aws_sdk::AwsSdkComputeService;
 use crate::aws_sso_login::{
-    AwsSsoLoginService, PendingSsoSignIn, SsoDeviceAuthorization, home_dir, sso_cache_identifier,
-    sso_cache_path,
+    AwsSsoLoginService, LoginGuidance, PendingSsoSignIn, SsoDeviceAuthorization, home_dir,
+    login_guidance, sso_cache_identifier, sso_cache_path,
 };
-use crate::context::{aws_file_paths, read_profile_auth};
-use crate::demo_scenarios::list_scenario;
-use crate::scoped_provider::ScopeSettings;
-use crate::workspace_provider::routed_list;
-use crate::{
-    AwsCredentialKind, AwsSdkComputeService, AwsSsoConfiguration, ComputeServiceProvider,
-    Dimension, LoginGuidance, REGIONS, load_profiles, login_guidance,
-};
+use crate::routing::routed_list;
 
 const SSO_METHOD_ID: &str = "aws-sso";
 
@@ -218,7 +217,7 @@ fn device_code_step(flow: FlowId, authorization: &SsoDeviceAuthorization) -> Aut
     }
 }
 
-fn sso_error(error: crate::BoxError) -> ProviderError {
+fn sso_error(error: clouddeck_core::BoxError) -> ProviderError {
     ProviderError::new(ErrorKind::Other, error.to_string())
 }
 

@@ -24,10 +24,12 @@ use std::sync::Arc;
 use gpui::{App, AsyncApp, Entity};
 
 use crate::account_window::{AccountBrowserLoginPrompt, AccountConnectionError, AccountWindowView};
+use clouddeck_aws::{
+    AwsIdentityService, LoginGuidance, aws_provider, login_guidance, verify_instance_access,
+};
 use clouddeck_core::{
-    AuthAnswer, AuthInput, AuthStep, AwsCredentialKind, AwsIdentityService, Call, ConnectionId,
-    FlowId, Host, LogLevel, LoginGuidance, Provider, ProviderError, aws_provider, login_guidance,
-    verify_instance_access,
+    AuthAnswer, AuthInput, AuthStep, AwsCredentialKind, Call, ConnectionId, FlowId, Host, LogLevel,
+    Provider, ProviderError,
 };
 
 /// Consumes whichever one-shot request flags the wizard has set since the

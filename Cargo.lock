@@ -1354,6 +1354,7 @@ name = "clouddeck-app"
 version = "0.2.1"
 dependencies = [
  "chrono",
+ "clouddeck-aws",
  "clouddeck-core",
  "flate2",
  "gpui",
@@ -1365,8 +1366,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "clouddeck-core"
-version = "0.2.1"
+name = "clouddeck-aws"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "aws-config",
@@ -1374,6 +1375,21 @@ dependencies = [
  "aws-sdk-ssooidc",
  "aws-sdk-sts",
  "aws-types",
+ "chrono",
+ "clouddeck-core",
+ "clouddeck-provider-api",
+ "hex",
+ "serde_json",
+ "sha1",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
+name = "clouddeck-core"
+version = "0.2.1"
+dependencies = [
+ "async-trait",
  "base64",
  "chrono",
  "clouddeck-core",
@@ -1388,7 +1404,6 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
- "sha1",
  "sha2 0.10.9",
  "tar",
  "tempfile",

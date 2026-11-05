@@ -7,7 +7,7 @@ use clouddeck_provider_api::{
     Host, KindId, ListResult, LogLevel, Provider, ProviderError, ResourceId, Selection, ValueId,
 };
 
-use crate::demo_provider::{DemoProvider, builtin_providers, demo_provider};
+use crate::demo_provider::{DemoProvider, demo_provider};
 
 struct NullHost;
 
@@ -279,16 +279,4 @@ fn fields_and_inspector_reuse_the_aws_definitions() {
 fn demo_provider_is_usable_as_a_shared_provider() {
     let provider: Arc<dyn Provider> = Arc::new(demo_provider());
     assert_eq!(provider.info().id, "demo");
-}
-
-#[test]
-fn builtin_providers_register_demo_only_when_requested() {
-    let ids = |demo| {
-        builtin_providers(demo)
-            .iter()
-            .map(|provider| provider.info().id)
-            .collect::<Vec<String>>()
-    };
-    assert_eq!(ids(false), ["aws"]);
-    assert_eq!(ids(true), ["aws", "demo"]);
 }

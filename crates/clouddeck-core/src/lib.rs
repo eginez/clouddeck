@@ -48,30 +48,25 @@ pub use instance_detail_view_model::InstanceDetailViewModel;
 pub use instance_list_view_model::{InstanceListViewModel, LoadRequest};
 mod service_provider;
 pub use service_provider::{
-    LoadHost, cloud_deck_error, join_failure, service_provider, whole_load_failure,
+    LoadHost, REGION, cloud_deck_error, join_failure, service_provider, whole_load_failure,
 };
 mod workspace_provider;
-pub use workspace_provider::{
-    DemoFleet, demo_profiles, demo_region_names, verify_instance_access, workspace_provider,
-};
+pub use workspace_provider::{DemoFleet, demo_profiles, demo_region_names, workspace_provider};
 mod aws_fields;
 pub mod fixture_fleet;
 pub use aws_fields::aws_fields;
-mod aws_auth;
-mod aws_identity;
-mod aws_sdk;
-mod aws_sso_login;
-pub use aws_auth::aws_provider;
-pub use extension_host::{LoadError, LoadedExtension};
 #[cfg(feature = "test-support")]
 pub use extension_host::load_extension;
+pub use extension_host::{LoadError, LoadedExtension};
 mod bound_provider;
 mod scoped_provider;
 pub use bound_provider::{BoundProvider, bound_provider};
+pub use scoped_provider::ScopeSettings;
 mod demo_provider;
 #[cfg(test)]
 mod demo_provider_tests;
 mod demo_scenarios;
+pub use demo_scenarios::list_scenario;
 #[cfg(test)]
 mod workspace_provider_tests;
 pub use demo_provider::{DemoProvider, builtin_providers, demo_provider};
@@ -100,9 +95,6 @@ pub use ui_state::*;
 mod settings;
 pub use settings::*;
 mod center_state;
-pub use aws_identity::{AwsIdentity, AwsIdentityProvider, AwsIdentityService};
-pub use aws_sdk::{AwsSdkComputeService, Ec2Page, Ec2PageSource};
-pub use aws_sso_login::{LoginGuidance, login_guidance};
 pub use center_state::*;
 mod refresh;
 pub use refresh::*;
@@ -115,8 +107,8 @@ pub use console_url::{
 };
 pub use context::{
     AwsConfigFile, AwsConfigParseError, AwsCredentialKind, AwsProfile, AwsProfileAuth,
-    AwsSsoConfiguration, FLEET_REGIONS, REGIONS, WorkspaceContext, context_path, load_profile_auth,
-    load_profiles, parse_profile_auth, parse_profiles, read_profile_auth,
+    AwsSsoConfiguration, FLEET_REGIONS, REGIONS, WorkspaceContext, aws_file_paths, context_path,
+    load_profile_auth, load_profiles, parse_profile_auth, parse_profiles, read_profile_auth,
 };
 pub use layout::*;
 pub use stale::*;

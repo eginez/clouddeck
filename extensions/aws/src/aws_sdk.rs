@@ -4,13 +4,13 @@
 //! credentials).  CloudDeck only supplies the selected profile and region;
 //! it never shells out to the AWS CLI.
 
-use crate::{
-    BoxError, CloudDeckError, ComputeInstanceFilters, ComputeInstanceLoadResult, ComputeService,
-    EC2Instance, EC2InstanceTag, EC2SecurityGroup,
-};
 use aws_config::BehaviorVersion;
 use aws_sdk_ec2::operation::describe_instances::DescribeInstancesError;
 use aws_types::region::Region;
+use clouddeck_core::{
+    BoxError, CloudDeckError, ComputeInstanceFilters, ComputeInstanceLoadResult, ComputeService,
+    EC2Instance, EC2InstanceTag, EC2SecurityGroup,
+};
 use std::{collections::HashSet, sync::Arc, time::Duration};
 
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
@@ -277,7 +277,9 @@ fn map_instance(instance: &aws_sdk_ec2::types::Instance, region: &str) -> Option
             .map(str::to_owned),
         image_id: instance.image_id().map(str::to_owned),
         key_name: instance.key_name().map(str::to_owned),
-        architecture: instance.architecture().map(|value| value.as_str().to_owned()),
+        architecture: instance
+            .architecture()
+            .map(|value| value.as_str().to_owned()),
         state_transition_reason: instance
             .state_transition_reason()
             .map(str::to_owned)
@@ -502,7 +504,7 @@ mod tests {
 
     #[tokio::test]
     async fn failing_region_is_recorded_while_other_regions_keep_their_instances() {
-        let fleet = crate::FleetComputeService::new(
+        let fleet = clouddeck_core::FleetComputeService::new(
             vec!["eu-west-1".into(), "us-west-2".into()],
             |region: &str| -> Box<dyn ComputeService + Send + Sync> {
                 let pages = if region == "us-west-2" {

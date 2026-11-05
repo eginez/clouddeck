@@ -31,10 +31,10 @@ fn is_scope_key(key: &str) -> bool {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ScopeSettings {
-    pub(crate) request_timeout: Duration,
-    pub(crate) fleet: bool,
-    pub(crate) demo: Option<DemoFleet>,
+pub struct ScopeSettings {
+    pub request_timeout: Duration,
+    pub fleet: bool,
+    pub demo: Option<DemoFleet>,
 }
 
 impl ScopeSettings {
@@ -49,7 +49,7 @@ impl ScopeSettings {
     }
 
     /// Only a ScopeHost holds the per-process scope token, so a host without it cannot reroute listing.
-    pub(crate) fn from_host(host: &dyn Host) -> Option<Self> {
+    pub fn from_host(host: &dyn Host) -> Option<Self> {
         if host.setting(SCOPE_TOKEN_KEY).as_deref() != Some(scope_token()) {
             return None;
         }
@@ -131,6 +131,16 @@ pub(crate) fn scoped_provider(
     })
 }
 
+impl ScopedProvider {
+    fn effective_selection<'a>(&'a self, selection: &'a Selection) -> &'a Selection {
+        if selection.is_empty() {
+            &self.selection
+        } else {
+            selection
+        }
+    }
+}
+
 impl Provider for ScopedProvider {
     fn info(&self) -> ProviderInfo {
         self.inner.info()
@@ -159,16 +169,12 @@ impl Provider for ScopedProvider {
         kind: &KindId,
         selection: &Selection,
     ) -> ListResult {
-        let selection = if selection.is_empty() {
-            &self.selection
-        } else {
-            selection
-        };
         let host = ScopeHost::new(cx.host, self.settings);
         let scoped = Call {
             deadline: cx.deadline,
             host: &host,
         };
+        let selection = self.effective_selection(selection);
         self.inner.list(&scoped, &self.connection, kind, selection)
     }
 

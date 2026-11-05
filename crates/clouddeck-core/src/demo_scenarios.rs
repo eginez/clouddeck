@@ -23,7 +23,7 @@ pub(crate) fn scenario_data(demo: DemoFleet) -> EC2Scenario {
     parse_scenario(fixture).expect("bundled demo")
 }
 
-pub(crate) fn list_scenario(
+pub fn list_scenario(
     demo: DemoFleet,
     connection: &ConnectionId,
     kind: &KindId,

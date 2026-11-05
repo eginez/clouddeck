@@ -12,7 +12,7 @@ use crate::console_url::console_url_for_instance;
 use crate::error::CloudDeckError;
 use crate::service::{BoxError, ComputeService};
 
-pub(crate) const REGION: &str = "region";
+pub const REGION: &str = "region";
 
 pub fn service_provider(service: Box<dyn ComputeService + Send + Sync>) -> Arc<dyn Provider> {
     Arc::new(ServiceProvider { service })

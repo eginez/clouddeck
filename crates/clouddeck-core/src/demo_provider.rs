@@ -105,7 +105,7 @@ pub fn demo_provider() -> DemoProvider {
 }
 
 pub fn builtin_providers(demo: bool) -> Vec<Arc<dyn Provider>> {
-    let mut providers = vec![crate::aws_provider()];
+    let mut providers: Vec<Arc<dyn Provider>> = Vec::new();
     if demo {
         providers.push(Arc::new(demo_provider()));
     }
