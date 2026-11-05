@@ -9,9 +9,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use clouddeck_provider_api::{
-    AuthAnswer, AuthInput, AuthMethod, AuthStep, Call, ConnectionId, Dimension, DimensionId,
-    ErrorKind, FlowId, Host, Instance, KindId, ListResult, LogLevel, Provider, ProviderError,
-    ResourceId, Selection, ValueId,
+    AuthAnswer, AuthInput, AuthMethod, AuthStatus, AuthStep, Call, ConnectionId, Dimension,
+    DimensionId, ErrorKind, FlowId, Host, Instance, KindId, ListResult, LogLevel, Provider,
+    ProviderError, ResourceId, Selection, ValueId,
 };
 
 const MISSING: &str = "conformance-no-such-value";
@@ -448,6 +448,13 @@ fn check_auth(p: &dyn Provider, cx: &Call<'_>, r: &mut Report) {
     r.guard("sign_out()", || p.sign_out(cx, Some(&conn)));
 }
 
+fn is_signed_out(p: &dyn Provider, cx: &Call<'_>, conn: Option<&ConnectionId>) -> bool {
+    matches!(
+        catch_unwind(AssertUnwindSafe(|| p.auth_status(cx, conn))),
+        Ok(AuthStatus::SignedOut)
+    )
+}
+
 fn check_auth_flow(
     p: &dyn Provider,
     cx: &Call<'_>,
@@ -459,18 +466,20 @@ fn check_auth_flow(
         connection: conn.cloned(),
         values: BTreeMap::new(),
     };
-    let begun = if conn.is_some() {
-        r.ok("begin_auth()", || p.begin_auth(cx, method, input))
+    let what = if conn.is_some() {
+        "begin_auth()"
     } else {
-        match r.guard("begin_auth(None)", || p.begin_auth(cx, method, input)) {
-            Some(Ok(step)) => Some(step),
-            Some(Err(error)) if error.kind == ErrorKind::Unsupported => None,
-            Some(Err(error)) => {
-                r.fail(format!("begin_auth(None) failed: {error}"));
-                None
-            }
-            None => None,
+        "begin_auth(None)"
+    };
+    let begun = match r.guard(what, || p.begin_auth(cx, method, input)) {
+        Some(Ok(step)) => Some(step),
+        Some(Err(error)) if error.kind == ErrorKind::Auth && is_signed_out(p, cx, conn) => None,
+        Some(Err(error)) if conn.is_none() && error.kind == ErrorKind::Unsupported => None,
+        Some(Err(error)) => {
+            r.fail(format!("{what} failed: {error}"));
+            None
         }
+        None => None,
     };
     let Some(mut step) = begun else {
         return;

@@ -373,7 +373,7 @@ impl Provider for RemoteProvider {
 
     fn auth_status(&self, cx: &Call<'_>, connection: Option<&ConnectionId>) -> AuthStatus {
         self.invoke(cx.deadline, Method::AuthStatus, connection)
-            .unwrap_or(AuthStatus::SignedOut)
+            .unwrap_or(AuthStatus::Unknown)
     }
 
     fn sign_out(
