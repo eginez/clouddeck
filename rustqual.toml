@@ -23,7 +23,7 @@ fail_on_warnings = false
 enabled = true
 
 [architecture.layers]
-order = ["provider_api", "extension_api", "core", "app", "extension_examples"]
+order = ["provider_api", "extension_api", "core", "app", "extension_examples", "plugins"]
 unmatched_behavior = "strict_error"
 
 [architecture.layers.provider_api]
@@ -41,12 +41,17 @@ paths = ["crates/clouddeck-app/**"]
 [architecture.layers.extension_examples]
 paths = ["crates/clouddeck-extension-toy/**"]
 
+[architecture.layers.plugins]
+# First-party bundled plugins (extensions/<id>/): leaves that depend on the two API crates only.
+paths = ["extensions/**"]
+
 [architecture.external_crates]
 clouddeck_provider_api = "provider_api"
 clouddeck_extension_api = "extension_api"
 clouddeck_core = "core"
 clouddeck_app = "app"
 clouddeck_extension_toy = "extension_examples"
+clouddeck_gcp = "plugins"
 
 # The app reaches AWS only through clouddeck-core. The list is the aws-* crates in Cargo.lock;
 # keep it in step when the SDK adds crates. The AWS provider code in core is not restricted here.

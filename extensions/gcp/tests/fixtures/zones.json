@@ -1,0 +1,10 @@
+{
+  "kind": "compute#zoneList",
+  "id": "projects/demo-prod/zones",
+  "items": [
+    {"id": "2000", "name": "us-central1-a", "status": "UP", "region": "https://www.googleapis.com/compute/v1/projects/demo-prod/regions/us-central1", "selfLink": "https://www.googleapis.com/compute/v1/projects/demo-prod/zones/us-central1-a"},
+    {"id": "2001", "name": "us-central1-b", "status": "UP", "region": "https://www.googleapis.com/compute/v1/projects/demo-prod/regions/us-central1", "selfLink": "https://www.googleapis.com/compute/v1/projects/demo-prod/zones/us-central1-b"},
+    {"id": "2100", "name": "europe-west1-b", "status": "UP", "region": "https://www.googleapis.com/compute/v1/projects/demo-prod/regions/europe-west1", "selfLink": "https://www.googleapis.com/compute/v1/projects/demo-prod/zones/europe-west1-b"},
+    {"id": "2101", "name": "europe-west1-c", "status": "UP", "region": "https://www.googleapis.com/compute/v1/projects/demo-prod/regions/europe-west1", "selfLink": "https://www.googleapis.com/compute/v1/projects/demo-prod/zones/europe-west1-c"}
+  ]
+}

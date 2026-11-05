@@ -1,0 +1,1 @@
+{"kind": "compute#instanceAggregatedList", "items": {"zones/us-central1-a": {"warning": {"code": "NO_RESULTS_ON_PAGE", "message": "no results"}}}}

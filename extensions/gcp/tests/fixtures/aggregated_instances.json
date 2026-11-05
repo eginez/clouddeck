@@ -1,0 +1,74 @@
+{
+  "kind": "compute#instanceAggregatedList",
+  "id": "projects/demo-prod/aggregated/instances",
+  "items": {
+    "zones/us-central1-a": {
+      "instances": [
+        {
+          "id": "7311200000000000001",
+          "name": "web-1",
+          "status": "RUNNING",
+          "zone": "https://www.googleapis.com/compute/v1/projects/demo-prod/zones/us-central1-a",
+          "machineType": "https://www.googleapis.com/compute/v1/projects/demo-prod/zones/us-central1-a/machineTypes/e2-medium",
+          "cpuPlatform": "Intel Broadwell",
+          "creationTimestamp": "2024-03-01T10:15:30.123-08:00",
+          "deletionProtection": false,
+          "labels": {"env": "prod", "team": "web"},
+          "networkInterfaces": [
+            {
+              "network": "https://www.googleapis.com/compute/v1/projects/demo-prod/global/networks/default",
+              "subnetwork": "https://www.googleapis.com/compute/v1/projects/demo-prod/regions/us-central1/subnetworks/default",
+              "networkIP": "10.128.0.2",
+              "accessConfigs": [{"type": "ONE_TO_ONE_NAT", "name": "External NAT", "natIP": "34.123.10.20"}]
+            }
+          ]
+        },
+        {
+          "id": "7311200000000000002",
+          "name": "db-1",
+          "status": "TERMINATED",
+          "zone": "https://www.googleapis.com/compute/v1/projects/demo-prod/zones/us-central1-a",
+          "machineType": "https://www.googleapis.com/compute/v1/projects/demo-prod/zones/us-central1-a/machineTypes/n2-standard-4",
+          "creationTimestamp": "2023-11-12T04:00:00.000Z",
+          "deletionProtection": true,
+          "networkInterfaces": [
+            {
+              "network": "https://www.googleapis.com/compute/v1/projects/demo-prod/global/networks/default",
+              "networkIP": "10.128.0.3"
+            }
+          ]
+        }
+      ]
+    },
+    "zones/us-central1-b": {
+      "warning": {
+        "code": "UNREACHABLE",
+        "message": "Zone us-central1-b is currently unreachable.",
+        "data": [{"key": "scope", "value": "zones/us-central1-b"}]
+      }
+    },
+    "zones/europe-west1-b": {
+      "instances": [
+        {
+          "id": "7311200000000000003",
+          "name": "batch-1",
+          "status": "STAGING",
+          "zone": "https://www.googleapis.com/compute/v1/projects/demo-prod/zones/europe-west1-b",
+          "machineType": "https://www.googleapis.com/compute/v1/projects/demo-prod/zones/europe-west1-b/machineTypes/c3-standard-8",
+          "creationTimestamp": "2025-02-20T22:45:00.000+01:00",
+          "labels": {"env": "prod"},
+          "networkInterfaces": [
+            {"networkIP": "10.132.0.7", "accessConfigs": [{"type": "ONE_TO_ONE_NAT", "natIP": "35.195.1.2"}]}
+          ]
+        }
+      ]
+    },
+    "zones/europe-west1-c": {
+      "warning": {
+        "code": "NO_RESULTS_ON_PAGE",
+        "message": "There are no results for scope 'zones/europe-west1-c' on this page.",
+        "data": [{"key": "scope", "value": "zones/europe-west1-c"}]
+      }
+    }
+  }
+}

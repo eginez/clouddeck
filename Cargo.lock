@@ -1418,6 +1418,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "clouddeck-gcp"
+version = "0.1.0"
+dependencies = [
+ "clouddeck-extension-api",
+ "serde",
+ "serde_json",
+ "time",
+ "ureq",
+]
+
+[[package]]
 name = "clouddeck-provider-api"
 version = "0.2.1"
 dependencies = [

@@ -1,0 +1,7 @@
+{
+  "projects": [
+    {"projectNumber": "412398765401", "projectId": "demo-prod", "lifecycleState": "ACTIVE", "name": "Demo Production", "createTime": "2023-05-02T14:11:09.512Z", "parent": {"type": "organization", "id": "998877665544"}},
+    {"projectNumber": "412398765402", "projectId": "demo-sandbox", "lifecycleState": "ACTIVE", "name": "Demo Sandbox", "createTime": "2024-01-19T09:00:41.201Z"},
+    {"projectNumber": "412398765403", "projectId": "demo-retired", "lifecycleState": "DELETE_REQUESTED", "name": "Demo Retired", "createTime": "2021-03-07T08:30:00.000Z"}
+  ]
+}

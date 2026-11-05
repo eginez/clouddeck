@@ -1,0 +1,18 @@
+id = "gcp"
+name = "Google Cloud"
+version = "0.1.0"
+schema_version = 1
+api_version = 2
+authors = ["Esteban Ginez"]
+repository = "https://github.com/eginez/clouddeck-gcp"
+
+[providers.gcp]
+name = "Google Cloud"
+
+[[capabilities]]
+kind = "network:http"
+hosts = [
+  "cloudresourcemanager.googleapis.com",
+  "compute.googleapis.com",
+  "oauth2.googleapis.com",
+]
