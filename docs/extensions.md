@@ -175,6 +175,32 @@ sign in again when a token cannot be stored.
 Each provider call runs on its own thread. When the deadline passes the call returns a timeout
 and the extension's `cancelled()` answers true; the library itself cannot be interrupted.
 
+Check for cancellation and deadline before each network request, and pass the time left as the
+request timeout. `Call::remaining()` returns `None` when the call has no deadline and zero once
+the deadline has passed. The helper below returns a timeout error when the host has cancelled the
+call or the deadline has passed:
+
+```rust
+use std::time::Duration;
+
+use clouddeck_provider_api::{Call, ErrorKind, ProviderError};
+
+const MAX_REQUEST: Duration = Duration::from_secs(30);
+
+fn request_timeout(cx: &Call<'_>) -> Result<Duration, ProviderError> {
+    if cx.host.cancelled() {
+        return Err(ProviderError::of(ErrorKind::Timeout));
+    }
+    match cx.remaining() {
+        Some(left) if left.is_zero() => Err(ProviderError::of(ErrorKind::Timeout)),
+        Some(left) => Ok(left.min(MAX_REQUEST)),
+        None => Ok(MAX_REQUEST),
+    }
+}
+```
+
+Call `request_timeout` before each request and pass the result as the HTTP client's timeout.
+
 ## macOS
 
 - Libraries that CloudDeck's own downloader fetches must not carry the quarantine attribute,

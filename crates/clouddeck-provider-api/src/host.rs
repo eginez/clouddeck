@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::error::ProviderError;
 
@@ -26,6 +26,14 @@ pub trait Host: Send + Sync {
 pub struct Call<'a> {
     pub deadline: Option<Instant>,
     pub host: &'a dyn Host,
+}
+
+impl Call<'_> {
+    /// Time left until the deadline, zero once it has passed; `None` when the call has no deadline.
+    pub fn remaining(&self) -> Option<Duration> {
+        self.deadline
+            .map(|deadline| deadline.saturating_duration_since(Instant::now()))
+    }
 }
 
 #[cfg(test)]
@@ -72,6 +80,29 @@ mod tests {
         fn cancelled(&self) -> bool {
             false
         }
+    }
+
+    #[test]
+    fn remaining_counts_down_to_the_deadline_and_saturates() {
+        let host = RecordingHost::default();
+        let open = Call {
+            deadline: Some(Instant::now() + Duration::from_secs(60)),
+            host: &host,
+        };
+        let left = open.remaining().expect("deadline set");
+        assert!(left > Duration::from_secs(55) && left <= Duration::from_secs(60));
+
+        let passed = Call {
+            deadline: Some(Instant::now() - Duration::from_secs(1)),
+            host: &host,
+        };
+        assert_eq!(passed.remaining(), Some(Duration::ZERO));
+
+        let unbounded = Call {
+            deadline: None,
+            host: &host,
+        };
+        assert_eq!(unbounded.remaining(), None);
     }
 
     #[test]
