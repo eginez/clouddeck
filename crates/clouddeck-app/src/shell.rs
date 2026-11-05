@@ -1319,9 +1319,9 @@ mod tests {
         fleet_regions: &[String],
     ) -> InstanceListViewModel {
         let registry = clouddeck_core::extension_host::app_registry(
-            clouddeck_aws::builtin_providers(true),
             std::path::Path::new("/nonexistent-clouddeck-extensions"),
             std::path::Path::new("/nonexistent-clouddeck-state"),
+            vec![clouddeck_aws::aws_provider()],
         );
         let provider = AppShell::provider_for(
             registry.providers(),
@@ -1546,9 +1546,9 @@ mod tests {
     fn install_test_providers(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let registry = clouddeck_core::extension_host::app_registry(
-                clouddeck_aws::builtin_providers(true),
                 std::path::Path::new("/nonexistent-clouddeck-extensions"),
                 std::path::Path::new("/nonexistent-clouddeck-state"),
+                vec![clouddeck_aws::aws_provider()],
             );
             cx.set_global(crate::app_providers::AppProviders::new(registry));
             crate::app_providers::observe_quit(cx);

@@ -277,9 +277,7 @@ fn map_instance(instance: &aws_sdk_ec2::types::Instance, region: &str) -> Option
             .map(str::to_owned),
         image_id: instance.image_id().map(str::to_owned),
         key_name: instance.key_name().map(str::to_owned),
-        architecture: instance
-            .architecture()
-            .map(|value| value.as_str().to_owned()),
+        architecture: instance.architecture().map(|value| value.as_str().to_owned()),
         state_transition_reason: instance
             .state_transition_reason()
             .map(str::to_owned)

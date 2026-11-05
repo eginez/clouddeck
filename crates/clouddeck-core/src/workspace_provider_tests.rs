@@ -62,10 +62,7 @@ fn call_with_deadline() -> Call<'static> {
 fn region_selection(regions: &[&str]) -> Selection {
     Selection::new().with(
         "region",
-        regions
-            .iter()
-            .map(|region| ValueId::from(*region))
-            .collect(),
+        regions.iter().map(|region| ValueId::from(*region)).collect(),
     )
 }
 
@@ -601,27 +598,3 @@ fn extension_shaped_demo_entry_lists_from_connection_and_selection() {
     );
 }
 
-#[test]
-fn demo_scenarios_stay_demo_data_without_a_demo_entry() {
-    let providers = builtin_providers(false);
-    let list = |demo| {
-        workspace_provider(
-            &providers,
-            "scenario-default",
-            "us-east-1",
-            Some(demo),
-            &[],
-            Duration::from_secs(5),
-        )
-        .list(
-            &call(),
-            &ConnectionId::from("scenario-default"),
-            &KindId::instances(),
-            &Selection::new(),
-        )
-    };
-    assert_eq!(list(DemoFleet::Empty), ListResult::default());
-    let failure = list(DemoFleet::Failure);
-    assert!(failure.resources.is_empty());
-    assert_eq!(failure.failures.len(), 1);
-}

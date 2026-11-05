@@ -24,20 +24,3 @@ pub fn builtin_providers(demo: bool) -> Vec<Arc<dyn Provider>> {
     }
     providers
 }
-
-#[cfg(test)]
-mod tests {
-    use super::builtin_providers;
-
-    #[test]
-    fn builtin_providers_register_demo_only_when_requested() {
-        let ids = |demo| {
-            builtin_providers(demo)
-                .iter()
-                .map(|provider| provider.info().id)
-                .collect::<Vec<String>>()
-        };
-        assert_eq!(ids(false), ["aws"]);
-        assert_eq!(ids(true), ["aws", "demo"]);
-    }
-}

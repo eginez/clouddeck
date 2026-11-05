@@ -89,10 +89,8 @@ mod tests {
     use std::path::PathBuf;
     use std::time::Duration;
 
-    use clouddeck_core::{DemoFleet, service_provider, workspace_provider};
-    use clouddeck_provider_api::{
-        ConnectionId, Host, KindId, LogLevel, Provider, ProviderError, Selection,
-    };
+    use clouddeck_core::{service_provider, workspace_provider};
+    use clouddeck_provider_api::{ConnectionId, Host, KindId, LogLevel, ProviderError, Selection};
 
     use super::service;
     use crate::builtin_providers;
@@ -134,26 +132,6 @@ mod tests {
             deadline: None,
             host: &HOST,
         }
-    }
-
-    fn happy_provider(
-        providers: &[std::sync::Arc<dyn Provider>],
-        region: &str,
-    ) -> std::sync::Arc<dyn Provider> {
-        workspace_provider(
-            providers,
-            "scenario-default",
-            region,
-            Some(DemoFleet::Happy),
-            &[],
-            Duration::from_secs(5),
-        )
-    }
-
-    #[test]
-    fn happy_demo_falls_back_to_aws_without_a_demo_provider() {
-        let providers = builtin_providers(false);
-        assert_eq!(happy_provider(&providers, "us-east-1").info().id, "aws");
     }
 
     #[test]

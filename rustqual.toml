@@ -36,6 +36,7 @@ paths = ["crates/clouddeck-extension-api/**"]
 [architecture.layers.core]
 paths = ["crates/clouddeck-core/**"]
 
+# AWS, still statically linked: may use core; the app links it until the bundled loader lands (see Restore bead clouddeck-rs-v1mt)
 [architecture.layers.aws_plugin]
 paths = ["extensions/aws/**"]
 
@@ -47,6 +48,7 @@ paths = ["crates/clouddeck-extension-toy/**"]
 
 [architecture.layers.plugins]
 # First-party bundled plugins (extensions/<id>/): leaves that depend on the two API crates only.
+# Only extensions/aws is temporarily excepted; it lives in the aws_plugin layer above.
 paths = ["extensions/gcp/**"]
 
 [architecture.external_crates]
@@ -71,7 +73,7 @@ forbid_path_prefix = [
     "aws_smithy_types", "aws_smithy_xml", "aws_types",
 ]
 forbidden_in = ["crates/clouddeck-app/**"]
-reason = "The app reaches AWS through clouddeck-aws; AWS SDK crates stay inside the AWS provider crate"
+reason = "The app reaches AWS through clouddeck-aws; AWS SDK crates stay inside extensions/aws"
 
 [[architecture.pattern]]
 name = "no_aws_sdk_in_core"
@@ -84,7 +86,7 @@ forbid_path_prefix = [
     "aws_smithy_types", "aws_smithy_xml", "aws_types",
 ]
 forbidden_in = ["crates/clouddeck-core/**"]
-reason = "Core stays provider-neutral; the AWS SDK lives in the clouddeck-aws crate"
+reason = "AWS lives in extensions/aws; core must stay free of the AWS SDK"
 
 # Example extensions are loaded as cdylibs by the host, never linked into the app.
 [[architecture.pattern]]
@@ -98,7 +100,7 @@ reason = "The app loads extensions at runtime through the host loader; example e
 name = "no_provider_crates_in_app"
 forbid_path_prefix = ["clouddeck_provider_aws", "clouddeck_gcp"]
 forbidden_in = ["crates/clouddeck-app/**"]
-reason = "The app registers providers through clouddeck-core and never imports a provider crate"
+reason = "The app imports no provider crate except clouddeck_aws (temporary, clouddeck-rs-v1mt)"
 
 # ── Complexity ───────────────────────────────────────────────────────────
 

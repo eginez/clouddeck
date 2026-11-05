@@ -131,16 +131,6 @@ pub(crate) fn scoped_provider(
     })
 }
 
-impl ScopedProvider {
-    fn effective_selection<'a>(&'a self, selection: &'a Selection) -> &'a Selection {
-        if selection.is_empty() {
-            &self.selection
-        } else {
-            selection
-        }
-    }
-}
-
 impl Provider for ScopedProvider {
     fn info(&self) -> ProviderInfo {
         self.inner.info()
@@ -169,12 +159,16 @@ impl Provider for ScopedProvider {
         kind: &KindId,
         selection: &Selection,
     ) -> ListResult {
+        let selection = if selection.is_empty() {
+            &self.selection
+        } else {
+            selection
+        };
         let host = ScopeHost::new(cx.host, self.settings);
         let scoped = Call {
             deadline: cx.deadline,
             host: &host,
         };
-        let selection = self.effective_selection(selection);
         self.inner.list(&scoped, &self.connection, kind, selection)
     }
 
