@@ -496,3 +496,36 @@ fn check_auth_flow(
         step = next;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clouddeck_provider_api::{CellFailure, DimValue};
+
+    #[test]
+    fn whole_call_failure_with_empty_cell_is_accepted() {
+        let dim = Dimension {
+            id: "region".into(),
+            label: "Region".into(),
+            multi: true,
+            optional: true,
+            values: vec![DimValue {
+                id: "us".into(),
+                label: "us".into(),
+                parent: None,
+                default: false,
+            }],
+        };
+        let selection = Selection::new().with("region", vec!["us".into()]);
+        let list = ListResult {
+            resources: vec![],
+            failures: vec![CellFailure {
+                cell: Selection::new(),
+                error: ProviderError::of(ErrorKind::Other),
+            }],
+        };
+        let mut r = Report(Vec::new());
+        check_failure_cells(&mut r, &dim, &selection, &list);
+        assert!(r.0.is_empty(), "{:?}", r.0);
+    }
+}
