@@ -511,6 +511,32 @@ mod tests {
     }
 
     #[gpui::test]
+    fn huge_fleet_renders_only_a_window_of_rows(cx: &mut TestAppContext) {
+        let vm = InstanceListViewModel::new(fleet::static_provider(fleet::huge_fleet()));
+        let state = cx.new(|_| FleetState::new(vm, "default".to_string(), true));
+        state.update(cx, |state, cx| state.refresh(cx));
+        wait_until(cx, |cx| {
+            state.read_with(cx, |state, _| {
+                !state.view_model.instances().is_empty() && !state.view_model.is_loading()
+            })
+        });
+        let keys: Vec<String> = state.read_with(cx, |state, _| {
+            state.visible_rows().iter().map(|i| i.id.clone()).collect()
+        });
+        assert_eq!(keys.len(), 5000);
+
+        let cx = open_table(cx, state, 1280.0);
+        let selector = |key: &str| -> &'static str { format!("table.row.{key}").leak() };
+        assert!(cx.debug_bounds(selector(&keys[0])).is_some());
+        assert!(cx.debug_bounds(selector(&keys[4999])).is_none());
+        let rendered = keys[..200]
+            .iter()
+            .filter(|key| cx.debug_bounds(selector(key)).is_some())
+            .count();
+        assert!(rendered < 60, "{rendered} of the first 200 rows rendered");
+    }
+
+    #[gpui::test]
     fn empty_fleet_renders_no_rows(cx: &mut TestAppContext) {
         let vm = InstanceListViewModel::new(fleet::static_provider(vec![]));
         let state = cx.new(|_| FleetState::new(vm, "default".to_string(), true));

@@ -360,6 +360,15 @@ fn list_demo(demo: DemoFleet, region: &str, fleet_regions: &[String]) -> ListRes
 }
 
 #[test]
+fn huge_demo_scenario_lists_five_thousand_resources() {
+    assert_eq!(DemoFleet::from_key("huge"), Some(DemoFleet::Huge));
+    assert_eq!(
+        list_demo(DemoFleet::Huge, "fleet", &[]).resources.len(),
+        5000
+    );
+}
+
+#[test]
 fn demo_scenarios_list_their_expected_shapes() {
     let fleet_regions: Vec<String> = FLEET_REGIONS.iter().map(|r| r.to_string()).collect();
 

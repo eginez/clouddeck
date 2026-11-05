@@ -2,19 +2,27 @@
 
 #[cfg(test)]
 use std::cell::OnceCell;
+use std::cell::{Cell, RefCell};
 #[cfg(test)]
 use std::time::Instant;
 use std::time::{Duration, SystemTime};
 
 use clouddeck_core::{
-    CloudDeckError, Column, Instance, RECENT_INSTANCE_LIMIT, SortState, join_failure, push_recent,
-    sort_instances, throttle_retry_delay,
+    CloudDeckError, Column, Instance, RECENT_INSTANCE_LIMIT, SortState, StateFacetCounts,
+    join_failure, push_recent, sort_instances, throttle_retry_delay,
 };
 use gpui::{App, Context};
 
 use crate::view_models::InstanceListViewModel;
 
 const FLASH_DURATION: Duration = Duration::from_millis(1_800);
+
+struct FacetCache {
+    query: String,
+    generation: u64,
+    states: StateFacetCounts,
+    types: Vec<(String, usize)>,
+}
 
 /// Fleet data and UI state shared by every main-window view.
 pub struct FleetState {
@@ -40,6 +48,8 @@ pub struct FleetState {
     flash_generation: u64,
     throttle_attempt: u32,
     retry_generation: u64,
+    facet_cache: RefCell<Option<FacetCache>>,
+    facet_computations: Cell<u64>,
     #[cfg(test)]
     clock: OnceCell<(SystemTime, Instant)>,
 }
@@ -64,6 +74,8 @@ impl FleetState {
             flash_generation: 0,
             throttle_attempt: 0,
             retry_generation: 0,
+            facet_cache: RefCell::new(None),
+            facet_computations: Cell::new(0),
             #[cfg(test)]
             clock: OnceCell::new(),
         }
@@ -98,6 +110,37 @@ impl FleetState {
         self.view_model.set_search_text(query);
         self.reconcile_selection();
         cx.notify();
+    }
+
+    /// Cached per (query, load generation); relative-time terms keep their last-computed `now`.
+    pub fn facet_counts(&self, now: SystemTime) -> (StateFacetCounts, Vec<(String, usize)>) {
+        let generation = self.view_model.load_generation();
+        let cached = self
+            .facet_cache
+            .borrow()
+            .as_ref()
+            .filter(|cache| cache.query == self.query() && cache.generation == generation)
+            .map(|cache| (cache.states, cache.types.clone()));
+        if let Some(counts) = cached {
+            return counts;
+        }
+        let states = self.view_model.state_facet_counts(now);
+        let types = self.view_model.type_facet_counts(now);
+        self.facet_computations
+            .set(self.facet_computations.get() + 1);
+        *self.facet_cache.borrow_mut() = Some(FacetCache {
+            query: self.query().to_string(),
+            generation,
+            states,
+            types: types.clone(),
+        });
+        (states, types)
+    }
+
+    /// How many times `facet_counts` has recomputed rather than returned the cache.
+    #[cfg(test)]
+    pub fn facet_computations(&self) -> u64 {
+        self.facet_computations.get()
     }
 
     /// Instances passing the query and filters, in the current sort order.
@@ -408,6 +451,79 @@ mod tests {
             selected.map(|i| native_id(&i).to_string()),
             Some("i-2".to_string())
         );
+    }
+
+    fn huge_loaded_state(cx: &mut TestAppContext) -> Entity<FleetState> {
+        let vm = InstanceListViewModel::new(fleet::static_provider(fleet::huge_fleet()));
+        let state = cx.new(|_| FleetState::new(vm, "default".to_string(), true));
+        state.update(cx, |state, cx| state.refresh(cx));
+        wait_until(cx, |cx| {
+            state.read_with(cx, |state, _| {
+                !state.view_model.instances().is_empty() && !state.view_model.is_loading()
+            })
+        });
+        state
+    }
+
+    fn facets(
+        state: &Entity<FleetState>,
+        cx: &mut TestAppContext,
+    ) -> (StateFacetCounts, Vec<(String, usize)>) {
+        state.read_with(cx, |state, _| state.facet_counts(SystemTime::now()))
+    }
+
+    fn computations(state: &Entity<FleetState>, cx: &mut TestAppContext) -> u64 {
+        state.read_with(cx, |state, _| state.facet_computations())
+    }
+
+    #[gpui::test]
+    fn facet_counts_recompute_only_when_the_query_or_the_load_changes(cx: &mut TestAppContext) {
+        let state = huge_loaded_state(cx);
+
+        let (states, _) = facets(&state, cx);
+        assert_eq!(
+            states,
+            StateFacetCounts {
+                all: 5000,
+                running: 2500,
+                stopped: 1250,
+                pending: 1250,
+            }
+        );
+        assert_eq!(computations(&state, cx), 1);
+        facets(&state, cx);
+        facets(&state, cx);
+        assert_eq!(computations(&state, cx), 1);
+
+        state.update(cx, |state, cx| state.set_query("state:stopped", cx));
+        let (states, types) = facets(&state, cx);
+        assert_eq!(computations(&state, cx), 2);
+        assert_eq!(states.all, 5000);
+        assert_eq!(states.stopped, 1250);
+        let stopped_types = [
+            "c6i.large",
+            "m6i.large",
+            "r6i.large",
+            "t3.medium",
+            "t3.micro",
+        ];
+        for (name, count) in &types {
+            let expected = if stopped_types.contains(&name.as_str()) {
+                250
+            } else {
+                0
+            };
+            assert_eq!(*count, expected, "{name}");
+        }
+
+        state.update(cx, |state, cx| state.refresh(cx));
+        wait_until(cx, |cx| {
+            state.read_with(cx, |state, _| {
+                state.view_model.load_generation() == 2 && !state.view_model.is_loading()
+            })
+        });
+        facets(&state, cx);
+        assert_eq!(computations(&state, cx), 3);
     }
 
     #[gpui::test]

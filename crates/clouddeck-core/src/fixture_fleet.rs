@@ -108,6 +108,22 @@ pub fn large_fleet() -> Vec<Instance> {
         .collect()
 }
 
+/// The small-happy-path fleet cloned to 5,000 instances, for budget and virtualization tests.
+pub fn huge_fleet() -> Vec<Instance> {
+    let scenario = scenario_service(TestScenarioKind::SmallHappyPath);
+    let scenario = scenario.scenario().expect("fixture-backed scenario");
+    let (profile, region) = scenario
+        .default_selection()
+        .expect("fixture has a default selection");
+    let seed = scenario
+        .instances(Some(&profile), &region)
+        .expect("fixture instances should load");
+    crate::demo_scenarios::huge_instances(&seed, crate::demo_scenarios::HUGE_COUNT)
+        .iter()
+        .map(Instance::from)
+        .collect()
+}
+
 /// A provider backed by the bundled scenario fixture for `kind`.
 pub fn scenario_provider(kind: TestScenarioKind) -> Arc<dyn Provider> {
     service_provider(Box::new(scenario_service(kind).into_service()))
@@ -308,6 +324,50 @@ mod tests {
 
         assert_eq!(result.resources.len(), 2);
         assert!(result.failures.is_empty());
+    }
+
+    #[test]
+    fn huge_fleet_has_exact_shape_and_counts() {
+        use crate::{StateFacetCounts, compile, known_tag_keys, native_id, state_facet_counts, type_facet_counts};
+        use std::time::SystemTime;
+
+        let fleet = huge_fleet();
+        assert_eq!(fleet.len(), 5000);
+        for (n, instance) in fleet.iter().enumerate() {
+            assert_eq!(native_id(instance), format!("i-huge-{n:04}"));
+        }
+
+        let keys = known_tag_keys(&fleet);
+        let now = SystemTime::now();
+        assert_eq!(
+            state_facet_counts(&fleet, "", &keys, now),
+            StateFacetCounts {
+                all: 5000,
+                running: 2500,
+                stopped: 1250,
+                pending: 1250,
+            }
+        );
+
+        let types = type_facet_counts(&fleet, "", &keys, now);
+        assert_eq!(types.len(), 10);
+        assert!(types.iter().all(|(_, count)| *count == 500));
+
+        let stopped: Vec<(String, usize)> = type_facet_counts(&fleet, "state:stopped", &keys, now)
+            .into_iter()
+            .filter(|(_, count)| *count > 0)
+            .collect();
+        let mut stopped_types: Vec<&str> = stopped.iter().map(|(name, _)| name.as_str()).collect();
+        stopped_types.sort();
+        assert_eq!(
+            stopped_types,
+            vec!["c6i.large", "m6i.large", "r6i.large", "t3.medium", "t3.micro"]
+        );
+        assert!(stopped.iter().all(|(_, count)| *count == 250));
+
+        let owned = |query: &str| compile(query, &keys, now).filter_instances(&fleet).len();
+        assert_eq!(owned("owner:esteban"), 1000);
+        assert_eq!(owned("state:running owner:esteban"), 500);
     }
 
     #[test]

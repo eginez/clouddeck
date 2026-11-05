@@ -85,10 +85,14 @@ impl CompiledQuery {
 
     /// Whether `instance` satisfies every term.
     pub fn matches(&self, instance: &Instance) -> bool {
-        self.terms
-            .iter()
-            .zip(&self.ignored)
-            .all(|(term, ignored)| *ignored || self.term_matches(term, instance) != term.negated)
+        self.matches_indexed(instance, &haystack(instance))
+    }
+
+    /// Like [`matches`](Self::matches), with `search_text` standing in for the instance's haystack.
+    pub fn matches_indexed(&self, instance: &Instance, search_text: &str) -> bool {
+        self.terms.iter().zip(&self.ignored).all(|(term, ignored)| {
+            *ignored || self.term_matches(term, instance, search_text) != term.negated
+        })
     }
 
     /// Clones of the matching instances, in input order.
@@ -100,10 +104,10 @@ impl CompiledQuery {
             .collect()
     }
 
-    fn term_matches(&self, term: &Term, instance: &Instance) -> bool {
+    fn term_matches(&self, term: &Term, instance: &Instance, search_text: &str) -> bool {
         match &term.kind {
             TermKind::Word { text } | TermKind::Unknown { text, .. } => {
-                haystack(instance).contains(&text.to_lowercase())
+                search_text.contains(&text.to_lowercase())
             }
             TermKind::Field {
                 field: QueryField::Age,
@@ -294,6 +298,33 @@ fn tag_value_matches(instance: &Instance, key: &str, value: &str) -> bool {
                 .to_lowercase()
                 .contains(value)
     })
+}
+
+/// Each instance's search text, built once so repeated matches against the same instances skip rebuilding it.
+pub struct SearchIndex {
+    texts: Vec<String>,
+}
+
+impl SearchIndex {
+    pub fn new(instances: &[Instance]) -> Self {
+        Self {
+            texts: instances.iter().map(haystack).collect(),
+        }
+    }
+
+    /// The instances matching `query`, in input order. `instances` must be the slice this index was built from.
+    pub fn matching<'a>(
+        &self,
+        query: &CompiledQuery,
+        instances: &'a [Instance],
+    ) -> Vec<&'a Instance> {
+        instances
+            .iter()
+            .zip(&self.texts)
+            .filter(|(instance, text)| query.matches_indexed(instance, text))
+            .map(|(instance, _)| instance)
+            .collect()
+    }
 }
 
 fn haystack(instance: &Instance) -> String {

@@ -6,7 +6,8 @@ use crate::instance::{Instance, native_id};
 use crate::service_provider::{LoadHost, REGION, cloud_deck_error, join_failure};
 use crate::{
     Call, CellFailure, CloudDeckError, CompiledQuery, ComputeServicePartialFailure, ConnectionId,
-    KindId, ListResult, Provider, ProviderError, QueryError, Selection, merge_with_previous,
+    KindId, ListResult, Provider, ProviderError, QueryError, Selection, SearchIndex,
+    StateFacetCounts, merge_with_previous, state_facet_counts_indexed, type_facet_counts_indexed,
 };
 
 /// Rust port of the Swift oracle's `InstanceListViewModel`
@@ -28,6 +29,8 @@ pub struct InstanceListViewModel {
     partial_failures: Vec<ComputeServicePartialFailure>,
     search_text: String,
     known_tag_keys: Vec<String>,
+    search_index: SearchIndex,
+    load_generation: u64,
     selected_state: String,
     selected_instance_type: String,
     selected_instance_id: Option<String>,
@@ -49,6 +52,8 @@ impl InstanceListViewModel {
             partial_failures: Vec::new(),
             search_text: String::new(),
             known_tag_keys: Vec::new(),
+            search_index: SearchIndex::new(&[]),
+            load_generation: 0,
             selected_state: String::new(),
             selected_instance_type: String::new(),
             selected_instance_id: None,
@@ -60,6 +65,16 @@ impl InstanceListViewModel {
 
     pub fn instances(&self) -> &[Instance] {
         &self.instances
+    }
+
+    /// Tag keys seen on the loaded instances.
+    pub fn known_tag_keys(&self) -> &[String] {
+        &self.known_tag_keys
+    }
+
+    /// Count of finished loads, changing whenever the loaded instances may have changed.
+    pub fn load_generation(&self) -> u64 {
+        self.load_generation
     }
 
     /// Regions whose rows are carried over from a previous load because they failed.
@@ -164,8 +179,8 @@ impl InstanceListViewModel {
         let instance_types = normalized_selection(&self.selected_instance_type);
 
         let mut filtered: Vec<Instance> = self
-            .compile_search()
-            .filter_instances(&self.instances)
+            .search_index
+            .matching(&self.compile_search(), &self.instances)
             .into_iter()
             .filter(|instance| {
                 states.is_empty() || states.contains(&instance.state.raw.to_lowercase())
@@ -177,6 +192,7 @@ impl InstanceListViewModel {
                         .as_deref()
                         .is_some_and(|value| instance_types.contains(&value.to_lowercase()))
             })
+            .cloned()
             .collect();
         filtered.sort_by(|a, b| {
             native_id(a)
@@ -185,6 +201,28 @@ impl InstanceListViewModel {
                 .then_with(|| native_id(a).cmp(native_id(b)))
         });
         filtered
+    }
+
+    /// State facet counts for the search text over the loaded instances.
+    pub fn state_facet_counts(&self, now: SystemTime) -> StateFacetCounts {
+        state_facet_counts_indexed(
+            &self.instances,
+            &self.search_index,
+            &self.search_text,
+            &self.known_tag_keys,
+            now,
+        )
+    }
+
+    /// Type facet counts for the search text over the loaded instances.
+    pub fn type_facet_counts(&self, now: SystemTime) -> Vec<(String, usize)> {
+        type_facet_counts_indexed(
+            &self.instances,
+            &self.search_index,
+            &self.search_text,
+            &self.known_tag_keys,
+            now,
+        )
     }
 
     /// Errors for the terms of the search text that could not be interpreted.
@@ -271,6 +309,7 @@ impl InstanceListViewModel {
             }
             let merged = merge_with_previous(&self.instances, result.resources, &partial_failures);
             self.instances = merged.instances;
+            self.search_index = SearchIndex::new(&self.instances);
             self.stale_regions = merged.stale_regions;
             self.known_tag_keys = crate::known_tag_keys(&self.instances);
             self.partial_failures = partial_failures;
@@ -279,6 +318,7 @@ impl InstanceListViewModel {
             self.reconcile_selection_with_filtered_instances();
         }
 
+        self.load_generation += 1;
         self.is_loading = false;
     }
 

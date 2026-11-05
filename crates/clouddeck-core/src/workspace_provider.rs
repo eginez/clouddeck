@@ -22,6 +22,7 @@ pub enum DemoFleet {
     Failure,
     Partial,
     Large,
+    Huge,
 }
 
 impl DemoFleet {
@@ -32,6 +33,7 @@ impl DemoFleet {
             DemoFleet::Failure => "failure",
             DemoFleet::Partial => "partial",
             DemoFleet::Large => "large",
+            DemoFleet::Huge => "huge",
         }
     }
 
@@ -42,6 +44,7 @@ impl DemoFleet {
             DemoFleet::Failure,
             DemoFleet::Partial,
             DemoFleet::Large,
+            DemoFleet::Huge,
         ]
         .into_iter()
         .find(|demo| demo.key() == key)

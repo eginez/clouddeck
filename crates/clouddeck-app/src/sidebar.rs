@@ -4,8 +4,7 @@ use std::time::SystemTime;
 
 use clouddeck_core::{
     Instance, QueryField, RECENT_INSTANCES_SHOWN, facet_selection, known_tag_keys,
-    remove_field_value, resolve_recent_instances, set_field_value, state_facet_counts, top_types,
-    type_facet_counts,
+    remove_field_value, resolve_recent_instances, set_field_value, top_types,
 };
 use gpui::{
     App, ClickEvent, Context, Entity, FontWeight, Hsla, IntoElement, Render, SharedString, Window,
@@ -78,11 +77,8 @@ impl Render for Sidebar {
         let state = self.state.read(cx);
         let instances = state.view_model.instances();
         let query = state.query().to_string();
-        let known = known_tag_keys(instances);
-        let now = SystemTime::now();
-        let selection = facet_selection(&query, &known);
-        let states = state_facet_counts(instances, &query, &known, now);
-        let type_counts = type_facet_counts(instances, &query, &known, now);
+        let selection = facet_selection(&query, state.view_model.known_tag_keys());
+        let (states, type_counts) = state.facet_counts(SystemTime::now());
         let type_total = type_counts.len();
         let state_value = selection.state.as_deref();
         let type_value = selection.instance_type.as_deref();
@@ -442,6 +438,31 @@ mod tests {
 
     fn query(state: &Entity<FleetState>, cx: &mut VisualTestContext) -> String {
         state.read_with(cx, |state, _| state.query().to_string())
+    }
+
+    #[gpui::test]
+    fn notifying_without_a_query_change_reuses_the_facet_cache(cx: &mut TestAppContext) {
+        let (state, _sidebar, cx) = rooted_sidebar(cx, |state| {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .build()
+                .unwrap();
+            let mut vm = InstanceListViewModel::new(fleet::static_provider(fleet::huge_fleet()));
+            rt.block_on(vm.load_instances());
+            state.view_model = vm;
+        });
+        cx.run_until_parked();
+        let before = state.read_with(cx, |state, _| state.facet_computations());
+        assert!(before >= 1);
+
+        state.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+        state.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+
+        assert_eq!(
+            state.read_with(cx, |state, _| state.facet_computations()),
+            before
+        );
     }
 
     #[gpui::test]

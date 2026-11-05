@@ -1,7 +1,7 @@
 //! Counts the State and Type facets shown in the sidebar, ignoring each facet's own filter.
 
 use super::edit::query_without_field;
-use super::matcher::compile;
+use super::matcher::{SearchIndex, compile};
 use super::tokenize::QueryField;
 use crate::instance::Instance;
 use std::collections::BTreeMap;
@@ -27,10 +27,27 @@ pub fn state_facet_counts(
     known_tag_keys: &[String],
     now: SystemTime,
 ) -> StateFacetCounts {
+    state_facet_counts_indexed(
+        instances,
+        &SearchIndex::new(instances),
+        query,
+        known_tag_keys,
+        now,
+    )
+}
+
+/// Like [`state_facet_counts`], matching through `index` built from `instances`.
+pub fn state_facet_counts_indexed(
+    instances: &[Instance],
+    index: &SearchIndex,
+    query: &str,
+    known_tag_keys: &[String],
+    now: SystemTime,
+) -> StateFacetCounts {
     let q = query_without_field(query, QueryField::State, known_tag_keys);
     let compiled = compile(&q, known_tag_keys, now);
     let mut counts = StateFacetCounts::default();
-    for instance in instances.iter().filter(|i| compiled.matches(i)) {
+    for instance in index.matching(&compiled, instances) {
         counts.all += 1;
         counts.running += has_state(instance, "running") as usize;
         counts.stopped += has_state(instance, "stopped") as usize;
@@ -46,33 +63,45 @@ pub fn type_facet_counts(
     known_tag_keys: &[String],
     now: SystemTime,
 ) -> Vec<(String, usize)> {
-    let mut types: BTreeMap<String, String> = BTreeMap::new();
+    type_facet_counts_indexed(
+        instances,
+        &SearchIndex::new(instances),
+        query,
+        known_tag_keys,
+        now,
+    )
+}
+
+/// Like [`type_facet_counts`], matching through `index` built from `instances`.
+pub fn type_facet_counts_indexed(
+    instances: &[Instance],
+    index: &SearchIndex,
+    query: &str,
+    known_tag_keys: &[String],
+    now: SystemTime,
+) -> Vec<(String, usize)> {
+    let mut types: BTreeMap<String, (String, usize)> = BTreeMap::new();
     for instance_type in instances.iter().filter_map(|i| i.instance_type.as_deref()) {
         if !instance_type.is_empty() {
             types
                 .entry(instance_type.to_lowercase())
-                .or_insert_with(|| instance_type.to_string());
+                .or_insert_with(|| (instance_type.to_string(), 0));
         }
     }
 
     let q = query_without_field(query, QueryField::Type, known_tag_keys);
     let compiled = compile(&q, known_tag_keys, now);
-    let matching: Vec<&Instance> = instances.iter().filter(|i| compiled.matches(i)).collect();
+    for instance in index.matching(&compiled, instances) {
+        if let Some((_, count)) = instance
+            .instance_type
+            .as_deref()
+            .and_then(|t| types.get_mut(&t.to_lowercase()))
+        {
+            *count += 1;
+        }
+    }
 
-    types
-        .into_iter()
-        .map(|(key, name)| {
-            let count = matching
-                .iter()
-                .filter(|i| {
-                    i.instance_type
-                        .as_deref()
-                        .is_some_and(|t| t.to_lowercase() == key)
-                })
-                .count();
-            (name, count)
-        })
-        .collect()
+    types.into_values().collect()
 }
 
 /// Keeps the `n` most frequent type counts, then returns them sorted by name.

@@ -100,6 +100,7 @@ pub(crate) fn parse_launch_options(
                     Some("failure") => DemoFleet::Failure,
                     Some("partial") => DemoFleet::Partial,
                     Some("large") => DemoFleet::Large,
+                    Some("huge") => DemoFleet::Huge,
                     _ => DemoFleet::Happy,
                 });
                 demo = true;
@@ -949,6 +950,13 @@ mod tests {
         assert!(options.demo);
         assert_eq!(options.scenario, DemoFleet::Empty);
         assert_eq!(options.size, Some((800.0, 600.0)));
+    }
+
+    #[test]
+    fn huge_demo_scenario_is_parsed() {
+        let options = parse(&["--demo-scenario", "huge"]).unwrap();
+        assert_eq!(options.scenario, DemoFleet::Huge);
+        assert!(options.demo);
     }
 
     #[test]

@@ -5,7 +5,7 @@ use clouddeck_provider_api::{
 use crate::demo_provider::requested_regions;
 use crate::error::CloudDeckError;
 use crate::mock::MockComputeService;
-use crate::models::EC2Instance;
+use crate::models::{EC2Instance, EC2InstanceTag};
 use crate::scenario::{EC2Scenario, parse_scenario};
 use crate::service::BoxError;
 use crate::service_provider::{
@@ -52,6 +52,9 @@ pub(crate) fn list_scenario(
             let mut instances = instances_for(&scenario_data(demo), connection.as_str(), &region);
             if demo == DemoFleet::Large {
                 instances = large_instances(instances);
+            }
+            if demo == DemoFleet::Huge {
+                instances = huge_instances(&instances, HUGE_COUNT);
             }
             MockComputeService::sort_by_instance_id(&mut instances);
             ListResult {
@@ -128,6 +131,53 @@ fn instances_for(data: &EC2Scenario, profile: &str, region: &str) -> Vec<EC2Inst
                 .collect()
         })
         .unwrap_or_default()
+}
+
+pub(crate) const HUGE_COUNT: usize = 5_000;
+
+const HUGE_TYPES: [&str; 10] = [
+    "t3.micro",
+    "t3.small",
+    "t3.medium",
+    "t3.large",
+    "m6i.large",
+    "m6i.xlarge",
+    "c6i.large",
+    "c6i.xlarge",
+    "r6i.large",
+    "r6i.xlarge",
+];
+
+/// Clones `seed` cyclically into `count` instances with deterministic ids, states, types and tags.
+pub(crate) fn huge_instances(seed: &[EC2Instance], count: usize) -> Vec<EC2Instance> {
+    if seed.is_empty() {
+        return Vec::new();
+    }
+    (0..count)
+        .map(|n| {
+            let mut instance = seed[n % seed.len()].clone();
+            instance.instance_id = format!("i-huge-{n:04}");
+            instance.state = Some(["running", "running", "stopped", "pending"][n % 4].to_string());
+            instance.instance_type = Some(HUGE_TYPES[n % HUGE_TYPES.len()].to_string());
+            instance.tags = vec![
+                tag("Name", &format!("huge-{n:04}")),
+                tag("Environment", ["prod", "staging", "dev"][n % 3]),
+                tag(
+                    "Service",
+                    ["api", "web", "batch", "cache", "search", "auth", "billing"][n % 7],
+                ),
+                tag("Owner", ["esteban", "ana", "li", "sam", "kim"][n % 5]),
+            ];
+            instance
+        })
+        .collect()
+}
+
+fn tag(key: &str, value: &str) -> EC2InstanceTag {
+    EC2InstanceTag {
+        key: key.to_string(),
+        value: value.to_string(),
+    }
 }
 
 fn large_instances(mut instances: Vec<EC2Instance>) -> Vec<EC2Instance> {
