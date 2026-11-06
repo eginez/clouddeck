@@ -475,8 +475,9 @@ fn fail(wizard: &Entity<AccountWindowView>, attempt: u64, message: &str, cx: &mu
 }
 
 /// Maps a `clouddeck_core` service error's user-facing message (already
-/// classified once via `CloudDeckError` inside `aws_identity.rs`/
-/// `aws_sdk.rs`/`aws_sso_login.rs`) onto the wizard's small recovery
+/// classified once via `CloudDeckError` inside
+/// `extensions/aws/src/aws_identity.rs`/`extensions/aws/src/aws_sdk.rs`/
+/// `extensions/aws/src/aws_sso_login.rs`) onto the wizard's small recovery
 /// vocabulary. Matches the exact wording those modules produce -- see their
 /// `identity_error`/`aws_request_error`/`oidc_error` helpers -- rather than
 /// re-deriving classification generically, since round-tripping through
