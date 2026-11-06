@@ -1415,7 +1415,7 @@ dependencies = [
 
 [[package]]
 name = "clouddeck-extension-api"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "clouddeck-provider-api",
  "serde",
@@ -1424,7 +1424,7 @@ dependencies = [
 
 [[package]]
 name = "clouddeck-extension-toy"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "clouddeck-core",
  "clouddeck-extension-api",
