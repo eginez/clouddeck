@@ -283,7 +283,7 @@ mod tests {
     use crate::scenario::DirectoryScenarioCatalog;
     use crate::service::ComputeService;
 
-    const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/testdata/ec2-scenarios");
+    const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../clouddeck-provider-kit/testdata/ec2-scenarios");
 
     fn catalog() -> DirectoryScenarioCatalog {
         DirectoryScenarioCatalog::new(FIXTURES)

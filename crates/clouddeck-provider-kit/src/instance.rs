@@ -113,7 +113,7 @@ fn aws_state_kind(state: Option<&str>) -> StateKind {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::query::fixtures::fleet;
+    use crate::fixtures::fleet;
 
     #[test]
     fn conversion_keeps_common_fields() {

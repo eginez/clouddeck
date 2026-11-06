@@ -1,0 +1,20 @@
+[package]
+name = "clouddeck-provider-kit"
+version = "0.2.1"
+edition = "2024"
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+async-trait = "0.1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+clouddeck-provider-api = { path = "../clouddeck-provider-api" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "time", "rt", "sync"] }
+
+[features]
+test-support = []
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt", "test-util"] }

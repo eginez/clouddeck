@@ -1,6 +1,6 @@
 use clouddeck_provider_api::{InspectorRowDef, InspectorSectionDef, InspectorValue};
 
-pub(crate) fn aws_inspector() -> Vec<InspectorSectionDef> {
+pub fn aws_inspector() -> Vec<InspectorSectionDef> {
     vec![
         InspectorSectionDef {
             title: "Instance".to_string(),

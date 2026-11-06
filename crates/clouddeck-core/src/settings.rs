@@ -1,4 +1,5 @@
 use crate::{FLEET_REGIONS, context_path};
+pub use clouddeck_provider_kit::fleet_region_timeout;
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
@@ -209,11 +210,6 @@ impl Settings {
         file.sync_all()?;
         std::fs::rename(temp, path)
     }
-}
-
-/// Per-region fleet deadline, kept above the SDK request deadline so the SDK's own timeout message wins.
-pub fn fleet_region_timeout(request_timeout: Duration) -> Duration {
-    request_timeout + Duration::from_secs(5)
 }
 
 /// Location of `settings.json`, next to `context.json`.

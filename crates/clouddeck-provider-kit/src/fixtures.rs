@@ -5,12 +5,12 @@ use crate::models::{EC2Instance, EC2InstanceTag, EC2SecurityGroup};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Fixed "now" for the fixture: 2026-10-08T12:04:00Z.
-pub(crate) fn now() -> SystemTime {
+pub fn now() -> SystemTime {
     UNIX_EPOCH + Duration::from_secs(1_791_461_040)
 }
 
 /// The five shared fixture instances, in order.
-pub(crate) fn fleet() -> Vec<EC2Instance> {
+pub fn fleet() -> Vec<EC2Instance> {
     vec![
         EC2Instance {
             instance_id: "i-0000000000000001".to_string(),
@@ -153,12 +153,12 @@ pub(crate) fn fleet() -> Vec<EC2Instance> {
 }
 
 /// The shared fixture fleet in the neutral model.
-pub(crate) fn fleet_instances() -> Vec<Instance> {
+pub fn fleet_instances() -> Vec<Instance> {
     fleet().iter().map(Instance::from).collect()
 }
 
 /// A provider record with only its region and id set.
-pub(crate) fn bare_ec2(region: &str, instance_id: &str) -> EC2Instance {
+pub fn bare_ec2(region: &str, instance_id: &str) -> EC2Instance {
     EC2Instance {
         instance_id: instance_id.to_string(),
         region: Some(region.to_string()),
@@ -183,12 +183,12 @@ pub(crate) fn bare_ec2(region: &str, instance_id: &str) -> EC2Instance {
 }
 
 /// The neutral form of [`bare_ec2`].
-pub(crate) fn bare_instance(region: &str, instance_id: &str) -> Instance {
+pub fn bare_instance(region: &str, instance_id: &str) -> Instance {
     Instance::from(&bare_ec2(region, instance_id))
 }
 
 /// A tag record with the given key and value.
-pub(crate) fn tag(key: &str, value: &str) -> EC2InstanceTag {
+pub fn tag(key: &str, value: &str) -> EC2InstanceTag {
     EC2InstanceTag {
         key: key.to_string(),
         value: value.to_string(),
@@ -196,7 +196,7 @@ pub(crate) fn tag(key: &str, value: &str) -> EC2InstanceTag {
 }
 
 /// A running sample instance in us-east-1a, with `edit` applied before conversion.
-pub(crate) fn running_with(edit: impl FnOnce(&mut EC2Instance)) -> Instance {
+pub fn running_with(edit: impl FnOnce(&mut EC2Instance)) -> Instance {
     let mut record = EC2Instance {
         availability_zone: Some("us-east-1a".to_string()),
         state: Some("running".to_string()),
@@ -230,7 +230,7 @@ pub(crate) fn running_with(edit: impl FnOnce(&mut EC2Instance)) -> Instance {
 }
 
 /// A stopped sample instance in us-east-1b, with `edit` applied before conversion.
-pub(crate) fn stopped_with(edit: impl FnOnce(&mut EC2Instance)) -> Instance {
+pub fn stopped_with(edit: impl FnOnce(&mut EC2Instance)) -> Instance {
     let mut record = EC2Instance {
         instance_id: "i-0d2fc5662eb309e50".to_string(),
         availability_zone: Some("us-east-1b".to_string()),
@@ -247,7 +247,7 @@ pub(crate) fn stopped_with(edit: impl FnOnce(&mut EC2Instance)) -> Instance {
 }
 
 /// A sample instance with no attributes, with `edit` applied before conversion.
-pub(crate) fn blank_with(edit: impl FnOnce(&mut EC2Instance)) -> Instance {
+pub fn blank_with(edit: impl FnOnce(&mut EC2Instance)) -> Instance {
     let mut record = bare_ec2("us-east-1", "i-0123456789abcdef0");
     edit(&mut record);
     Instance::from(&record)

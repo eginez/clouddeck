@@ -8,8 +8,8 @@ use clouddeck_provider_api::{
     KindInfo, ListResult, LogLevel, Provider, ProviderError, ProviderInfo, ResourceId, Selection,
 };
 
+use crate::demo_fleet::DemoFleet;
 use crate::service_provider::console_url;
-use crate::workspace_provider::DemoFleet;
 
 const REQUEST_TIMEOUT_KEY: &str = "clouddeck.request_timeout_ms";
 const FLEET_KEY: &str = "clouddeck.fleet";
@@ -68,13 +68,13 @@ impl ScopeSettings {
     }
 }
 
-pub(crate) struct ScopeHost<'a> {
+pub struct ScopeHost<'a> {
     inner: &'a dyn Host,
     settings: ScopeSettings,
 }
 
 impl<'a> ScopeHost<'a> {
-    pub(crate) fn new(inner: &'a dyn Host, settings: ScopeSettings) -> Self {
+    pub fn new(inner: &'a dyn Host, settings: ScopeSettings) -> Self {
         Self { inner, settings }
     }
 }
@@ -119,7 +119,7 @@ pub(crate) struct ScopedProvider {
     settings: ScopeSettings,
 }
 
-pub(crate) fn scoped_provider(
+pub fn scoped_provider(
     inner: Arc<dyn Provider>,
     connection: ConnectionId,
     selection: Selection,

@@ -10,7 +10,7 @@ mod term;
 mod tokenize;
 
 #[cfg(test)]
-pub(crate) mod fixtures;
+pub(crate) use clouddeck_provider_kit::fixtures;
 
 pub use edit::*;
 pub use facets::*;

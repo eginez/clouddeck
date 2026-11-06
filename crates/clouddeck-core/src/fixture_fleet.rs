@@ -132,7 +132,7 @@ pub fn scenario_provider(kind: TestScenarioKind) -> Arc<dyn Provider> {
 fn scenario_service(kind: TestScenarioKind) -> ScenarioService {
     let catalog = DirectoryScenarioCatalog::new(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/testdata/ec2-scenarios"
+        "/../clouddeck-provider-kit/testdata/ec2-scenarios"
     ));
     ScenarioService::for_kind(kind, &catalog).expect("fixture scenario should load")
 }

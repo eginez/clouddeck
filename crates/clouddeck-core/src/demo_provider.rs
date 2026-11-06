@@ -7,15 +7,14 @@ use clouddeck_provider_api::{
     ProviderError, ProviderInfo, ResourceId, Selection, ValueId,
 };
 
-use crate::demo_scenarios::list_scenario;
 use crate::parse_scenario;
-use crate::scoped_provider::ScopeSettings;
-use crate::service::BoxError;
 use crate::workspace_provider::DemoFleet;
+use clouddeck_provider_kit::{BoxError, ScopeSettings, list_scenario, requested_regions};
 
 const REGION: &str = "region";
 const DEMO_METHOD: &str = "demo";
-const DEMO_SCENARIO: &str = include_str!("../testdata/ec2-scenarios/small-happy-path.json");
+const DEMO_SCENARIO: &str =
+    include_str!("../../clouddeck-provider-kit/testdata/ec2-scenarios/small-happy-path.json");
 
 pub struct DemoProvider {
     profiles: Vec<DemoProfile>,
@@ -118,17 +117,6 @@ fn not_found() -> ProviderError {
 
 fn region_cell(region: &str) -> Selection {
     Selection::new().with(REGION, vec![ValueId::from(region)])
-}
-
-pub(crate) fn requested_regions(selection: &Selection) -> Vec<String> {
-    let mut regions: Vec<String> = Vec::new();
-    for value in selection.values(REGION) {
-        let region = value.as_str().trim();
-        if !region.is_empty() && !regions.iter().any(|known| known == region) {
-            regions.push(region.to_string());
-        }
-    }
-    regions
 }
 
 fn failed(selection: &Selection, error: ProviderError) -> ListResult {

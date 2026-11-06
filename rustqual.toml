@@ -14,7 +14,7 @@ max_suppression_ratio = 0.05
 fail_on_warnings = false
 
 # ── Architecture ─────────────────────────────────────────────────────────
-# Dependency direction: provider_api <- extension_api <- core <- aws_plugin <- app. Each layer may
+# Dependency direction: provider_api <- extension_api <- provider_kit <- core <- aws_plugin <- app. Each layer may
 # use the ones listed before it; nothing may import outward. extension_examples
 # (the toy extension) is a leaf that sits after everything: only tests and other
 # examples may depend on it, and the app may not. aws_plugin is the AWS provider
@@ -24,7 +24,7 @@ fail_on_warnings = false
 enabled = true
 
 [architecture.layers]
-order = ["provider_api", "extension_api", "core", "aws_plugin", "app", "extension_examples", "plugins"]
+order = ["provider_api", "extension_api", "provider_kit", "core", "aws_plugin", "app", "extension_examples", "plugins"]
 unmatched_behavior = "strict_error"
 
 [architecture.layers.provider_api]
@@ -32,6 +32,9 @@ paths = ["crates/clouddeck-provider-api/**"]
 
 [architecture.layers.extension_api]
 paths = ["crates/clouddeck-extension-api/**"]
+
+[architecture.layers.provider_kit]
+paths = ["crates/clouddeck-provider-kit/**"]
 
 [architecture.layers.core]
 paths = ["crates/clouddeck-core/**"]
@@ -54,6 +57,7 @@ paths = ["extensions/gcp/**"]
 [architecture.external_crates]
 clouddeck_provider_api = "provider_api"
 clouddeck_extension_api = "extension_api"
+clouddeck_provider_kit = "provider_kit"
 clouddeck_core = "core"
 clouddeck_app = "app"
 clouddeck_extension_toy = "extension_examples"

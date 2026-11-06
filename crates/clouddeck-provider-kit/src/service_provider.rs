@@ -57,7 +57,7 @@ pub(crate) fn classify(error: &BoxError) -> CloudDeckError {
         .unwrap_or_else(|| CloudDeckError::from_service_error(error.as_ref()))
 }
 
-pub(crate) fn info() -> ProviderInfo {
+pub fn info() -> ProviderInfo {
     ProviderInfo {
         id: "aws".to_string(),
         name: "AWS".to_string(),
@@ -66,21 +66,21 @@ pub(crate) fn info() -> ProviderInfo {
     }
 }
 
-pub(crate) fn connections() -> Vec<Connection> {
+pub fn connections() -> Vec<Connection> {
     vec![Connection {
         id: "default".into(),
         display_name: "default".to_string(),
     }]
 }
 
-pub(crate) fn kinds() -> Vec<KindInfo> {
+pub fn kinds() -> Vec<KindInfo> {
     vec![KindInfo {
         id: KindId::instances(),
         label: "Instances".to_string(),
     }]
 }
 
-pub(crate) fn console_url(kind: &KindId, resource: &Instance) -> Option<String> {
+pub fn console_url(kind: &KindId, resource: &Instance) -> Option<String> {
     if kind.as_str() != INSTANCES {
         return None;
     }
@@ -88,7 +88,7 @@ pub(crate) fn console_url(kind: &KindId, resource: &Instance) -> Option<String> 
     console_url_for_instance(resource.region.as_deref().unwrap_or(""), instance_id).ok()
 }
 
-pub(crate) fn fields(kind: &KindId) -> Vec<FieldDef> {
+pub fn fields(kind: &KindId) -> Vec<FieldDef> {
     if kind.as_str() == INSTANCES {
         crate::aws_fields()
     } else {
@@ -96,7 +96,7 @@ pub(crate) fn fields(kind: &KindId) -> Vec<FieldDef> {
     }
 }
 
-pub(crate) fn inspector(kind: &KindId) -> Vec<InspectorSectionDef> {
+pub fn inspector(kind: &KindId) -> Vec<InspectorSectionDef> {
     if kind.as_str() == INSTANCES {
         crate::aws_inspector::aws_inspector()
     } else {
@@ -104,7 +104,7 @@ pub(crate) fn inspector(kind: &KindId) -> Vec<InspectorSectionDef> {
     }
 }
 
-pub(crate) fn unsupported_kind(kind: &KindId, selection: &Selection) -> Option<ListResult> {
+pub fn unsupported_kind(kind: &KindId, selection: &Selection) -> Option<ListResult> {
     (kind.as_str() != INSTANCES).then(|| ListResult {
         resources: Vec::new(),
         failures: vec![CellFailure {
@@ -235,7 +235,7 @@ impl Provider for ServiceProvider {
 mod tests {
     use super::*;
     use crate::mock::MockComputeService;
-    use crate::query::fixtures::bare_ec2;
+    use crate::fixtures::bare_ec2;
     use crate::{ComputeInstanceFilters, ComputeInstanceLoadResult, ComputeServicePartialFailure};
 
     fn with_call<T>(f: impl FnOnce(&Call<'_>) -> T) -> T {

@@ -11,6 +11,7 @@ base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 clouddeck-extension-api = { path = "../clouddeck-extension-api" }
 clouddeck-provider-api = { path = "../clouddeck-provider-api" }
+clouddeck-provider-kit = { path = "../clouddeck-provider-kit" }
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 flate2 = "1"
 hex = "0.4"
@@ -28,7 +29,7 @@ ureq = "2"
 url = "2"
 
 [features]
-test-support = []
+test-support = ["clouddeck-provider-kit/test-support"]
 
 [dev-dependencies]
 clouddeck-core = { path = ".", features = ["test-support"] }

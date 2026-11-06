@@ -92,7 +92,7 @@ fn extra(section: &str, key: &str) -> FieldSource {
 mod tests {
     use super::*;
     use crate::Instance;
-    use crate::query::fixtures::fleet;
+    use crate::fixtures::fleet;
 
     #[test]
     fn aws_fields_cover_aws_extras() {

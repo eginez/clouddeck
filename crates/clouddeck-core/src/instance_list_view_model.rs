@@ -467,7 +467,7 @@ mod tests {
     };
     use std::time::{Duration, UNIX_EPOCH};
 
-    const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/testdata/ec2-scenarios");
+    const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../clouddeck-provider-kit/testdata/ec2-scenarios");
 
     fn catalog() -> DirectoryScenarioCatalog {
         DirectoryScenarioCatalog::new(FIXTURES)

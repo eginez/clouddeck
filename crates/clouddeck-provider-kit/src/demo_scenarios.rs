@@ -2,7 +2,7 @@ use clouddeck_provider_api::{
     CellFailure, ConnectionId, Instance, KindId, ListResult, ProviderError, Selection,
 };
 
-use crate::demo_provider::requested_regions;
+use crate::demo_fleet::DemoFleet;
 use crate::error::CloudDeckError;
 use crate::mock::MockComputeService;
 use crate::models::{EC2Instance, EC2InstanceTag};
@@ -11,9 +11,19 @@ use crate::service::BoxError;
 use crate::service_provider::{
     REGION, classify, region_cell, unsupported_kind, whole_load_failure,
 };
-use crate::workspace_provider::DemoFleet;
 
 const OK_REGION: &str = "us-east-1";
+
+pub fn requested_regions(selection: &Selection) -> Vec<String> {
+    let mut regions: Vec<String> = Vec::new();
+    for value in selection.values(REGION) {
+        let region = value.as_str().trim();
+        if !region.is_empty() && !regions.iter().any(|known| known == region) {
+            regions.push(region.to_string());
+        }
+    }
+    regions
+}
 
 pub(crate) fn scenario_data(demo: DemoFleet) -> EC2Scenario {
     let fixture = match demo {
@@ -133,7 +143,7 @@ fn instances_for(data: &EC2Scenario, profile: &str, region: &str) -> Vec<EC2Inst
         .unwrap_or_default()
 }
 
-pub(crate) const HUGE_COUNT: usize = 5_000;
+pub const HUGE_COUNT: usize = 5_000;
 
 const HUGE_TYPES: [&str; 10] = [
     "t3.micro",
@@ -149,7 +159,7 @@ const HUGE_TYPES: [&str; 10] = [
 ];
 
 /// Clones `seed` cyclically into `count` instances with deterministic ids, states, types and tags.
-pub(crate) fn huge_instances(seed: &[EC2Instance], count: usize) -> Vec<EC2Instance> {
+pub fn huge_instances(seed: &[EC2Instance], count: usize) -> Vec<EC2Instance> {
     if seed.is_empty() {
         return Vec::new();
     }

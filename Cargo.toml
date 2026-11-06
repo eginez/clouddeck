@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/clouddeck-provider-api",
     "crates/clouddeck-extension-api",
+    "crates/clouddeck-provider-kit",
     "crates/clouddeck-extension-toy",
     "crates/clouddeck-core",
     "crates/clouddeck-app",

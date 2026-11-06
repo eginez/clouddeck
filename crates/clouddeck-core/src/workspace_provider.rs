@@ -2,67 +2,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use clouddeck_provider_api::{ConnectionId, Provider, Selection, ValueId};
+use clouddeck_provider_kit::scoped_provider::{ScopeSettings, scoped_provider};
+use clouddeck_provider_kit::service_provider::{REGION, service_provider};
+use clouddeck_provider_kit::MockComputeService;
 
-use crate::context::AwsProfile;
-use crate::demo_scenarios::scenario_data;
-use crate::mock::MockComputeService;
-use crate::scoped_provider::{ScopeSettings, scoped_provider};
-use crate::service_provider::{REGION, service_provider};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DemoFleet {
-    Happy,
-    Empty,
-    Failure,
-    Partial,
-    Large,
-    Huge,
-}
-
-impl DemoFleet {
-    pub(crate) fn key(self) -> &'static str {
-        match self {
-            DemoFleet::Happy => "happy",
-            DemoFleet::Empty => "empty",
-            DemoFleet::Failure => "failure",
-            DemoFleet::Partial => "partial",
-            DemoFleet::Large => "large",
-            DemoFleet::Huge => "huge",
-        }
-    }
-
-    pub(crate) fn from_key(key: &str) -> Option<Self> {
-        [
-            DemoFleet::Happy,
-            DemoFleet::Empty,
-            DemoFleet::Failure,
-            DemoFleet::Partial,
-            DemoFleet::Large,
-            DemoFleet::Huge,
-        ]
-        .into_iter()
-        .find(|demo| demo.key() == key)
-    }
-}
-
-pub fn demo_profiles(demo: DemoFleet) -> Vec<AwsProfile> {
-    scenario_data(demo)
-        .profiles
-        .into_iter()
-        .map(|profile| AwsProfile {
-            name: profile.name,
-            region: profile.regions.first().map(|region| region.name.clone()),
-        })
-        .collect()
-}
-
-pub fn demo_region_names(demo: DemoFleet) -> Vec<String> {
-    scenario_data(demo)
-        .profiles
-        .into_iter()
-        .flat_map(|profile| profile.regions.into_iter().map(|region| region.name))
-        .collect()
-}
+pub use clouddeck_provider_kit::demo_fleet::{DemoFleet, demo_profiles, demo_region_names};
 
 pub fn workspace_provider(
     providers: &[Arc<dyn Provider>],

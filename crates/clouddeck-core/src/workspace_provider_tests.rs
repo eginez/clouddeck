@@ -7,8 +7,8 @@ use clouddeck_provider_api::{
     KindInfo, ListResult, LogLevel, Provider, ProviderError, ProviderInfo, Selection, ValueId,
 };
 
-use crate::console_url::console_url_for_instance;
-use crate::scoped_provider::{ScopeHost, ScopeSettings};
+use clouddeck_provider_kit::console_url::console_url_for_instance;
+use clouddeck_provider_kit::scoped_provider::{ScopeHost, ScopeSettings};
 use crate::{
     DemoFleet, FLEET_REGIONS, bound_provider, builtin_providers, demo_provider, workspace_provider,
 };

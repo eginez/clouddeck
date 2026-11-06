@@ -16,6 +16,11 @@ type ServiceFactory = dyn Fn(&str) -> Box<dyn ComputeService + Send + Sync> + Se
 
 const DEFAULT_REGION_TIMEOUT: Duration = Duration::from_secs(65);
 
+/// Per-region fleet deadline, kept above the SDK request deadline so the SDK's own timeout message wins.
+pub fn fleet_region_timeout(request_timeout: Duration) -> Duration {
+    request_timeout + Duration::from_secs(5)
+}
+
 pub struct FleetComputeService {
     regions: Vec<String>,
     service_factory: Arc<ServiceFactory>,
