@@ -14,7 +14,7 @@ use clouddeck_provider_api::{
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use super::library::{HostContext, Library, with_cancel_flag, with_sign_in_scope};
+use super::library::{HostContext, Library, Trust, with_cancel_flag, with_sign_in_scope};
 use super::manifest::Manifest;
 use super::state::{CRASH_LIMIT, State, StateStore};
 
@@ -54,12 +54,23 @@ impl Drop for Settlement {
 }
 
 impl Plugin {
-    pub fn new(root: PathBuf, dir: PathBuf, manifest: Manifest, state: Arc<StateStore>) -> Self {
+    pub fn new(
+        root: PathBuf,
+        dir: PathBuf,
+        manifest: Manifest,
+        state: Arc<StateStore>,
+        trust: Trust,
+    ) -> Self {
+        let data_dir = match &trust {
+            Trust::Installed => dir.join("data"),
+            Trust::Bundled { data_dir } => data_dir.clone(),
+        };
         let host = Arc::new(HostContext::new(
             manifest.id.clone(),
-            dir.join("data"),
+            data_dir,
             manifest.capabilities.clone(),
             Arc::clone(&state),
+            trust.is_bundled(),
         ));
         Self {
             root,
@@ -349,6 +360,29 @@ impl Provider for RemoteProvider {
         self.invoke(cx.deadline, Method::Describe, (connection, kind, id))
     }
 
+    fn identity(
+        &self,
+        cx: &Call<'_>,
+        connection: &ConnectionId,
+        selection: &Selection,
+    ) -> Result<String, ProviderError> {
+        self.invoke(cx.deadline, Method::Identity, (connection, selection))
+    }
+
+    fn check_access(
+        &self,
+        cx: &Call<'_>,
+        connection: &ConnectionId,
+        kind: &KindId,
+        selection: &Selection,
+    ) -> Result<(), ProviderError> {
+        self.invoke(
+            cx.deadline,
+            Method::CheckAccess,
+            (connection, kind, selection),
+        )
+    }
+
     fn auth_methods(&self) -> Vec<AuthMethod> {
         self.fallible(self.invoke(None, Method::AuthMethods, ()))
     }
@@ -421,6 +455,7 @@ mod tests {
             state_root.join("hung"),
             manifest,
             state,
+            Trust::Installed,
         ))
     }
 

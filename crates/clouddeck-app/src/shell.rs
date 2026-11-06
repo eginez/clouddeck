@@ -1319,9 +1319,10 @@ mod tests {
         fleet_regions: &[String],
     ) -> InstanceListViewModel {
         let registry = clouddeck_core::extension_host::app_registry(
+            None,
             std::path::Path::new("/nonexistent-clouddeck-extensions"),
             std::path::Path::new("/nonexistent-clouddeck-state"),
-            vec![clouddeck_aws::aws_provider()],
+            vec![test_aws_provider()],
         );
         let provider = AppShell::provider_for(
             registry.providers(),
@@ -1543,12 +1544,22 @@ mod tests {
         }
     }
 
+    fn test_aws_provider() -> std::sync::Arc<dyn clouddeck_core::Provider> {
+        std::sync::Arc::new(clouddeck_core::ComputeServiceProvider::new(
+            "aws",
+            Vec::new(),
+            Vec::new(),
+            |_, _| Box::new(clouddeck_core::MockComputeService::new(Vec::new(), None)),
+        ))
+    }
+
     fn install_test_providers(cx: &mut TestAppContext) {
         cx.update(|cx| {
             let registry = clouddeck_core::extension_host::app_registry(
+                None,
                 std::path::Path::new("/nonexistent-clouddeck-extensions"),
                 std::path::Path::new("/nonexistent-clouddeck-state"),
-                vec![clouddeck_aws::aws_provider()],
+                vec![test_aws_provider()],
             );
             cx.set_global(crate::app_providers::AppProviders::new(registry));
             crate::app_providers::observe_quit(cx);
@@ -1556,7 +1567,10 @@ mod tests {
     }
 
     fn provider_shutdowns(cx: &TestAppContext) -> usize {
-        cx.read(|cx| cx.global::<crate::app_providers::AppProviders>().shutdowns())
+        cx.read(|cx| {
+            cx.global::<crate::app_providers::AppProviders>()
+                .shutdowns()
+        })
     }
 
     #[gpui::test]

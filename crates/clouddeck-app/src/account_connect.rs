@@ -9,10 +9,9 @@
 //! flags, so the button just spun on "Connecting..." forever -- a dead end
 //! the clouddeck-rs-w6s.18 acceptance criteria explicitly rule out.
 //!
-//! The SDK-backed backend this module calls
-//! (`AwsIdentityService`/`verify_instance_access`/`aws_provider`/
-//! `login_guidance`) already existed from clouddeck-rs-wz2.2; this module is
-//! the missing wiring, not a new auth implementation. Kept out of
+//! The SDK-backed backend is the AWS provider from the app's registry, reached
+//! through the `Provider` trait; this module is the wiring, not a new auth
+//! implementation. Kept out of
 //! `account_window.rs` (pure UI state, easy to unit test without gpui) and
 //! `shell.rs` (window lifecycle, not auth orchestration) so each stays
 //! focused.
@@ -24,13 +23,14 @@ use std::sync::Arc;
 use gpui::{App, AsyncApp, Entity};
 
 use crate::account_window::{AccountBrowserLoginPrompt, AccountConnectionError, AccountWindowView};
-use clouddeck_aws::{
-    AwsIdentityService, LoginGuidance, aws_provider, login_guidance, verify_instance_access,
-};
 use clouddeck_core::{
-    AuthAnswer, AuthInput, AuthStep, AwsCredentialKind, Call, ConnectionId, FlowId, Host, LogLevel,
-    Provider, ProviderError,
+    AuthAnswer, AuthInput, AuthStep, AwsCredentialKind, Call, ConnectionId, FlowId, Host, KindId,
+    LogLevel, LoginGuidance, Provider, ProviderError, REGION, Selection, ValueId, login_guidance,
 };
+
+const AWS_PROVIDER_ID: &str = "aws";
+const AWS_NOT_INSTALLED: &str =
+    "AWS support is not installed in this build: the bundled aws extension was not found.";
 
 /// Consumes whichever one-shot request flags the wizard has set since the
 /// last notify and dispatches the matching work. Called from the shell's
@@ -129,7 +129,10 @@ fn begin_connect(wizard: Entity<AccountWindowView>, cx: &mut App) {
     }
 
     cx.spawn(async move |cx| {
-        run_identity_and_access_check(wizard, profile, region, attempt, cx).await;
+        let Some(provider) = aws_provider_or_fail(&wizard, attempt, cx).await else {
+            return;
+        };
+        run_identity_and_access_check(wizard, provider, profile, region, attempt, cx).await;
     })
     .detach();
 }
@@ -177,7 +180,9 @@ fn begin_sign_in(wizard: Entity<AccountWindowView>, cx: &mut App) {
 
     cx.spawn(async move |cx| {
         // One provider instance must own both begin and poll: it holds the flow state.
-        let provider = aws_provider();
+        let Some(provider) = aws_provider_or_fail(&wizard, attempt, cx).await else {
+            return;
+        };
         let Some(flow) = start_browser_sign_in(&wizard, &provider, &profile, attempt, cx).await
         else {
             return;
@@ -187,9 +192,31 @@ fn begin_sign_in(wizard: Entity<AccountWindowView>, cx: &mut App) {
         {
             return;
         }
-        run_identity_and_access_check(wizard, profile, region, attempt, cx).await;
+        run_identity_and_access_check(wizard, provider, profile, region, attempt, cx).await;
     })
     .detach();
+}
+
+/// Finds AWS in the app's registry. A bundled extension loads on first use, so the lookup runs
+/// off the UI thread.
+async fn aws_provider_or_fail(
+    wizard: &Entity<AccountWindowView>,
+    attempt: u64,
+    cx: &mut AsyncApp,
+) -> Option<Arc<dyn Provider>> {
+    let providers = cx
+        .update(crate::app_providers::providers)
+        .unwrap_or_default();
+    let found = off_thread(cx, move || {
+        providers
+            .into_iter()
+            .find(|provider| provider.info().id == AWS_PROVIDER_ID)
+    })
+    .await;
+    if found.is_none() {
+        fail(wizard, attempt, AWS_NOT_INSTALLED, cx);
+    }
+    found
 }
 
 async fn start_browser_sign_in(
@@ -368,19 +395,24 @@ impl Host for AppHost {
 /// clobber a newer one (see `AccountWindowView::connection_attempt`).
 async fn run_identity_and_access_check(
     wizard: Entity<AccountWindowView>,
+    provider: Arc<dyn Provider>,
     profile: String,
     region: String,
     attempt: u64,
     cx: &mut AsyncApp,
 ) {
-    let identity_service = AwsIdentityService::new(profile.clone(), region.clone());
-    let identity_result = crate::runtime::runtime()
-        .spawn(async move { identity_service.resolve().await })
-        .await
-        .unwrap_or_else(|error| Err(std::io::Error::other(error.to_string()).into()));
+    let connection = ConnectionId::from(profile.as_str());
+    let selection = Selection::new().with(REGION, vec![ValueId::from(region.as_str())]);
+    let identity_result = off_thread(cx, {
+        let provider = provider.clone();
+        let connection = connection.clone();
+        let selection = selection.clone();
+        move || with_call(|call| provider.identity(call, &connection, &selection))
+    })
+    .await;
 
     let account_id = match identity_result {
-        Ok(identity) => identity.account_id,
+        Ok(account_id) => account_id,
         Err(error) => {
             fail(&wizard, attempt, &error.to_string(), cx);
             return;
@@ -398,10 +430,10 @@ async fn run_identity_and_access_check(
         return;
     }
 
-    let access_result = crate::runtime::runtime()
-        .spawn(verify_instance_access(profile, region))
-        .await
-        .unwrap_or_else(|error| Err(std::io::Error::other(error.to_string()).into()));
+    let access_result = off_thread(cx, move || {
+        with_call(|call| provider.check_access(call, &connection, &KindId::instances(), &selection))
+    })
+    .await;
 
     match access_result {
         Ok(()) => {

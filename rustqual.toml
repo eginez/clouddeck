@@ -17,8 +17,8 @@ fail_on_warnings = false
 # Dependency direction: provider_api <- extension_api <- core <- aws_plugin <- app. Each layer may
 # use the ones listed before it; nothing may import outward. extension_examples
 # (the toy extension) is a leaf that sits after everything: only tests and other
-# examples may depend on it, and the app may not. aws_plugin is the statically linked
-# AWS provider (extensions/aws); it may use core but core may not use it.
+# examples may depend on it, and the app may not. aws_plugin is the AWS provider
+# (extensions/aws), built as a cdylib and loaded at runtime; it may use core but core may not use it.
 
 [architecture]
 enabled = true
@@ -36,7 +36,7 @@ paths = ["crates/clouddeck-extension-api/**"]
 [architecture.layers.core]
 paths = ["crates/clouddeck-core/**"]
 
-# AWS, still statically linked: may use core; the app links it until the bundled loader lands (see Restore bead clouddeck-rs-v1mt)
+# AWS, loaded at runtime as a bundled extension: may use core.
 [architecture.layers.aws_plugin]
 paths = ["extensions/aws/**"]
 
@@ -60,7 +60,7 @@ clouddeck_extension_toy = "extension_examples"
 clouddeck_gcp = "plugins"
 clouddeck_aws = "aws_plugin"
 
-# The app reaches AWS only through clouddeck-aws. The list is the aws-* crates in Cargo.lock;
+# The app reaches AWS only through the extension registry. The list is the aws-* crates in Cargo.lock;
 # keep it in step when the SDK adds crates.
 [[architecture.pattern]]
 name = "no_aws_sdk_in_app"
@@ -73,7 +73,7 @@ forbid_path_prefix = [
     "aws_smithy_types", "aws_smithy_xml", "aws_types",
 ]
 forbidden_in = ["crates/clouddeck-app/**"]
-reason = "The app reaches AWS through clouddeck-aws; AWS SDK crates stay inside extensions/aws"
+reason = "The app reaches AWS through the extension registry; AWS SDK crates stay inside extensions/aws"
 
 [[architecture.pattern]]
 name = "no_aws_sdk_in_core"
@@ -98,9 +98,9 @@ reason = "The app loads extensions at runtime through the host loader; example e
 # rustqual cannot match a crate-name wildcard, so each new provider crate is added here when created.
 [[architecture.pattern]]
 name = "no_provider_crates_in_app"
-forbid_path_prefix = ["clouddeck_provider_aws", "clouddeck_gcp"]
+forbid_path_prefix = ["clouddeck_provider_aws", "clouddeck_aws", "clouddeck_gcp"]
 forbidden_in = ["crates/clouddeck-app/**"]
-reason = "The app imports no provider crate except clouddeck_aws (temporary, clouddeck-rs-v1mt)"
+reason = "The app loads provider crates through the extension registry, never by linking them"
 
 # ── Complexity ───────────────────────────────────────────────────────────
 

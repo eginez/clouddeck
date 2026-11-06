@@ -19,7 +19,9 @@ check() { # desc cmd...
 
 R="$T/repo"
 mkdir -p "$R/scripts" "$R/crates/clouddeck-app" "$T/bin"
-cp "$SRC/scripts/package-macos.sh" "$R/scripts/"
+cp "$SRC/scripts/package-macos.sh" "$SRC/scripts/stage-bundled-extensions.sh" "$R/scripts/"
+mkdir -p "$R/extensions/aws"
+cp "$SRC/extensions/aws/extension.toml" "$R/extensions/aws/"
 cp "$SRC/crates/clouddeck-app/Cargo.toml" "$R/crates/clouddeck-app/"
 mkdir -p "$R/design/icon"
 cp "$SRC/design/icon/AppIcon.icns" "$R/design/icon/"
@@ -43,7 +45,8 @@ for arg in "$@"; do
 done
 [ -n "$manifest" ] || { echo "fake cargo: no --manifest-path" >&2; exit 2; }
 root="$(dirname "$manifest")"
-mkdir -p "$root/target/release" && cp /bin/true "$root/target/release/clouddeck"
+out="${CARGO_TARGET_DIR:-$root/target}/release"
+mkdir -p "$out" && cp /bin/true "$out/clouddeck" && cp /bin/true "$out/libclouddeck_aws.dylib"
 EOF
 cat >"$T/bin/hdiutil" <<'EOF'
 #!/bin/sh
@@ -61,6 +64,10 @@ check "package-macos.sh succeeds with cargo build --manifest-path first" test $?
 VERSION="$(awk -F'"' '/^version = / { print $2; exit }' "$R/crates/clouddeck-app/Cargo.toml")"
 check "CloudDeck.app binary is installed" test -x "$R/dist/CloudDeck.app/Contents/MacOS/clouddeck"
 check "Info.plist carries the crate version" grep -q "<string>$VERSION</string>" "$R/dist/CloudDeck.app/Contents/Info.plist"
+check "bundled aws extension manifest is in Contents/PlugIns" \
+    test -f "$R/dist/CloudDeck.app/Contents/PlugIns/extensions-bundled/aws/extension.toml"
+check "bundled aws library is in Contents/PlugIns" \
+    test -x "$R/dist/CloudDeck.app/Contents/PlugIns/extensions-bundled/aws/libaws.dylib"
 check "app icon is installed into Contents/Resources" \
     cmp -s "$SRC/design/icon/AppIcon.icns" "$R/dist/CloudDeck.app/Contents/Resources/AppIcon.icns"
 check "Info.plist sets CFBundleIconFile to AppIcon" \

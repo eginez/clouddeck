@@ -6,7 +6,7 @@ pub struct Slice {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn clouddeck_api_version() -> u32 {
-    3
+    4
 }
 
 #[unsafe(no_mangle)]

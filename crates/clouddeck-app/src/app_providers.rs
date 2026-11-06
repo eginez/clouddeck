@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use clouddeck_core::Provider;
 use clouddeck_core::extension_host::{
-    ProviderRegistry, app_registry, extension_state_root, extensions_root,
+    ProviderRegistry, app_registry, bundled_extensions_root, extension_state_root, extensions_root,
 };
 use gpui::{App, Global};
 
@@ -38,9 +38,10 @@ impl AppProviders {
 impl Default for AppProviders {
     fn default() -> Self {
         Self::new(app_registry(
+            bundled_extensions_root().as_deref(),
             &extensions_root(),
             &extension_state_root(),
-            vec![clouddeck_aws::aws_provider()],
+            Vec::new(),
         ))
     }
 }

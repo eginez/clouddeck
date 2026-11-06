@@ -1354,7 +1354,6 @@ name = "clouddeck-app"
 version = "0.2.1"
 dependencies = [
  "chrono",
- "clouddeck-aws",
  "clouddeck-core",
  "flate2",
  "gpui",

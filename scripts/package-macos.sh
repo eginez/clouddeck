@@ -11,8 +11,9 @@ fi
 
 cargo build --manifest-path "$root_dir/Cargo.toml" --locked --offline --release --bin clouddeck
 
+target_dir="${CARGO_TARGET_DIR:-$root_dir/target}"
 app_dir="$root_dir/dist/CloudDeck.app"
-binary="$root_dir/target/release/clouddeck"
+binary="$target_dir/release/clouddeck"
 icon="$root_dir/design/icon/AppIcon.icns"
 version="$(awk -F'"' '/^version = / { print $2; exit }' "$root_dir/crates/clouddeck-app/Cargo.toml")"
 
@@ -25,6 +26,9 @@ rm -rf "$app_dir"
 mkdir -p "$app_dir/Contents/MacOS" "$app_dir/Contents/Resources"
 install -m 0755 "$binary" "$app_dir/Contents/MacOS/clouddeck"
 install -m 0644 "$icon" "$app_dir/Contents/Resources/AppIcon.icns"
+"$root_dir/scripts/stage-bundled-extensions.sh" release
+mkdir -p "$app_dir/Contents/PlugIns"
+cp -R "$target_dir/release/extensions-bundled" "$app_dir/Contents/PlugIns/extensions-bundled"
 
 cat > "$app_dir/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

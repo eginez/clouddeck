@@ -20,10 +20,13 @@ version="$(awk -F'"' '/^version = / { print $2; exit }' "$root_dir/crates/cloudd
 stage_dir="$root_dir/dist/linux-stage"
 archive="$root_dir/dist/CloudDeck-$version-linux-x86_64.tar.gz"
 
+"$root_dir/scripts/stage-bundled-extensions.sh" release
+
 rm -rf "$stage_dir"
 mkdir -p "$stage_dir"
 install -m 0755 "$binary" "$stage_dir/clouddeck"
 strip "$stage_dir/clouddeck"
+cp -R "$target_dir/release/extensions-bundled" "$stage_dir/extensions-bundled"
 install -m 0644 "$root_dir/packaging/linux/clouddeck.desktop" "$stage_dir/clouddeck.desktop"
 install -m 0644 "$root_dir/design/icon/clouddeck-icon-1024.png" "$stage_dir/clouddeck.png"
 iconset="$root_dir/design/icon/AppIcon.iconset"

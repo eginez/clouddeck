@@ -70,6 +70,7 @@ impl AwsIdentityService {
         }
     }
 
+    #[cfg(test)]
     pub fn with_provider(
         profile: impl Into<String>,
         region: impl Into<String>,
@@ -81,11 +82,6 @@ impl AwsIdentityService {
             provider: Some(provider),
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
         }
-    }
-
-    pub fn with_timeout(mut self, request_timeout: Duration) -> Self {
-        self.request_timeout = request_timeout;
-        self
     }
 
     pub async fn resolve(&self) -> Result<AwsIdentity, BoxError> {

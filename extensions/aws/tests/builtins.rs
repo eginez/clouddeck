@@ -16,6 +16,7 @@ fn app_registry_without_extensions_holds_aws_and_demo() {
     let state_root = tempfile::tempdir().unwrap();
 
     let registry = clouddeck_core::extension_host::app_registry(
+        None,
         &root.path().join("absent"),
         state_root.path(),
         vec![clouddeck_aws::aws_provider()],

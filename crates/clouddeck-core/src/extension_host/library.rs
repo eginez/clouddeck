@@ -25,12 +25,27 @@ const LEVEL_NAMES: [&str; 4] = ["debug", "info", "warn", "error"];
 const MAX_REQUEST_BYTES: usize = 1 << 20;
 const MAX_RESPONSE_BYTES: usize = 16 << 20;
 
+/// Where an extension was installed. Bundled extensions ship with the app and are trusted as far
+/// as the app's own release; installed ones are gated by the user and by the external switch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Trust {
+    Installed,
+    Bundled { data_dir: PathBuf },
+}
+
+impl Trust {
+    pub fn is_bundled(&self) -> bool {
+        matches!(self, Trust::Bundled { .. })
+    }
+}
+
 /// Per-extension state the host hands to an extension through [`HostTable`].
 pub struct HostContext {
     id: String,
     data_dir: PathBuf,
     declared: Vec<Capability>,
     state: Arc<StateStore>,
+    bundled: bool,
 }
 
 impl HostContext {
@@ -39,18 +54,22 @@ impl HostContext {
         data_dir: PathBuf,
         declared: Vec<Capability>,
         state: Arc<StateStore>,
+        bundled: bool,
     ) -> Self {
         Self {
             id,
             data_dir,
             declared,
             state,
+            bundled,
         }
     }
 
-    /// A capability is in effect only when the manifest declares it and the user granted it.
+    /// A capability is in effect when the manifest declares it and, for installed extensions,
+    /// the user granted it.
     fn allows(&self, capability: &Capability) -> bool {
-        self.declared.contains(capability) && self.state.read(|s| s.is_granted(capability))
+        self.declared.contains(capability)
+            && (self.bundled || self.state.read(|s| s.is_granted(capability)))
     }
 
     fn table(&self) -> HostTable {
@@ -106,7 +125,7 @@ impl Library {
     /// dlopen runs the library constructors before our version and build checks, which is why
     /// ownership and permission checks come first.
     pub fn open(path: &Path, root: &Path, host: Arc<HostContext>) -> Result<Self, String> {
-        check_trusted_location(path, root)?;
+        check_trusted_location(path, root, host.bundled)?;
         // SAFETY: loading runs the library's initializers; the crash guard in the caller covers that.
         let library = unsafe { libloading::Library::new(path) }
             .map_err(|error| format!("cannot load {}: {error}", path.display()))?;
@@ -161,9 +180,10 @@ fn take_response(buffer: Buffer, free: FreeFn) -> Result<Vec<u8>, ProviderError>
 }
 
 /// `path` is canonical and must lie under `root`. Every folder from `root` down to the library and
-/// the library itself must belong to the current user and must not be writable by group or others.
+/// the library itself must belong to the current user (or root, for bundled extensions) and must
+/// not be writable by group or others.
 #[cfg(unix)]
-fn check_trusted_location(path: &Path, root: &Path) -> Result<(), String> {
+fn check_trusted_location(path: &Path, root: &Path, bundled: bool) -> Result<(), String> {
     let root = root
         .canonicalize()
         .map_err(|error| format!("cannot read {}: {error}", root.display()))?;
@@ -184,17 +204,18 @@ fn check_trusted_location(path: &Path, root: &Path) -> Result<(), String> {
         .skip(1)
         .take_while(|folder| folder.starts_with(&root))
     {
-        check_owner_and_mode(folder, euid)?;
+        check_owner_and_mode(folder, euid, bundled)?;
     }
-    check_owner_and_mode(path, euid)
+    check_owner_and_mode(path, euid, bundled)
 }
 
 #[cfg(unix)]
-fn check_owner_and_mode(path: &Path, euid: u32) -> Result<(), String> {
+fn check_owner_and_mode(path: &Path, euid: u32, bundled: bool) -> Result<(), String> {
     use std::os::unix::fs::MetadataExt;
     let metadata =
         fs::metadata(path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
-    if metadata.uid() != euid {
+    let owner = metadata.uid();
+    if owner != euid && !(bundled && owner == 0) {
         return Err(format!(
             "{} is owned by uid {}, not by the user running CloudDeck",
             path.display(),
@@ -212,7 +233,7 @@ fn check_owner_and_mode(path: &Path, euid: u32) -> Result<(), String> {
 }
 
 #[cfg(not(unix))]
-fn check_trusted_location(_path: &Path, _root: &Path) -> Result<(), String> {
+fn check_trusted_location(_path: &Path, _root: &Path, _bundled: bool) -> Result<(), String> {
     Err("extensions can only be loaded on macOS and Linux".into())
 }
 
@@ -395,14 +416,36 @@ mod tests {
             dir.path().join("data"),
             vec![Capability::Secrets],
             Arc::clone(&state),
+            false,
         );
         assert!(!host.allows(&Capability::Secrets));
         state.update(|s| s.grant(Capability::Secrets)).unwrap();
         assert!(host.allows(&Capability::Secrets));
         assert!(!host.allows(&Capability::Credentials));
 
-        let undeclared = HostContext::new("toy".into(), dir.path().join("data"), Vec::new(), state);
+        let undeclared = HostContext::new(
+            "toy".into(),
+            dir.path().join("data"),
+            Vec::new(),
+            state,
+            false,
+        );
         assert!(!undeclared.allows(&Capability::Secrets));
+    }
+
+    #[test]
+    fn bundled_capabilities_need_only_the_declaration() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = Arc::new(StateStore::open(&dir.path().join("state.json")).unwrap());
+        let host = HostContext::new(
+            "aws".into(),
+            dir.path().join("data"),
+            vec![Capability::Secrets],
+            state,
+            true,
+        );
+        assert!(host.allows(&Capability::Secrets));
+        assert!(!host.allows(&Capability::Credentials));
     }
 
     #[test]
@@ -498,6 +541,7 @@ mod tests {
             build.path().join("data"),
             Vec::new(),
             state,
+            false,
         ));
         let error = Library::open(&library, build.path(), host)
             .err()

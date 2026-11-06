@@ -12,11 +12,14 @@ use crate::builtin_providers;
 use crate::context::config_home;
 use crate::extension_manager::install::EXTERNAL_EXTENSIONS_ALLOWED;
 
+use super::library::Trust;
 use super::manifest::{MANIFEST_FILE, Manifest};
 use super::remote::{NOT_RESPONDING, Plugin, RemoteProvider};
 use super::state::{CRASH_LIMIT, State, StateStore, state_path};
 
 const CLOUDDECK_VERSION: &str = env!("CARGO_PKG_VERSION");
+const BUNDLED_DIR: &str = "extensions-bundled";
+const FIRST_PARTY_BUNDLED: &[&str] = &["aws"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Refusal {
@@ -95,6 +98,21 @@ impl ProviderRegistry {
 
     /// Reads each installed extension's manifest and host-owned state. No library is loaded here.
     pub fn discover(&mut self, root: &Path, state_root: &Path) -> io::Result<()> {
+        self.discover_folders(root, state_root, false)
+    }
+
+    /// Like [`Self::discover`], for extensions that ship inside the app. They are trusted, so the
+    /// user's enable switch and the external-extensions gate do not apply.
+    pub fn discover_bundled(&mut self, root: &Path, state_root: &Path) -> io::Result<()> {
+        self.discover_folders(root, state_root, true)
+    }
+
+    fn discover_folders(
+        &mut self,
+        root: &Path,
+        state_root: &Path,
+        bundled: bool,
+    ) -> io::Result<()> {
         if !root.is_absolute() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -113,7 +131,7 @@ impl ProviderRegistry {
             .collect();
         dirs.sort();
         for dir in dirs {
-            if let Err(message) = self.add_extension(root, &dir, state_root) {
+            if let Err(message) = self.add_extension(root, &dir, state_root, bundled) {
                 let extension = dir
                     .file_name()
                     .unwrap_or(OsStr::new("?"))
@@ -125,7 +143,13 @@ impl ProviderRegistry {
         Ok(())
     }
 
-    fn add_extension(&mut self, root: &Path, dir: &Path, state_root: &Path) -> Result<(), String> {
+    fn add_extension(
+        &mut self,
+        root: &Path,
+        dir: &Path,
+        state_root: &Path,
+        bundled: bool,
+    ) -> Result<(), String> {
         let text = fs::read_to_string(dir.join(MANIFEST_FILE))
             .map_err(|error| format!("cannot read {MANIFEST_FILE}: {error}"))?;
         let manifest = Manifest::parse(&text)?;
@@ -136,23 +160,36 @@ impl ProviderRegistry {
                 manifest.id
             ));
         }
+        if self.plugins.iter().any(|plugin| plugin.id() == manifest.id) {
+            return Err(format!("extension {} is already registered", manifest.id));
+        }
         let state = Arc::new(
             StateStore::open(&state_path(state_root, &manifest.id))
                 .map_err(|error| format!("cannot read state: {error}"))?,
         );
-        if !state.read(|s| s.enabled) {
-            return Ok(());
-        }
-        if !self.allow_external {
-            return Err("external extensions are turned off in this build".to_string());
-        }
+        let trust = if bundled {
+            if !FIRST_PARTY_BUNDLED.contains(&manifest.id.as_str()) {
+                return Err(format!("{} is not a first-party extension", manifest.id));
+            }
+            Trust::Bundled {
+                data_dir: state_root.join("bundled-data").join(&manifest.id),
+            }
+        } else {
+            if !state.read(|s| s.enabled) {
+                return Ok(());
+            }
+            if !self.allow_external {
+                return Err("external extensions are turned off in this build".to_string());
+            }
+            Trust::Installed
+        };
         if state.read(State::crash_disabled) {
             return Err(format!(
                 "disabled after crashing on its last {CRASH_LIMIT} launches"
             ));
         }
         self.reserve_provider_ids(&manifest)?;
-        self.register_remote(root, dir, manifest, state);
+        self.register_remote(root, dir, manifest, state, trust);
         Ok(())
     }
 
@@ -174,6 +211,7 @@ impl ProviderRegistry {
         dir: &Path,
         manifest: Manifest,
         state: Arc<StateStore>,
+        trust: Trust,
     ) {
         let declared: Vec<(String, String)> = manifest
             .providers
@@ -185,6 +223,7 @@ impl ProviderRegistry {
             dir.to_path_buf(),
             manifest,
             state,
+            trust,
         ));
         self.plugins.push(Arc::clone(&plugin));
         for (id, name) in declared {
@@ -199,8 +238,10 @@ fn is_hidden(path: &Path) -> bool {
         .is_some_and(|name| name.to_string_lossy().starts_with('.'))
 }
 
-/// Built-ins are registered before discovery so an extension claiming their id is refused.
+/// Built-ins and bundled extensions are registered before user installs, so an installed
+/// extension claiming their id is refused.
 pub fn app_registry(
+    bundled_root: Option<&Path>,
     root: &Path,
     state_root: &Path,
     builtins: Vec<Arc<dyn Provider>>,
@@ -214,6 +255,11 @@ pub fn app_registry(
     registry
         .register_builtin(Arc::new(crate::demo_provider()))
         .expect("demo is distinct from the other builtins");
+    if let Some(Err(error)) =
+        bundled_root.map(|bundled_root| registry.discover_bundled(bundled_root, state_root))
+    {
+        eprintln!("Could not read bundled extensions: {error}");
+    }
     if let Err(error) = registry.discover(root, state_root) {
         eprintln!("Could not read installed extensions: {error}");
     }
@@ -223,6 +269,23 @@ pub fn app_registry(
 /// Where installed extensions live, next to the rest of CloudDeck's configuration.
 pub fn extensions_root() -> PathBuf {
     config_home().join("clouddeck/extensions")
+}
+
+/// The folder of first-party extensions shipped beside the running executable. On macOS the
+/// executable sits in an app bundle, so the folder lives in `Contents/PlugIns`.
+pub fn bundled_extensions_root() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?.canonicalize().ok()?;
+    bundled_root_for_exe(&exe)
+}
+
+fn bundled_root_for_exe(exe: &Path) -> Option<PathBuf> {
+    let dir = exe.parent()?;
+    if dir.file_name() == Some(OsStr::new("MacOS"))
+        && dir.parent()?.file_name() == Some(OsStr::new("Contents"))
+    {
+        return Some(dir.parent()?.join("PlugIns").join(BUNDLED_DIR));
+    }
+    Some(dir.join(BUNDLED_DIR))
 }
 
 /// Host-owned state for every extension, kept out of the extension folders.
@@ -318,6 +381,116 @@ mod tests {
 
         assert!(registry.refusals().is_empty());
         assert_eq!(registry.providers().len(), 1);
+    }
+
+    #[test]
+    fn bundled_extension_loads_without_state_while_external_is_off() {
+        let root = tempfile::tempdir().unwrap();
+        let state_root = tempfile::tempdir().unwrap();
+        install(root.path(), "aws", &manifest_text("aws", API_VERSION));
+
+        let mut registry = ProviderRegistry::default();
+        registry
+            .discover_bundled(root.path(), state_root.path())
+            .unwrap();
+
+        assert!(registry.refusals().is_empty());
+        assert_eq!(registry.providers().len(), 1);
+    }
+
+    #[test]
+    fn bundled_extension_with_mismatched_api_is_refused() {
+        let root = tempfile::tempdir().unwrap();
+        let state_root = tempfile::tempdir().unwrap();
+        install(root.path(), "aws", &manifest_text("aws", API_VERSION + 1));
+
+        let mut registry = ProviderRegistry::default();
+        registry
+            .discover_bundled(root.path(), state_root.path())
+            .unwrap();
+
+        assert!(registry.providers().is_empty());
+        assert!(
+            registry.refusals()[0]
+                .message
+                .contains("Rebuild aws for CloudDeck")
+        );
+    }
+
+    #[test]
+    fn bundled_extension_disabled_after_crashing_is_refused() {
+        let root = tempfile::tempdir().unwrap();
+        let state_root = tempfile::tempdir().unwrap();
+        install(root.path(), "aws", &manifest_text("aws", API_VERSION));
+        enable(state_root.path(), "aws", |s| s.crashes = CRASH_LIMIT);
+
+        let mut registry = ProviderRegistry::default();
+        registry
+            .discover_bundled(root.path(), state_root.path())
+            .unwrap();
+
+        assert!(registry.providers().is_empty());
+        assert!(registry.refusals()[0].message.contains("after crashing"));
+    }
+
+    #[test]
+    fn bundled_folder_must_be_a_first_party_extension() {
+        let root = tempfile::tempdir().unwrap();
+        let state_root = tempfile::tempdir().unwrap();
+        install(
+            root.path(),
+            "stranger",
+            &manifest_text("stranger", API_VERSION),
+        );
+
+        let mut registry = ProviderRegistry::default();
+        registry
+            .discover_bundled(root.path(), state_root.path())
+            .unwrap();
+
+        assert!(registry.providers().is_empty());
+        assert!(registry.refusals()[0].message.contains("not a first-party"));
+    }
+
+    #[test]
+    fn installed_extension_cannot_take_a_bundled_id() {
+        let bundled = tempfile::tempdir().unwrap();
+        let installed = tempfile::tempdir().unwrap();
+        let state_root = tempfile::tempdir().unwrap();
+        install(bundled.path(), "aws", &manifest_text("aws", API_VERSION));
+        install(installed.path(), "aws", &manifest_text("aws", API_VERSION));
+        enable(state_root.path(), "aws", |s| s.enabled = true);
+
+        let mut registry = ProviderRegistry::default().with_external(true);
+        registry
+            .discover_bundled(bundled.path(), state_root.path())
+            .unwrap();
+        registry
+            .discover(installed.path(), state_root.path())
+            .unwrap();
+
+        assert_eq!(registry.providers().len(), 1);
+        assert!(
+            registry.refusals()[0]
+                .message
+                .contains("extension aws is already registered")
+        );
+    }
+
+    #[test]
+    fn bundled_root_follows_the_app_bundle_layout() {
+        let linux = Path::new("/opt/clouddeck/bin/clouddeck");
+        assert_eq!(
+            bundled_root_for_exe(linux),
+            Some(PathBuf::from("/opt/clouddeck/bin/extensions-bundled"))
+        );
+        let mac = Path::new("/Applications/CloudDeck.app/Contents/MacOS/clouddeck");
+        assert_eq!(
+            bundled_root_for_exe(mac),
+            Some(PathBuf::from(
+                "/Applications/CloudDeck.app/Contents/PlugIns/extensions-bundled"
+            ))
+        );
     }
 
     #[test]
@@ -442,7 +615,9 @@ mod tests {
     #[test]
     fn register_builtin_refuses_a_duplicate_id() {
         let mut registry = ProviderRegistry::default();
-        registry.register_builtin(Arc::new(crate::demo_provider())).unwrap();
+        registry
+            .register_builtin(Arc::new(crate::demo_provider()))
+            .unwrap();
 
         let error = registry
             .register_builtin(Arc::new(crate::demo_provider()))
@@ -455,7 +630,9 @@ mod tests {
     #[test]
     fn register_builtin_adds_a_provider() {
         let mut registry = ProviderRegistry::default();
-        registry.register_builtin(Arc::new(crate::demo_provider())).unwrap();
+        registry
+            .register_builtin(Arc::new(crate::demo_provider()))
+            .unwrap();
 
         assert!(registry.provider("demo").is_some());
         assert!(registry.provider("aws").is_none());
@@ -464,7 +641,10 @@ mod tests {
     #[test]
     fn with_builtins_matches_builtin_providers() {
         let ids = |providers: Vec<Arc<dyn Provider>>| -> Vec<String> {
-            providers.iter().map(|provider| provider.info().id).collect()
+            providers
+                .iter()
+                .map(|provider| provider.info().id)
+                .collect()
         };
         for demo in [true, false] {
             let registry = ProviderRegistry::with_builtins(demo);
@@ -509,7 +689,9 @@ mod tests {
         enable(state_root.path(), "demo", |s| s.enabled = true);
 
         let mut registry = ProviderRegistry::default().with_external(true);
-        registry.register_builtin(Arc::new(crate::demo_provider())).unwrap();
+        registry
+            .register_builtin(Arc::new(crate::demo_provider()))
+            .unwrap();
         registry.discover(root.path(), state_root.path()).unwrap();
 
         assert_eq!(registry.providers().len(), 1);

@@ -45,6 +45,12 @@ score is unchanged. Existing findings do not fail it. The architecture rules in
 extension `clouddeck-extension-toy` sits outside that chain and the app may not
 import it.
 
+First-party extensions ship as cdylibs in `extensions/<id>/`, and the app loads
+them at launch from an `extensions-bundled/<id>/` folder beside its executable
+(`Contents/PlugIns/` in the macOS bundle). Each folder holds `extension.toml` and
+`lib<id>.so` (`.dylib` on macOS); `scripts/stage-bundled-extensions.sh` builds and
+lays out the AWS one. The app must not link these crates.
+
 To run the gate's checks by hand, from the repository root:
 
 ```bash

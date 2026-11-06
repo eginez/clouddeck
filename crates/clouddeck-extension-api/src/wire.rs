@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use clouddeck_provider_api::{
     AuthAnswer, AuthInput, AuthMethod, Call, ConnectionId, ErrorKind, FlowId, Host, Instance,
-    KindId, ProviderError, Provider, ResourceId, Selection,
+    KindId, Provider, ProviderError, ResourceId, Selection,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -37,9 +37,11 @@ pub enum Method {
     ConsoleUrl,
     Fields,
     Inspector,
+    Identity,
+    CheckAccess,
 }
 
-const METHODS: [Method; 14] = [
+const METHODS: [Method; 16] = [
     Method::Info,
     Method::Connections,
     Method::Dimensions,
@@ -54,6 +56,8 @@ const METHODS: [Method; 14] = [
     Method::ConsoleUrl,
     Method::Fields,
     Method::Inspector,
+    Method::Identity,
+    Method::CheckAccess,
 ];
 
 impl Method {
@@ -146,6 +150,22 @@ pub fn dispatch<E: Extension>(
         Method::Inspector => serve(extension, host, request, |p, _, kind: KindId| {
             Ok(p.inspector(&kind))
         }),
+        Method::Identity => serve(
+            extension,
+            host,
+            request,
+            |p, cx, (connection, selection): (ConnectionId, Selection)| {
+                p.identity(cx, &connection, &selection)
+            },
+        ),
+        Method::CheckAccess => serve(
+            extension,
+            host,
+            request,
+            |p, cx, (connection, kind, selection): (ConnectionId, KindId, Selection)| {
+                p.check_access(cx, &connection, &kind, &selection)
+            },
+        ),
     }
 }
 
@@ -161,10 +181,15 @@ where
     R: Serialize,
 {
     let outcome = serde_json::from_slice::<Request<A>>(request)
-        .map_err(|error| ProviderError::new(ErrorKind::Other, format!("malformed request: {error}")))
+        .map_err(|error| {
+            ProviderError::new(ErrorKind::Other, format!("malformed request: {error}"))
+        })
         .and_then(|request| {
             let provider = extension.provider(&request.provider).ok_or_else(|| {
-                ProviderError::new(ErrorKind::NotFound, format!("no provider {}", request.provider))
+                ProviderError::new(
+                    ErrorKind::NotFound,
+                    format!("no provider {}", request.provider),
+                )
             })?;
             let deadline = request
                 .deadline_ms
@@ -184,11 +209,29 @@ where
 
 fn encode<T: Serialize>(outcome: Result<T, ProviderError>) -> Vec<u8> {
     serde_json::to_vec(&outcome).unwrap_or_else(|error| {
-        error_response(ErrorKind::Other, format!("response could not be encoded: {error}"))
+        error_response(
+            ErrorKind::Other,
+            format!("response could not be encoded: {error}"),
+        )
     })
 }
 
 pub fn error_response(kind: ErrorKind, message: impl Into<String>) -> Vec<u8> {
     serde_json::to_vec(&Err::<(), _>(ProviderError::new(kind, message)))
         .expect("error responses always encode")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn from_code_round_trips_every_method() {
+        for code in 1..=16 {
+            let method = Method::from_code(code).expect("method codes 1 to 16 are assigned");
+            assert_eq!(method as u32, code);
+        }
+        assert_eq!(Method::from_code(0), None);
+        assert_eq!(Method::from_code(17), None);
+    }
 }

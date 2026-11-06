@@ -1,5 +1,5 @@
 //! AWS provider: EC2 listing over the AWS SDK, IAM Identity Center sign-in and
-//! caller identity checks. Built as a cdylib extension and linked statically into the app.
+//! caller identity checks. Built as a cdylib extension and loaded by the app as a bundled extension.
 
 mod aws_auth;
 mod aws_identity;
@@ -17,10 +17,7 @@ use clouddeck_extension_api::{
 };
 
 pub use aws_auth::aws_provider;
-pub use aws_identity::{AwsIdentity, AwsIdentityProvider, AwsIdentityService};
 pub use aws_sdk::{AwsSdkComputeService, Ec2Page, Ec2PageSource};
-pub use aws_sso_login::{LoginGuidance, login_guidance};
-pub use routing::verify_instance_access;
 
 pub struct Aws {
     provider: Arc<dyn Provider>,
@@ -81,6 +78,25 @@ impl Provider for Shared {
         id: &ResourceId,
     ) -> Result<Vec<ExtrasSection>, ProviderError> {
         self.0.describe(cx, connection, kind, id)
+    }
+
+    fn identity(
+        &self,
+        cx: &Call<'_>,
+        connection: &ConnectionId,
+        selection: &Selection,
+    ) -> Result<String, ProviderError> {
+        self.0.identity(cx, connection, selection)
+    }
+
+    fn check_access(
+        &self,
+        cx: &Call<'_>,
+        connection: &ConnectionId,
+        kind: &KindId,
+        selection: &Selection,
+    ) -> Result<(), ProviderError> {
+        self.0.check_access(cx, connection, kind, selection)
     }
 
     fn auth_methods(&self) -> Vec<AuthMethod> {

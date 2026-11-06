@@ -3,15 +3,15 @@
 
 pub use clouddeck_provider_api::*;
 
-pub mod abi;
-pub mod conformance;
 #[doc(hidden)]
 pub mod __private;
+pub mod abi;
+pub mod conformance;
 mod table_host;
 pub mod wire;
 
 /// Boundary version; a host refuses an extension whose `api_version()` differs.
-pub const API_VERSION: u32 = 3;
+pub const API_VERSION: u32 = 4;
 
 pub trait Extension: Send + Sync + 'static {
     fn new() -> Self;
@@ -39,9 +39,7 @@ macro_rules! register_extension {
         }
 
         #[unsafe(no_mangle)]
-        pub unsafe extern "C" fn clouddeck_init(
-            host: *const $crate::abi::HostTable,
-        ) -> i32 {
+        pub unsafe extern "C" fn clouddeck_init(host: *const $crate::abi::HostTable) -> i32 {
             unsafe { $crate::__private::init(host) }
         }
 

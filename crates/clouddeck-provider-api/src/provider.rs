@@ -116,6 +116,27 @@ pub trait Provider: Send + Sync {
     fn inspector(&self, _kind: &KindId) -> Vec<InspectorSectionDef> {
         Vec::new()
     }
+
+    /// The account the connection signs in as, checked with the selection's scope.
+    fn identity(
+        &self,
+        _cx: &Call<'_>,
+        _connection: &ConnectionId,
+        _selection: &Selection,
+    ) -> Result<String, ProviderError> {
+        Err(ProviderError::unsupported())
+    }
+
+    /// Confirms the connection can list `kind` within the selection's scope.
+    fn check_access(
+        &self,
+        _cx: &Call<'_>,
+        _connection: &ConnectionId,
+        _kind: &KindId,
+        _selection: &Selection,
+    ) -> Result<(), ProviderError> {
+        Err(ProviderError::unsupported())
+    }
 }
 
 #[cfg(test)]
@@ -311,6 +332,24 @@ mod tests {
                 &KindId::instances(),
                 &ResourceId::from("i-1"),
             ),
+            Err(ProviderError::unsupported())
+        );
+    }
+
+    #[test]
+    fn default_identity_and_access_are_unsupported() {
+        let host = NullHost;
+        let cx = Call {
+            deadline: None,
+            host: &host,
+        };
+        let connection = ConnectionId::from("default");
+        assert_eq!(
+            EmptyProvider.identity(&cx, &connection, &Selection::new()),
+            Err(ProviderError::unsupported())
+        );
+        assert_eq!(
+            EmptyProvider.check_access(&cx, &connection, &KindId::instances(), &Selection::new()),
             Err(ProviderError::unsupported())
         );
     }

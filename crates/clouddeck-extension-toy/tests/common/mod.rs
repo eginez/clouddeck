@@ -55,7 +55,7 @@ pub fn write_manifest(dir: &Path) {
     fs::write(
         dir.join("extension.toml"),
         format!(
-            "id = \"toy\"\nname = \"Toy\"\nversion = \"0.1.0\"\nschema_version = 1\napi_version = 3\nlibrary = \"{LIBRARY}\"\n\n[providers.toy]\nname = \"Toy\"\n"
+            "id = \"toy\"\nname = \"Toy\"\nversion = \"0.1.0\"\nschema_version = 1\napi_version = 4\nlibrary = \"{LIBRARY}\"\n\n[providers.toy]\nname = \"Toy\"\n"
         ),
     )
     .unwrap();

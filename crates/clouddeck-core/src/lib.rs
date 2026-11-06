@@ -70,7 +70,9 @@ pub use demo_scenarios::list_scenario;
 #[cfg(test)]
 mod workspace_provider_tests;
 pub use demo_provider::{DemoProvider, builtin_providers, demo_provider};
+mod aws_login;
 mod console_url;
+pub use aws_login::{LoginGuidance, login_guidance};
 mod context;
 pub mod extension_host;
 pub mod extension_manager;

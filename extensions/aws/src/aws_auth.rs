@@ -16,16 +16,18 @@ use clouddeck_provider_api::{
 };
 
 use clouddeck_core::{
-    AwsCredentialKind, AwsSsoConfiguration, ComputeServiceProvider, Dimension, REGIONS,
-    ScopeSettings, aws_file_paths, list_scenario, load_profiles, read_profile_auth,
+    AwsCredentialKind, AwsSsoConfiguration, BoxError, ComputeServiceProvider, Dimension,
+    LoginGuidance, REGION, REGIONS, ScopeSettings, aws_file_paths, list_scenario, load_profiles,
+    login_guidance, read_profile_auth,
 };
 
+use crate::aws_identity::AwsIdentityService;
 use crate::aws_sdk::AwsSdkComputeService;
 use crate::aws_sso_login::{
-    AwsSsoLoginService, LoginGuidance, PendingSsoSignIn, SsoDeviceAuthorization, home_dir,
-    login_guidance, sso_cache_identifier, sso_cache_path,
+    AwsSsoLoginService, PendingSsoSignIn, SsoDeviceAuthorization, home_dir, sso_cache_identifier,
+    sso_cache_path,
 };
-use crate::routing::routed_list;
+use crate::routing::{routed_list, verify_instance_access};
 
 const SSO_METHOD_ID: &str = "aws-sso";
 
@@ -238,6 +240,30 @@ fn block_on<T>(future: impl Future<Output = T>) -> T {
     runtime().block_on(future)
 }
 
+/// Runs an SDK call bounded by the caller's deadline, if it has one.
+fn within_deadline<T>(
+    cx: &Call<'_>,
+    work: impl Future<Output = Result<T, BoxError>>,
+) -> Result<T, ProviderError> {
+    block_on(async {
+        let outcome = match cx.remaining() {
+            Some(remaining) => tokio::time::timeout(remaining, work)
+                .await
+                .map_err(|_| ProviderError::of(ErrorKind::Timeout))?,
+            None => work.await,
+        };
+        outcome.map_err(|error| ProviderError::new(ErrorKind::Other, error.to_string()))
+    })
+}
+
+fn first_region(selection: &Selection) -> String {
+    selection
+        .values(REGION)
+        .first()
+        .map(|value| value.as_str().to_string())
+        .unwrap_or_default()
+}
+
 struct AwsProvider {
     inner: ComputeServiceProvider,
     auth: AwsAuth,
@@ -331,6 +357,29 @@ impl Provider for AwsProvider {
         connection: Option<&ConnectionId>,
     ) -> Result<(), ProviderError> {
         self.auth.sign_out(connection)
+    }
+
+    fn identity(
+        &self,
+        cx: &Call<'_>,
+        connection: &ConnectionId,
+        selection: &Selection,
+    ) -> Result<String, ProviderError> {
+        let service = AwsIdentityService::new(connection.as_str(), first_region(selection));
+        within_deadline(cx, service.resolve()).map(|identity| identity.account_id)
+    }
+
+    fn check_access(
+        &self,
+        cx: &Call<'_>,
+        connection: &ConnectionId,
+        _kind: &KindId,
+        selection: &Selection,
+    ) -> Result<(), ProviderError> {
+        within_deadline(
+            cx,
+            verify_instance_access(connection.as_str().to_string(), first_region(selection)),
+        )
     }
 }
 
