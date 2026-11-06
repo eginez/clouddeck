@@ -214,15 +214,24 @@ fn check_owner_and_mode(path: &Path, euid: u32, bundled: bool) -> Result<(), Str
     use std::os::unix::fs::MetadataExt;
     let metadata =
         fs::metadata(path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
-    let owner = metadata.uid();
+    check_owner_and_mode_values(path, metadata.uid(), metadata.mode(), euid, bundled)
+}
+
+#[cfg(unix)]
+fn check_owner_and_mode_values(
+    path: &Path,
+    owner: u32,
+    mode: u32,
+    euid: u32,
+    bundled: bool,
+) -> Result<(), String> {
     if owner != euid && !(bundled && owner == 0) {
         return Err(format!(
-            "{} is owned by uid {}, not by the user running CloudDeck",
-            path.display(),
-            metadata.uid()
+            "{} is owned by uid {owner}, not by the user running CloudDeck",
+            path.display()
         ));
     }
-    if metadata.mode() & 0o022 != 0 {
+    if mode & 0o022 != 0 {
         return Err(format!(
             "{} is writable by other users; fix it with: chmod go-w {}",
             path.display(),
@@ -526,6 +535,23 @@ mod tests {
     fn installed_library_owned_by_user_is_trusted() {
         let (_dir, root, library) = trust_fixture();
         assert!(check_trusted_location(&library, &root, false).is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn file_owned_by_another_user_is_refused() {
+        let path = Path::new("/app/extensions-bundled/aws/libaws.so");
+        let error = check_owner_and_mode_values(path, 4242, 0o644, 1000, false).unwrap_err();
+        assert!(error.contains("is owned by uid 4242"), "{error}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn root_owned_file_is_trusted_only_when_bundled() {
+        let path = Path::new("/app/extensions-bundled/aws/libaws.so");
+        assert!(check_owner_and_mode_values(path, 0, 0o644, 1000, true).is_ok());
+        let error = check_owner_and_mode_values(path, 0, 0o644, 1000, false).unwrap_err();
+        assert!(error.contains("is owned by uid 0"), "{error}");
     }
 
     #[test]
