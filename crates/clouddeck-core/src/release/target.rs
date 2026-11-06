@@ -51,7 +51,7 @@ pub fn dmg_name(version: &str) -> String {
     format!("CloudDeck-{version}-macos-aarch64.dmg")
 }
 
-/// The running version of CloudDeck; release.sh keeps the core and app crate versions equal.
+/// The running version of CloudDeck; release.sh keeps every crates/* version equal to the app version.
 pub fn current_version() -> Version {
     Version::parse(env!("CARGO_PKG_VERSION")).expect("CARGO_PKG_VERSION is valid semver")
 }
