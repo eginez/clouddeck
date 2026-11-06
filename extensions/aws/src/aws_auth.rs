@@ -335,6 +335,10 @@ impl Provider for AwsProvider {
 }
 
 pub fn aws_provider() -> Arc<dyn Provider> {
+    Arc::from(boxed_aws_provider())
+}
+
+pub(crate) fn boxed_aws_provider() -> Box<dyn Provider> {
     let (config, credentials) = aws_file_paths();
     let connections = load_profiles()
         .unwrap_or_default()
@@ -349,7 +353,7 @@ pub fn aws_provider() -> Arc<dyn Provider> {
         Box::new(AwsSdkComputeService::new(profile, region))
     });
     let auth = AwsAuth::new(config, credentials, home_dir(), AwsSsoLoginService::new());
-    Arc::new(AwsProvider { inner, auth })
+    Box::new(AwsProvider { inner, auth })
 }
 
 #[cfg(test)]
@@ -540,5 +544,101 @@ credential_process = /usr/local/bin/creds
             role_name: Some("Admin".into()),
             session_name: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod conformance {
+    use std::path::Path;
+    use std::time::Duration;
+
+    use clouddeck_core::{
+        BoxError, CloudDeckError, ComputeInstanceFilters, ComputeInstanceLoadResult,
+        ComputeService, EC2Instance,
+    };
+    use clouddeck_extension_api::conformance::check_provider;
+
+    use super::*;
+    use crate::aws_sso_login::TokenPoll;
+    use crate::aws_sso_login::tests::fake_provider;
+
+    const PROFILE: &str = "\
+[profile conformance]
+sso_start_url = https://example.awsapps.com/start
+sso_region = us-east-1
+sso_account_id = 123456789012
+sso_role_name = Admin
+";
+
+    struct FakeSdk {
+        region: String,
+    }
+
+    #[async_trait::async_trait]
+    impl ComputeService for FakeSdk {
+        async fn list_instances(
+            &self,
+            _filters: Option<ComputeInstanceFilters>,
+        ) -> Result<ComputeInstanceLoadResult, BoxError> {
+            if self.region != "us-east-1" {
+                return Err(Box::new(CloudDeckError::NotFound));
+            }
+            Ok(ComputeInstanceLoadResult {
+                instances: vec![EC2Instance {
+                    instance_id: "i-0123456789abcdef0".to_string(),
+                    region: Some(self.region.clone()),
+                    instance_type: None,
+                    state: None,
+                    launch_time: None,
+                    public_ip_address: None,
+                    private_ip_address: None,
+                    vpc_id: None,
+                    subnet_id: None,
+                    security_groups: Vec::new(),
+                    tags: Vec::new(),
+                    availability_zone: None,
+                    image_id: None,
+                    key_name: None,
+                    architecture: None,
+                    state_transition_reason: None,
+                    iam_instance_profile_arn: None,
+                    private_dns_name: None,
+                    public_dns_name: None,
+                }],
+                partial_failures: Vec::new(),
+            })
+        }
+    }
+
+    fn provider(dir: &Path) -> Box<dyn Provider> {
+        let config = dir.join("config");
+        std::fs::write(&config, PROFILE).unwrap();
+        let connections = vec![Connection {
+            id: ConnectionId::from("conformance"),
+            display_name: "conformance".to_string(),
+        }];
+        let inner = ComputeServiceProvider::new(
+            "aws",
+            connections,
+            vec!["us-east-1".to_string()],
+            |_, region| {
+                Box::new(FakeSdk {
+                    region: region.to_string(),
+                })
+            },
+        );
+        let sso = AwsSsoLoginService::with_provider(fake_provider(
+            Duration::ZERO,
+            (0..8).map(|_| Ok(TokenPoll::Pending)).collect(),
+        ));
+        let auth = AwsAuth::new(config, dir.join("credentials"), dir.to_path_buf(), sso);
+        Box::new(AwsProvider { inner, auth })
+    }
+
+    #[test]
+    fn provider_passes_the_conformance_kit() {
+        let dir = tempfile::tempdir().unwrap();
+        let violations = check_provider(Arc::from(provider(dir.path())));
+        assert!(violations.is_empty(), "{violations:#?}");
     }
 }

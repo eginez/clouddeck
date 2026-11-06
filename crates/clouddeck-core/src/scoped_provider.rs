@@ -1,7 +1,5 @@
-use std::collections::hash_map::RandomState;
-use std::hash::{BuildHasher, Hasher};
 use std::path::PathBuf;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use std::time::Duration;
 
 use clouddeck_provider_api::{
@@ -18,9 +16,13 @@ const FLEET_KEY: &str = "clouddeck.fleet";
 const DEMO_SCENARIO_KEY: &str = "clouddeck.demo_scenario";
 const SCOPE_TOKEN_KEY: &str = "clouddeck.scope_token";
 
-fn scope_token() -> &'static str {
-    static TOKEN: OnceLock<String> = OnceLock::new();
-    TOKEN.get_or_init(|| format!("{:016x}", RandomState::new().build_hasher().finish()))
+// Derived from the process id rather than random, because every copy of this crate in the process
+// (the app's and each loaded extension's) must agree on it.
+fn scope_token() -> String {
+    format!(
+        "{:016x}",
+        u64::from(std::process::id()) ^ 0x5c0_9e5c_0be0_d3f1
+    )
 }
 
 fn is_scope_key(key: &str) -> bool {
@@ -43,14 +45,14 @@ impl ScopeSettings {
             REQUEST_TIMEOUT_KEY => Some(self.request_timeout.as_millis().to_string()),
             FLEET_KEY => Some(self.fleet.to_string()),
             DEMO_SCENARIO_KEY => self.demo.map(|demo| demo.key().to_string()),
-            SCOPE_TOKEN_KEY => Some(scope_token().to_string()),
+            SCOPE_TOKEN_KEY => Some(scope_token()),
             _ => None,
         }
     }
 
-    /// Only a ScopeHost holds the per-process scope token, so a host without it cannot reroute listing.
+    /// Same-process consistency check: a host that does not report the token cannot reroute listing.
     pub fn from_host(host: &dyn Host) -> Option<Self> {
-        if host.setting(SCOPE_TOKEN_KEY).as_deref() != Some(scope_token()) {
+        if host.setting(SCOPE_TOKEN_KEY) != Some(scope_token()) {
             return None;
         }
         Some(Self {

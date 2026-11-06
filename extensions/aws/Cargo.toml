@@ -7,6 +7,9 @@ repository.workspace = true
 description = "AWS provider for CloudDeck: EC2 listing, IAM Identity Center sign-in"
 publish = false
 
+[lib]
+crate-type = ["cdylib", "rlib"]
+
 [dependencies]
 async-trait = "0.1"
 aws-config = { version = "1.11.0", default-features = false, features = [
@@ -33,6 +36,7 @@ aws-sdk-sts = { version = "1.113.0", default-features = false, features = [
 aws-types = "1.5.0"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 clouddeck-core = { path = "../../crates/clouddeck-core" }
+clouddeck-extension-api = { path = "../../crates/clouddeck-extension-api" }
 clouddeck-provider-api = { path = "../../crates/clouddeck-provider-api" }
 hex = "0.4"
 serde_json = "1"

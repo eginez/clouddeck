@@ -10,7 +10,7 @@ use crate::console_url::console_url_for_instance;
 use crate::error::CloudDeckError;
 use crate::fleet_compute::FleetComputeService;
 use crate::models::{ComputeInstanceFilters, ComputeInstanceLoadResult};
-use crate::service::{BoxError, ComputeService};
+use crate::service::{BoxError, ComputeService, until_done};
 
 type ServiceFactory = dyn Fn(&str, &str) -> Box<dyn ComputeService + Send + Sync> + Send + Sync;
 
@@ -152,7 +152,7 @@ impl Provider for ComputeServiceProvider {
     // Builds its own runtime, so callers must invoke it from a blocking thread, never inside a tokio runtime.
     fn list(
         &self,
-        _cx: &Call<'_>,
+        cx: &Call<'_>,
         connection: &ConnectionId,
         kind: &KindId,
         selection: &Selection,
@@ -191,7 +191,11 @@ impl Provider for ComputeServiceProvider {
             factory(&connection, region)
         });
 
-        match runtime.block_on(fleet.list_instances(None)) {
+        let outcome = match runtime.block_on(until_done(cx, fleet.list_instances(None))) {
+            Ok(outcome) => outcome,
+            Err(error) => return all_regions_failed(&requested, &error),
+        };
+        match outcome {
             Ok(result) => ListResult {
                 resources: result.instances.iter().map(Instance::from).collect(),
                 failures: result

@@ -10,7 +10,7 @@ use clouddeck_provider_api::{
 
 use crate::console_url::console_url_for_instance;
 use crate::error::CloudDeckError;
-use crate::service::{BoxError, ComputeService};
+use crate::service::{BoxError, ComputeService, until_done};
 
 pub const REGION: &str = "region";
 
@@ -182,7 +182,7 @@ impl Provider for ServiceProvider {
 
     fn list(
         &self,
-        _cx: &Call<'_>,
+        cx: &Call<'_>,
         _connection: &ConnectionId,
         kind: &KindId,
         selection: &Selection,
@@ -191,7 +191,9 @@ impl Provider for ServiceProvider {
             return unsupported;
         }
 
-        match run_blocking(self.service.list_instances(None)) {
+        match run_blocking(until_done(cx, self.service.list_instances(None)))
+            .and_then(|outcome| outcome)
+        {
             Ok(Ok(result)) => ListResult {
                 resources: result.instances.iter().map(Instance::from).collect(),
                 failures: result

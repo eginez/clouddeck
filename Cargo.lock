@@ -1377,6 +1377,7 @@ dependencies = [
  "aws-types",
  "chrono",
  "clouddeck-core",
+ "clouddeck-extension-api",
  "clouddeck-provider-api",
  "hex",
  "serde_json",
