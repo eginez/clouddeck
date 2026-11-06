@@ -15,7 +15,7 @@ use clouddeck_provider_api::{
     Provider, ProviderError, ProviderInfo, Selection,
 };
 
-use clouddeck_core::{
+use clouddeck_provider_kit::{
     AwsCredentialKind, AwsSsoConfiguration, BoxError, ComputeServiceProvider, Dimension,
     LoginGuidance, REGION, REGIONS, ScopeSettings, aws_file_paths, list_scenario, load_profiles,
     login_guidance, read_profile_auth,
@@ -220,7 +220,7 @@ fn device_code_step(flow: FlowId, authorization: &SsoDeviceAuthorization) -> Aut
     }
 }
 
-fn sso_error(error: clouddeck_core::BoxError) -> ProviderError {
+fn sso_error(error: clouddeck_provider_kit::BoxError) -> ProviderError {
     ProviderError::new(ErrorKind::Other, error.to_string())
 }
 
@@ -601,7 +601,7 @@ mod conformance {
     use std::path::Path;
     use std::time::Duration;
 
-    use clouddeck_core::{
+    use clouddeck_provider_kit::{
         BoxError, CloudDeckError, ComputeInstanceFilters, ComputeInstanceLoadResult,
         ComputeService, EC2Instance,
     };

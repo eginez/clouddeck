@@ -1,13 +1,10 @@
 #[test]
-fn builtin_providers_register_demo_only_when_requested() {
-    let ids = |demo| {
-        clouddeck_aws::builtin_providers(demo)
-            .iter()
-            .map(|provider| provider.info().id)
-            .collect::<Vec<String>>()
-    };
-    assert_eq!(ids(false), ["aws"]);
-    assert_eq!(ids(true), ["aws", "demo"]);
+fn builtin_providers_are_aws_only() {
+    let ids: Vec<String> = clouddeck_aws::builtin_providers()
+        .iter()
+        .map(|provider| provider.info().id)
+        .collect();
+    assert_eq!(ids, ["aws"]);
 }
 
 #[test]

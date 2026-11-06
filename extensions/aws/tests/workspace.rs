@@ -9,13 +9,13 @@ use common::{call, happy_provider};
 
 #[test]
 fn happy_demo_falls_back_to_aws_without_a_demo_provider() {
-    let providers = clouddeck_aws::builtin_providers(false);
+    let providers = clouddeck_aws::builtin_providers();
     assert_eq!(happy_provider(&providers, "us-east-1").info().id, "aws");
 }
 
 #[test]
 fn demo_scenarios_stay_demo_data_without_a_demo_entry() {
-    let providers = clouddeck_aws::builtin_providers(false);
+    let providers = clouddeck_aws::builtin_providers();
     let list = |demo| {
         workspace_provider(
             &providers,

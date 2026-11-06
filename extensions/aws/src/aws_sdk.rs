@@ -7,7 +7,7 @@
 use aws_config::BehaviorVersion;
 use aws_sdk_ec2::operation::describe_instances::DescribeInstancesError;
 use aws_types::region::Region;
-use clouddeck_core::{
+use clouddeck_provider_kit::{
     BoxError, CloudDeckError, ComputeInstanceFilters, ComputeInstanceLoadResult, ComputeService,
     EC2Instance, EC2InstanceTag, EC2SecurityGroup,
 };
@@ -502,7 +502,7 @@ mod tests {
 
     #[tokio::test]
     async fn failing_region_is_recorded_while_other_regions_keep_their_instances() {
-        let fleet = clouddeck_core::FleetComputeService::new(
+        let fleet = clouddeck_provider_kit::FleetComputeService::new(
             vec!["eu-west-1".into(), "us-west-2".into()],
             |region: &str| -> Box<dyn ComputeService + Send + Sync> {
                 let pages = if region == "us-west-2" {

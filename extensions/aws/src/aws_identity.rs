@@ -3,7 +3,7 @@
 use crate::aws_sdk::sdk_error_detail;
 use aws_config::BehaviorVersion;
 use aws_types::region::Region;
-use clouddeck_core::{BoxError, CloudDeckError};
+use clouddeck_provider_kit::{BoxError, CloudDeckError};
 use std::{sync::Arc, time::Duration};
 
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);

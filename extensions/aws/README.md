@@ -7,7 +7,8 @@ through the AWS SDK, IAM Identity Center sign-in, and caller identity checks.
 - `scripts/stage-bundled-extensions.sh [debug|release]` builds it and lays out
   `<target>/<profile>/extensions-bundled/aws/` with `extension.toml` and `libaws.so` (`libaws.dylib` on macOS).
   The app discovers that folder next to its executable; on macOS it lives in `Contents/PlugIns`.
-- The crate depends on `clouddeck-core` for shared listing and profile code. Core does not depend on this crate.
+- The crate depends on `clouddeck-provider-kit` for shared listing and profile code, not on `clouddeck-core`
+  (core is a dev-dependency for the integration tests only).
 
 ## Test
 

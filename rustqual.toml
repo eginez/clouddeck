@@ -14,17 +14,17 @@ max_suppression_ratio = 0.05
 fail_on_warnings = false
 
 # ── Architecture ─────────────────────────────────────────────────────────
-# Dependency direction: provider_api <- extension_api <- provider_kit <- core <- aws_plugin <- app. Each layer may
+# Dependency direction: provider_api <- extension_api <- provider_kit <- core <- app. Each layer may
 # use the ones listed before it; nothing may import outward. extension_examples
 # (the toy extension) is a leaf that sits after everything: only tests and other
-# examples may depend on it, and the app may not. aws_plugin is the AWS provider
-# (extensions/aws), built as a cdylib and loaded at runtime; it may use core but core may not use it.
+# examples may depend on it, and the app may not. First-party plugins (extensions/<id>/,
+# e.g. aws and gcp) are built as cdylibs and loaded at runtime; they are leaves on the two API crates and the kit.
 
 [architecture]
 enabled = true
 
 [architecture.layers]
-order = ["provider_api", "extension_api", "provider_kit", "core", "aws_plugin", "app", "extension_examples", "plugins"]
+order = ["provider_api", "extension_api", "provider_kit", "core", "app", "extension_examples", "plugins"]
 unmatched_behavior = "strict_error"
 
 [architecture.layers.provider_api]
@@ -39,10 +39,6 @@ paths = ["crates/clouddeck-provider-kit/**"]
 [architecture.layers.core]
 paths = ["crates/clouddeck-core/**"]
 
-# AWS, loaded at runtime as a bundled extension: may use core.
-[architecture.layers.aws_plugin]
-paths = ["extensions/aws/**"]
-
 [architecture.layers.app]
 paths = ["crates/clouddeck-app/**"]
 
@@ -50,9 +46,8 @@ paths = ["crates/clouddeck-app/**"]
 paths = ["crates/clouddeck-extension-toy/**"]
 
 [architecture.layers.plugins]
-# First-party bundled plugins (extensions/<id>/): leaves that depend on the two API crates only.
-# Only extensions/aws is temporarily excepted; it lives in the aws_plugin layer above.
-paths = ["extensions/gcp/**"]
+# First-party bundled plugins (extensions/<id>/): leaves that depend on the two API crates and the kit only.
+paths = ["extensions/aws/**", "extensions/gcp/**"]
 
 [architecture.external_crates]
 clouddeck_provider_api = "provider_api"
@@ -62,7 +57,7 @@ clouddeck_core = "core"
 clouddeck_app = "app"
 clouddeck_extension_toy = "extension_examples"
 clouddeck_gcp = "plugins"
-clouddeck_aws = "aws_plugin"
+clouddeck_aws = "plugins"
 
 # The app reaches AWS only through the extension registry. The list is the aws-* crates in Cargo.lock;
 # keep it in step when the SDK adds crates.

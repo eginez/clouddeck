@@ -153,10 +153,6 @@ impl Provider for Shared {
 
 register_extension!(Aws);
 
-pub fn builtin_providers(demo: bool) -> Vec<Arc<dyn Provider>> {
-    let mut providers = vec![aws_provider()];
-    if demo {
-        providers.push(Arc::new(clouddeck_core::demo_provider()));
-    }
-    providers
+pub fn builtin_providers() -> Vec<Arc<dyn Provider>> {
+    vec![aws_provider()]
 }

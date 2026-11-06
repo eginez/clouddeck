@@ -1378,6 +1378,7 @@ dependencies = [
  "clouddeck-core",
  "clouddeck-extension-api",
  "clouddeck-provider-api",
+ "clouddeck-provider-kit",
  "hex",
  "serde_json",
  "sha1",

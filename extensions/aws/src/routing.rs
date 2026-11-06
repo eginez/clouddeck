@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use clouddeck_core::{
+use clouddeck_provider_kit::{
     BoxError, ComputeService, FleetComputeService, MockComputeService, REGION, ScopeSettings,
     fleet_region_timeout, service_provider,
 };
@@ -87,10 +87,12 @@ fn aws_service(profile: &str, region: &str, request_timeout: Duration) -> Servic
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+    use std::sync::Arc;
     use std::time::Duration;
 
-    use clouddeck_core::{service_provider, workspace_provider};
+    use clouddeck_core::workspace_provider;
     use clouddeck_provider_api::{ConnectionId, Host, KindId, LogLevel, ProviderError, Selection};
+    use clouddeck_provider_kit::service_provider;
 
     use super::service;
     use crate::builtin_providers;
@@ -136,7 +138,8 @@ mod tests {
 
     #[test]
     fn no_profile_listing_stays_on_the_aws_service() {
-        let providers = builtin_providers(true);
+        let mut providers = builtin_providers();
+        providers.push(Arc::new(clouddeck_core::demo_provider()));
         let timeout = Duration::from_secs(5);
         let fleet_regions = ["us-east-1".to_string(), "eu-west-1".to_string()];
         for region in ["us-east-1", "fleet"] {

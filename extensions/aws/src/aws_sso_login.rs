@@ -19,7 +19,7 @@ use crate::aws_sdk::sdk_error_detail;
 use aws_config::BehaviorVersion;
 use aws_sdk_ssooidc::operation::create_token::CreateTokenError;
 use aws_types::region::Region;
-use clouddeck_core::{
+use clouddeck_provider_kit::{
     AwsCredentialKind, AwsSsoConfiguration, BoxError, CloudDeckError, LoginGuidance, login_guidance,
 };
 use sha1::{Digest, Sha1};
