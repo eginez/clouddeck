@@ -66,8 +66,10 @@ fn layout_rules_hold(cx: &mut TestAppContext) {
         let (_fleet, _main, vcx) = states::build(state, w, h, cx);
         let vcx = RefCell::new(vcx);
         let lookup = |sel: &'static str| vcx.borrow_mut().debug_bounds(sel);
-        let records =
-            |sel: &'static str| vcx.borrow_mut().update(|_, app| ui_record::recorded(app, sel));
+        let records = |sel: &'static str| {
+            vcx.borrow_mut()
+                .update(|_, app| ui_record::recorded(app, sel))
+        };
         let window = size(px(w), px(h));
 
         for rule in members {
@@ -96,7 +98,7 @@ fn layout_rules_hold(cx: &mut TestAppContext) {
 /// Every named state has at least one layout rule.
 #[gpui::test]
 fn layout_rules_cover_states(_cx: &mut TestAppContext) {
-    const ALL: [State; 15] = [
+    const ALL: [State; 19] = [
         State::MainIdle,
         State::MainRowSelected,
         State::MainEmpty,
@@ -112,6 +114,10 @@ fn layout_rules_cover_states(_cx: &mut TestAppContext) {
         State::OverlayFailure,
         State::OverlayRowMenu,
         State::Welcome,
+        State::AboutLight,
+        State::AboutDark,
+        State::AboutRefusedPlugin,
+        State::AboutLongPluginList,
     ];
     let rules = all_rules();
     let uncovered: Vec<State> = ALL

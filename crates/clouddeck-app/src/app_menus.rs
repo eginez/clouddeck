@@ -1,11 +1,12 @@
 //! Actions, key bindings and the native menu bar.
 
-use crate::{Quit, update_window};
+use crate::{Quit, about_window, update_window};
 use gpui::{App, KeyBinding, Menu, MenuItem, actions};
 
 actions!(
     clouddeck,
     [
+        About,
         SwitchProfile,
         SwitchRegion,
         RefreshFleet,
@@ -39,6 +40,8 @@ pub fn app_menus() -> Vec<Menu> {
         Menu {
             name: "CloudDeck".into(),
             items: vec![
+                MenuItem::action("About CloudDeck", About),
+                MenuItem::separator(),
                 MenuItem::action("Check for Updates…", CheckForUpdates),
                 MenuItem::action("Settings…", OpenSettings),
                 MenuItem::separator(),
@@ -77,6 +80,9 @@ pub fn install(cx: &mut App) {
     cx.set_menus(app_menus());
     cx.on_action(|_: &Quit, cx| cx.quit());
     cx.on_action(|_: &CheckForUpdates, cx| update_window::check_for_updates(cx));
+    cx.on_action(|_: &About, cx| {
+        about_window::open(cx);
+    });
 }
 
 #[cfg(test)]
@@ -141,8 +147,32 @@ mod tests {
         assert_eq!(names[updates + 1], "Settings…");
     }
 
+    #[test]
+    fn about_is_the_first_app_menu_item() {
+        let menus = app_menus();
+        let app_menu = menus.iter().find(|m| m.name == "CloudDeck").unwrap();
+
+        let MenuItem::Action { name, .. } = &app_menu.items[0] else {
+            panic!("first app menu item is not an action");
+        };
+        assert_eq!(name.as_ref(), "About CloudDeck");
+        assert!(matches!(app_menu.items[1], MenuItem::Separator));
+    }
+
     #[gpui::test]
     fn install_registers_bindings_and_menus(cx: &mut TestAppContext) {
         cx.update(install);
+    }
+
+    #[gpui::test]
+    fn about_action_opens_the_about_window(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_component::init(cx);
+            install(cx);
+            cx.dispatch_action(&About);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(cx.update(|cx| cx.windows().len()), 1);
     }
 }

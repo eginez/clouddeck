@@ -975,11 +975,20 @@ impl SettingsWindow {
         rows.push(
             div()
                 .pt(px(12.))
+                .flex()
+                .gap(px(8.))
                 .child(
                     button("about.check-updates", "Check for Updates…", palette)
                         .debug_selector(|| "about.check-updates".into())
                         .on_click(cx.listener(|_, _: &ClickEvent, _, cx| {
                             cx.dispatch_action(&app_menus::CheckForUpdates);
+                        })),
+                )
+                .child(
+                    button("about.open", "About CloudDeck…", palette)
+                        .debug_selector(|| "about.open".into())
+                        .on_click(cx.listener(|_, _: &ClickEvent, _, cx| {
+                            cx.dispatch_action(&app_menus::About);
                         })),
                 )
                 .into_any_element(),
@@ -1547,6 +1556,18 @@ mod tests {
         assert!(cx.debug_bounds("about.check-updates").is_some());
         let icon = cx.debug_bounds("about.icon").expect("about icon rendered");
         assert!(icon.size.width > px(0.) && icon.size.height > px(0.));
+    }
+
+    #[gpui::test]
+    fn about_pane_opens_the_about_window(cx: &mut TestAppContext) {
+        let (_view, cx) = rooted(cx, Settings::default());
+        cx.update(|_, app| app_menus::install(app));
+        click(cx, "settings.cat.7");
+        let before = cx.update(|_, app| app.windows().len());
+
+        click(cx, "about.open");
+
+        assert_eq!(cx.update(|_, app| app.windows().len()), before + 1);
     }
 
     fn type_query(view: &Entity<SettingsWindow>, cx: &mut VisualTestContext, query: &'static str) {

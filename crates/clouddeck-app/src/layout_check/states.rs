@@ -5,12 +5,15 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
+use clouddeck_core::about::{AboutInfo, PluginOrigin, PluginRow, PluginStatus};
 use clouddeck_core::{ProfileInput, Provider, RegionScope, TestScenarioKind, fixture_fleet};
 use gpui::{AppContext, Bounds, Entity, TestAppContext, VisualTestContext, point, px, size};
 
+use crate::about_window;
 use crate::fleet_state::FleetState;
 use crate::main_window::{MainWindow, window_options};
 use crate::render_state::{DEFAULT_ROW_MENU_ANCHOR, apply_render_state};
+use crate::tokens::{ActivePalette, Palette};
 use crate::view_models::InstanceListViewModel;
 use crate::welcome_window::WelcomeWindow;
 
@@ -49,7 +52,13 @@ fn service_for(state: State) -> (Arc<dyn Provider>, Vec<String>) {
             fixture_fleet::static_provider(fixture_fleet::large_fleet()),
             us_east,
         ),
-        State::Welcome => unreachable!("the welcome window has no fleet service"),
+        State::Welcome
+        | State::AboutLight
+        | State::AboutDark
+        | State::AboutRefusedPlugin
+        | State::AboutLongPluginList => {
+            unreachable!("only main window states have a fleet service")
+        }
     }
 }
 
@@ -96,7 +105,89 @@ fn wait_until(cx: &mut TestAppContext, mut condition: impl FnMut(&mut TestAppCon
     panic!("condition was not satisfied within the timeout");
 }
 
-/// Builds `state` in a fresh window; the welcome state returns no fleet or main window.
+/// The About window's build info and plugin rows for `state`, and whether it uses the dark palette.
+fn about_fixture(state: State) -> (AboutInfo, bool) {
+    let (plugins, dark) = match state {
+        State::AboutLight => (three_plugins(), false),
+        State::AboutDark => (three_plugins(), true),
+        State::AboutRefusedPlugin => (refused_plugin(), false),
+        State::AboutLongPluginList => (long_plugin_list(), false),
+        _ => unreachable!("{state:?} is not an About state"),
+    };
+    let commit = "0123456789abcdef0123456789abcdef01234567";
+    let info = AboutInfo {
+        name: "CloudDeck".into(),
+        version: "0.2.1".into(),
+        commit: commit.into(),
+        version_full: format!("0.2.1+stable.{commit}"),
+        plugins,
+    };
+    (info, dark)
+}
+
+fn plugin(name: &str, version: &str, origin: PluginOrigin, status: PluginStatus) -> PluginRow {
+    PluginRow {
+        id: name.to_lowercase(),
+        name: name.into(),
+        version: version.into(),
+        origin,
+        enabled: true,
+        status,
+    }
+}
+
+fn demo_plugin() -> PluginRow {
+    plugin("Demo", "0.2.1", PluginOrigin::Bundled, PluginStatus::Ok)
+}
+
+fn three_plugins() -> Vec<PluginRow> {
+    vec![
+        demo_plugin(),
+        plugin("AWS", "0.2.1", PluginOrigin::Bundled, PluginStatus::Ok),
+        plugin("Toy", "0.1.0", PluginOrigin::Installed, PluginStatus::Ok),
+    ]
+}
+
+fn refused_plugin() -> Vec<PluginRow> {
+    vec![
+        demo_plugin(),
+        plugin("AWS", "0.2.1", PluginOrigin::Bundled, PluginStatus::Ok),
+        plugin(
+            "Old",
+            "0.1.0",
+            PluginOrigin::Installed,
+            PluginStatus::Refused("Rebuild Old for CloudDeck (built for API 5)".into()),
+        ),
+    ]
+}
+
+fn long_plugin_list() -> Vec<PluginRow> {
+    let mut plugins = vec![demo_plugin()];
+    plugins.extend((1..=23).map(|n| {
+        plugin(
+            &format!("Extension {n:02}"),
+            "0.1.0",
+            PluginOrigin::Installed,
+            PluginStatus::Ok,
+        )
+    }));
+    plugins
+}
+
+/// Opens a fresh About window for `state`; the window is not the app's single About window.
+fn open_about(state: State, cx: &mut TestAppContext) -> &mut VisualTestContext {
+    let (info, dark) = about_fixture(state);
+    cx.update(|app| app.set_global(ActivePalette(Palette::for_dark(dark))));
+    let window = cx.update(|app| {
+        gpui_component::init(app);
+        about_window::open_window_for(app, info).expect("about window opens")
+    });
+    let cx = VisualTestContext::from_window(window.into(), cx).into_mut();
+    cx.run_until_parked();
+    cx
+}
+
+/// Builds `state` in a fresh window; the welcome and About states return no fleet or main window.
 pub(crate) fn build(
     state: State,
     width: f32,
@@ -109,6 +200,9 @@ pub(crate) fn build(
 ) {
     if state == State::Welcome {
         return (None, None, open_welcome(width, height, cx));
+    }
+    if state.is_about() {
+        return (None, None, open_about(state, cx));
     }
 
     let (service, regions) = service_for(state);
@@ -226,7 +320,7 @@ mod tests {
     /// One key element per state that `apply_render_state` must produce.
     #[gpui::test]
     fn every_state_shows_its_key_element(cx: &mut TestAppContext) {
-        let key_elements: [(State, &str); 14] = [
+        let key_elements: [(State, &str); 18] = [
             (State::MainIdle, "main.root"),
             (State::MainRowSelected, "main.inspector"),
             (State::MainEmpty, "main.center-state"),
@@ -241,6 +335,10 @@ mod tests {
             (State::OverlayPalette, "main.overlay.palette"),
             (State::OverlayFailure, "main.overlay.failure"),
             (State::OverlayRowMenu, "main.overlay.rowmenu"),
+            (State::AboutLight, "about.title"),
+            (State::AboutDark, "about.title"),
+            (State::AboutRefusedPlugin, "about.title"),
+            (State::AboutLongPluginList, "about.title"),
         ];
         assert_eq!(
             key_elements.len() + 1,

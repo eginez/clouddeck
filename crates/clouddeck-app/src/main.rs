@@ -1,3 +1,4 @@
+mod about_window;
 mod account_connect;
 mod account_window;
 mod app_menus;
@@ -68,7 +69,12 @@ fn main() {
             let options = shell::launch_options();
             app_providers::install(cx);
             let saved = WorkspaceContext::load(&context_path());
-            if options.state == Some(render_state::State::Welcome) {
+            if let Some(state) = options.state.filter(|state| state.is_about()) {
+                if state == render_state::State::AboutDark {
+                    cx.set_global(tokens::ActivePalette(tokens::Palette::for_dark(true)));
+                }
+                about_window::open(cx).expect("about window opens");
+            } else if options.state == Some(render_state::State::Welcome) {
                 welcome_window::open_welcome_window_sized(cx, options.size)
                     .expect("welcome window opens");
             } else if welcome_window::should_show_welcome(options.demo, saved.as_ref()) {

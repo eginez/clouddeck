@@ -5,6 +5,7 @@
 use gpui::{Bounds, Pixels, Size};
 
 use super::geometry::{self, TOL};
+use super::rules_about;
 use super::rules_bar;
 use super::rules_main;
 use super::rules_overlays;
@@ -175,6 +176,7 @@ pub(crate) fn all_rules() -> Vec<Rule> {
         rules_search::rules(),
         rules_overlays::rules(),
         rules_welcome::rules(),
+        rules_about::rules(),
         rules_style::rules(),
     ]
     .into_iter()
@@ -201,10 +203,7 @@ mod tests {
         evaluate(&check, &|sel| map.get(sel).cloned(), &|_| None, win())
     }
 
-    fn check_records(
-        records: &[(&'static str, Recorded)],
-        check: Check,
-    ) -> Result<(), String> {
+    fn check_records(records: &[(&'static str, Recorded)], check: Check) -> Result<(), String> {
         let map: HashMap<&'static str, Recorded> = records.iter().cloned().collect();
         evaluate(&check, &|_| None, &|sel| map.get(sel).cloned(), win())
     }
@@ -245,7 +244,10 @@ mod tests {
         };
         assert!(check_records(&[("bar.failure", amber)], c).is_ok());
         let err = check_records(&[("bar.failure", neutral)], c).unwrap_err();
-        assert!(err.contains("bar.failure") && err.contains("warntext"), "{err}");
+        assert!(
+            err.contains("bar.failure") && err.contains("warntext"),
+            "{err}"
+        );
         let err = check_records(&[], c).unwrap_err();
         assert_eq!(err, "bar.failure recorded nothing");
     }

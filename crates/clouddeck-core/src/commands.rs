@@ -24,11 +24,12 @@ pub enum CommandId {
     RetryFailedRegion,
     ConnectToAws,
     OpenSettings,
+    About,
 }
 
 impl CommandId {
     /// Every command in palette order.
-    pub const ALL: [CommandId; 16] = [
+    pub const ALL: [CommandId; 17] = [
         CommandId::SwitchProfile,
         CommandId::SwitchRegion,
         CommandId::Refresh,
@@ -45,6 +46,7 @@ impl CommandId {
         CommandId::RetryFailedRegion,
         CommandId::ConnectToAws,
         CommandId::OpenSettings,
+        CommandId::About,
     ];
 
     /// Palette label for the command.
@@ -66,6 +68,7 @@ impl CommandId {
             CommandId::RetryFailedRegion => "Fleet: Retry Failed Region",
             CommandId::ConnectToAws => "Account: Connect to AWS…",
             CommandId::OpenSettings => "Preferences: Open Settings…",
+            CommandId::About => "About CloudDeck",
         }
     }
 
@@ -87,7 +90,8 @@ impl CommandId {
             | CommandId::CopyPrivateIp
             | CommandId::CopyPublicIp
             | CommandId::RetryFailedRegion
-            | CommandId::ConnectToAws => None,
+            | CommandId::ConnectToAws
+            | CommandId::About => None,
         }
     }
 
@@ -108,7 +112,8 @@ impl CommandId {
             | CommandId::FilterStopped
             | CommandId::FilterPending
             | CommandId::ConnectToAws
-            | CommandId::OpenSettings => true,
+            | CommandId::OpenSettings
+            | CommandId::About => true,
         }
     }
 
@@ -226,8 +231,8 @@ mod tests {
     }
 
     #[test]
-    fn all_lists_sixteen_titles_in_palette_order() {
-        assert_eq!(CommandId::ALL.len(), 16);
+    fn all_lists_seventeen_titles_in_palette_order() {
+        assert_eq!(CommandId::ALL.len(), 17);
         let titles: Vec<&str> = CommandId::ALL
             .iter()
             .map(|command| command.title())
@@ -251,6 +256,7 @@ mod tests {
                 "Fleet: Retry Failed Region",
                 "Account: Connect to AWS…",
                 "Preferences: Open Settings…",
+                "About CloudDeck",
             ]
         );
     }
@@ -295,6 +301,7 @@ mod tests {
             FilterPending,
             ConnectToAws,
             OpenSettings,
+            About,
         ]
         .into_iter()
         .collect();

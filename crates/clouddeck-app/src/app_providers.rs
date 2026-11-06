@@ -4,7 +4,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use clouddeck_core::Provider;
 use clouddeck_core::extension_host::{
-    ProviderRegistry, app_registry, bundled_extensions_root, extension_state_root, extensions_root,
+    ProviderRegistry, Refusal, app_registry, bundled_extensions_root, extension_state_root,
+    extensions_root,
 };
 use gpui::{App, Global};
 
@@ -60,6 +61,12 @@ pub(crate) fn observe_quit(cx: &mut App) {
         std::future::ready(())
     })
     .detach();
+}
+
+pub(crate) fn refusals(cx: &App) -> Vec<Refusal> {
+    cx.try_global::<AppProviders>()
+        .map(|providers| providers.registry.refusals())
+        .unwrap_or_default()
 }
 
 pub fn providers(cx: &mut App) -> Vec<Arc<dyn Provider>> {

@@ -19,7 +19,7 @@ pub enum PluginOrigin {
 }
 
 impl PluginOrigin {
-    fn label(self) -> &'static str {
+    pub fn label(self) -> &'static str {
         match self {
             PluginOrigin::Bundled => "bundled",
             PluginOrigin::Installed => "installed",
@@ -36,7 +36,7 @@ pub enum PluginStatus {
 }
 
 impl PluginStatus {
-    fn label(&self) -> String {
+    pub fn label(&self) -> String {
         match self {
             PluginStatus::Ok => "ok".to_string(),
             PluginStatus::Disabled => "disabled".to_string(),

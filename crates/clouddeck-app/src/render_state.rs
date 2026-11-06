@@ -42,10 +42,18 @@ pub(crate) enum State {
     OverlayRowMenu,
     /// First-run welcome window listing three profiles.
     Welcome,
+    /// About window in the light palette, with the demo plus two bundled or installed plugins.
+    AboutLight,
+    /// About window in the dark palette, with the same plugins as `AboutLight`.
+    AboutDark,
+    /// About window with one plugin refused by the registry.
+    AboutRefusedPlugin,
+    /// About window with enough plugins that the list scrolls.
+    AboutLongPluginList,
 }
 
 impl State {
-    pub(crate) const ALL: [State; 15] = [
+    pub(crate) const ALL: [State; 19] = [
         State::MainIdle,
         State::MainRowSelected,
         State::MainEmpty,
@@ -61,6 +69,10 @@ impl State {
         State::OverlayFailure,
         State::OverlayRowMenu,
         State::Welcome,
+        State::AboutLight,
+        State::AboutDark,
+        State::AboutRefusedPlugin,
+        State::AboutLongPluginList,
     ];
 
     /// The variant name, as accepted by `--render-state`.
@@ -81,7 +93,22 @@ impl State {
             State::OverlayFailure => "OverlayFailure",
             State::OverlayRowMenu => "OverlayRowMenu",
             State::Welcome => "Welcome",
+            State::AboutLight => "AboutLight",
+            State::AboutDark => "AboutDark",
+            State::AboutRefusedPlugin => "AboutRefusedPlugin",
+            State::AboutLongPluginList => "AboutLongPluginList",
         }
+    }
+
+    /// Whether the state is the About window rather than a main-window state.
+    pub(crate) fn is_about(self) -> bool {
+        matches!(
+            self,
+            State::AboutLight
+                | State::AboutDark
+                | State::AboutRefusedPlugin
+                | State::AboutLongPluginList
+        )
     }
 
     pub(crate) fn from_name(name: &str) -> Option<State> {
@@ -170,7 +197,11 @@ pub(crate) fn apply_render_state(
         | State::MainFailure
         | State::MainPartial
         | State::MainLarge
-        | State::Welcome => {}
+        | State::Welcome
+        | State::AboutLight
+        | State::AboutDark
+        | State::AboutRefusedPlugin
+        | State::AboutLongPluginList => {}
     }
     // Focus and overlays settle on the next frame; make sure one is drawn.
     window.refresh();

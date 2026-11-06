@@ -640,6 +640,9 @@ impl MainWindow {
             CommandId::RetryFailedRegion => cx.emit(MainWindowEvent::Retry(None)),
             CommandId::ConnectToAws => cx.emit(MainWindowEvent::ConnectToAws),
             CommandId::OpenSettings => cx.emit(MainWindowEvent::OpenSettings),
+            CommandId::About => {
+                crate::about_window::open(cx);
+            }
         }
     }
 
@@ -1568,6 +1571,20 @@ mod tests {
             "state:stopped"
         );
         assert_eq!(rendered_overlay(&main, cx), None);
+    }
+
+    #[gpui::test]
+    fn about_palette_command_opens_the_about_window(cx: &mut TestAppContext) {
+        let (_fleet, main, cx) = rooted_main_window(cx, three_instances(), 1280.0, 760.0);
+        let before = cx.update(|_, app| app.windows().len());
+
+        cx.dispatch_action(app_menus::OpenCommandPalette);
+        cx.run_until_parked();
+        let palette = overlay_view::<CommandPalette>(&main, cx);
+        palette.update(cx, |_, cx| cx.emit(PaletteEvent::Run(CommandId::About)));
+        cx.run_until_parked();
+
+        assert_eq!(cx.update(|_, app| app.windows().len()), before + 1);
     }
 
     #[gpui::test]
