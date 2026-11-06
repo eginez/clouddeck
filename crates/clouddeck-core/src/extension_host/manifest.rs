@@ -144,7 +144,7 @@ id = "toy"
 name = "Toy"
 version = "0.1.0"
 schema_version = 1
-api_version = 2
+api_version = 3
 authors = ["Esteban"]
 
 [providers.toy]

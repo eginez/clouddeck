@@ -73,6 +73,26 @@ and CI runs the same check before each release.
   or store credentials.
 - Use clear commit messages written in the imperative mood.
 
+## Automated contributors
+
+This section applies to coding agents and automated workers as well as to
+people. The repository deliberately has no CLAUDE.md or AGENTS.md: this file,
+the rest of CONTRIBUTING.md, the README, and `docs/` are the repository-level
+guidance.
+
+- Follow "Build and test" and "Code quality gate" above. Do not copy their
+  commands elsewhere, and keep them in step with the checks CI runs.
+- Never set `CLOUDDECK_SKIP_QUALITY`, and never edit `.rustqual-baseline.json`.
+- Keep the read only guarantee: add no cloud mutations, store no credentials,
+  and write no tests that need real AWS credentials or network access.
+- The layout rules in `crates/clouddeck-app/src/layout_check/` define the
+  expected UI. A failing rule means the UI is wrong, unless the maintainer has
+  changed the design for that rule. Never mark a rule `known_bug` to make it pass, and treat a
+  box that measures 0x0 as a UI bug. If you believe a rule itself is wrong, stop
+  and raise it with whoever assigned the work instead of changing the rule.
+- Task-specific instructions come from whoever assigned the work. This section
+  covers only what holds for every change to this repository.
+
 ## Licensing of contributions
 
 CloudDeck is dual licensed under MIT OR Apache-2.0. By submitting a contribution

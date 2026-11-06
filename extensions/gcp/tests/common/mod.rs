@@ -17,6 +17,7 @@ pub fn fixture(name: &str) -> String {
 pub struct FakeHttp {
     pub urls: Mutex<Vec<String>>,
     pub fail_token: bool,
+    pub network_down: bool,
 }
 
 fn not_found(url: &str) -> HttpError {
@@ -84,6 +85,13 @@ impl Http for FakeHttp {
                 status: Some(400),
                 timed_out: false,
                 message: "invalid_grant".into(),
+            });
+        }
+        if self.network_down {
+            return Err(HttpError {
+                status: None,
+                timed_out: false,
+                message: "connection reset".into(),
             });
         }
         Ok(fixture("token.json"))

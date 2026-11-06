@@ -284,11 +284,12 @@ impl Provider for GcpProvider {
         Err(ProviderError::unsupported())
     }
 
-    /// Only an auth failure counts as signed out; a network blip must not look like one.
+    /// Only an auth failure counts as signed out; any other failure is unknown, not signed in.
     fn auth_status(&self, cx: &Call<'_>, _c: Option<&ConnectionId>) -> AuthStatus {
         match self.token(cx) {
+            Ok(_) => AuthStatus::SignedIn { expires: None },
             Err(e) if e.kind == ErrorKind::Auth => AuthStatus::SignedOut,
-            _ => AuthStatus::SignedIn { expires: None },
+            Err(_) => AuthStatus::Unknown,
         }
     }
 

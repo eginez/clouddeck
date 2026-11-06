@@ -22,6 +22,11 @@ clouddeck-extension-api = { git = "https://github.com/eginez/clouddeck", tag = "
   built against an older tag is refused with a rebuild message.
 - Build the crate as a `cdylib` with `panic = "unwind"`. A library that reports `panic=abort` is
   refused at load.
+- The host creates one `Extension` per loaded library, on its first call. It calls
+  `Extension::provider(id)` on every request, and the returned provider is dropped when that request
+  ends. A provider therefore starts with no state on each call. Anything that must survive between
+  calls (a token cache, a client, a session) belongs in the `Extension` struct, which is shared by all
+  calls and must be `Send + Sync`.
 
 ## Loading
 
@@ -100,6 +105,32 @@ per zone), encode the parent in the id, for example `zone/name` (`us-east1-b/web
 A dimension value with `parent: None` is a root. A value with `parent: Some(p)` is a child of `p`.
 Values form a forest: parents must exist and there must be no cycles.
 
+`parent` is only looked up among the values of the same dimension. A hierarchy that crosses
+dimensions cannot be expressed, so a cloud whose zones sit inside regions puts both in one dimension.
+GCP's zones are one dimension, `zone`, with regions as roots and zones as children:
+
+```rust
+Dimension {
+    id: "zone".into(),
+    label: "Zone".into(),
+    multi: true,
+    optional: true,
+    values: vec![
+        DimValue { id: "us-east1".into(), label: "us-east1".into(), parent: None, default: false },
+        DimValue {
+            id: "us-east1-b".into(),
+            label: "us-east1-b".into(),
+            parent: Some("us-east1".into()),
+            default: false,
+        },
+    ],
+}
+```
+
+The selection key is the value id of a zone or a region, so `zone = [us-east1]` lists every zone in
+that region and `zone = [us-east1-b]` lists that one zone. Do not add a separate `region` dimension
+next to `zone`: nothing can link the two trees.
+
 - Selecting a parent selects all of its descendants. `region = [us]` lists everything under `us`,
   including `us-east` when that is a child of `us`.
 - Selecting a child alone lists only that child's resources. Its parent is implied for identity and
@@ -110,6 +141,10 @@ Values form a forest: parents must exist and there must be no cycles.
   internally, and no resource is listed under two finest-level values.
 - `CellFailure.cell` names the finest-level values that failed. Every value it names must be covered
   by the selection: either selected itself or a descendant of a selected value.
+- A failure that applies to the whole call, not to particular values (the API is unreachable, the
+  credentials expired), is a `CellFailure` whose `cell` is an empty `Selection`. The conformance kit
+  accepts it, and the kit does not check it against the selection. Name values in `cell` only when
+  those values failed.
 
 The conformance kit checks these rules for every hierarchical dimension and every kind: parents exist,
 there are no cycles, finest-level leaves list disjoint resources, a parent lists exactly the union of its children,
@@ -117,10 +152,54 @@ a parent with its children equals the parent alone, and failure cells are covere
 are not parents. Which resource belongs to which value is the provider's business, so the kit cannot
 check that a child's resources are the right ones, only that they are consistent with the tree.
 
+## Secrets
+
+Extensions keep refresh tokens and API tokens with `Host::set_secret` and read them back with
+`Host::secret`. Do not write them to the data directory or to settings. Secrets are stored per
+extension under a key the extension chooses:
+
+```rust
+host.set_secret("refresh-token", Some(token.as_str()))?;
+let token = host.secret("refresh-token");
+host.set_secret("refresh-token", None)?; // on sign-out
+```
+
+In a cdylib extension, this build has no secret store yet. `secret` always returns `None`, and
+`set_secret` returns an error (or a "secrets capability is not granted" error when the capability is
+not granted). An extension
+must still behave correctly in that case: treat a missing token as signed out, and ask the user to
+sign in again when a token cannot be stored.
+
 ## Deadlines
 
 Each provider call runs on its own thread. When the deadline passes the call returns a timeout
 and the extension's `cancelled()` answers true; the library itself cannot be interrupted.
+
+Check for cancellation and deadline before each network request, and pass the time left as the
+request timeout. `Call::remaining()` returns `None` when the call has no deadline and zero once
+the deadline has passed. The helper below returns a timeout error when the host has cancelled the
+call or the deadline has passed:
+
+```rust
+use std::time::Duration;
+
+use clouddeck_provider_api::{Call, ErrorKind, ProviderError};
+
+const MAX_REQUEST: Duration = Duration::from_secs(30);
+
+fn request_timeout(cx: &Call<'_>) -> Result<Duration, ProviderError> {
+    if cx.host.cancelled() {
+        return Err(ProviderError::of(ErrorKind::Timeout));
+    }
+    match cx.remaining() {
+        Some(left) if left.is_zero() => Err(ProviderError::of(ErrorKind::Timeout)),
+        Some(left) => Ok(left.min(MAX_REQUEST)),
+        None => Ok(MAX_REQUEST),
+    }
+}
+```
+
+Call `request_timeout` before each request and pass the result as the HTTP client's timeout.
 
 ## macOS
 

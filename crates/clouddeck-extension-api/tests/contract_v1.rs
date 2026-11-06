@@ -20,6 +20,7 @@ struct Fake {
     duplicate_ids: bool,
     panic_on_describe: bool,
     signed_out: bool,
+    refuses_sign_in: bool,
     ignores_cancel: bool,
     hangs_on_cancel: bool,
     flat_regions: bool,
@@ -243,6 +244,9 @@ impl Provider for Fake {
         _: &AuthMethod,
         _: AuthInput,
     ) -> Result<AuthStep, ProviderError> {
+        if self.signed_out || self.refuses_sign_in {
+            return Err(ProviderError::of(ErrorKind::Auth));
+        }
         Ok(AuthStep::Prompt {
             flow: FlowId::from("flow-1"),
             fields: vec![PromptField {
@@ -285,6 +289,21 @@ fn signed_out_fake_with_auth_error_conforms() {
     };
     let violations = check_provider(Arc::new(fake));
     assert!(violations.is_empty(), "{violations:?}");
+}
+
+#[test]
+fn checker_reports_sign_in_refused_while_signed_in() {
+    let fake = Fake {
+        refuses_sign_in: true,
+        ..Fake::default()
+    };
+    let violations = check_provider(Arc::new(fake));
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.starts_with("begin_auth()") && v.contains("failed")),
+        "{violations:?}"
+    );
 }
 
 #[test]

@@ -9,9 +9,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use clouddeck_provider_api::{
-    AuthAnswer, AuthInput, AuthMethod, AuthStep, Call, ConnectionId, Dimension, DimensionId,
-    ErrorKind, FlowId, Host, Instance, KindId, ListResult, LogLevel, Provider, ProviderError,
-    ResourceId, Selection, ValueId,
+    AuthAnswer, AuthInput, AuthMethod, AuthStatus, AuthStep, Call, ConnectionId, Dimension,
+    DimensionId, ErrorKind, FlowId, Host, Instance, KindId, ListResult, LogLevel, Provider,
+    ProviderError, ResourceId, Selection, ValueId,
 };
 
 const MISSING: &str = "conformance-no-such-value";
@@ -448,6 +448,13 @@ fn check_auth(p: &dyn Provider, cx: &Call<'_>, r: &mut Report) {
     r.guard("sign_out()", || p.sign_out(cx, Some(&conn)));
 }
 
+fn is_signed_out(p: &dyn Provider, cx: &Call<'_>, conn: Option<&ConnectionId>) -> bool {
+    matches!(
+        catch_unwind(AssertUnwindSafe(|| p.auth_status(cx, conn))),
+        Ok(AuthStatus::SignedOut)
+    )
+}
+
 fn check_auth_flow(
     p: &dyn Provider,
     cx: &Call<'_>,
@@ -459,18 +466,20 @@ fn check_auth_flow(
         connection: conn.cloned(),
         values: BTreeMap::new(),
     };
-    let begun = if conn.is_some() {
-        r.ok("begin_auth()", || p.begin_auth(cx, method, input))
+    let what = if conn.is_some() {
+        "begin_auth()"
     } else {
-        match r.guard("begin_auth(None)", || p.begin_auth(cx, method, input)) {
-            Some(Ok(step)) => Some(step),
-            Some(Err(error)) if error.kind == ErrorKind::Unsupported => None,
-            Some(Err(error)) => {
-                r.fail(format!("begin_auth(None) failed: {error}"));
-                None
-            }
-            None => None,
+        "begin_auth(None)"
+    };
+    let begun = match r.guard(what, || p.begin_auth(cx, method, input)) {
+        Some(Ok(step)) => Some(step),
+        Some(Err(error)) if error.kind == ErrorKind::Auth && is_signed_out(p, cx, conn) => None,
+        Some(Err(error)) if conn.is_none() && error.kind == ErrorKind::Unsupported => None,
+        Some(Err(error)) => {
+            r.fail(format!("{what} failed: {error}"));
+            None
         }
+        None => None,
     };
     let Some(mut step) = begun else {
         return;
@@ -494,5 +503,38 @@ fn check_auth_flow(
             return;
         };
         step = next;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clouddeck_provider_api::{CellFailure, DimValue};
+
+    #[test]
+    fn whole_call_failure_with_empty_cell_is_accepted() {
+        let dim = Dimension {
+            id: "region".into(),
+            label: "Region".into(),
+            multi: true,
+            optional: true,
+            values: vec![DimValue {
+                id: "us".into(),
+                label: "us".into(),
+                parent: None,
+                default: false,
+            }],
+        };
+        let selection = Selection::new().with("region", vec!["us".into()]);
+        let list = ListResult {
+            resources: vec![],
+            failures: vec![CellFailure {
+                cell: Selection::new(),
+                error: ProviderError::of(ErrorKind::Other),
+            }],
+        };
+        let mut r = Report(Vec::new());
+        check_failure_cells(&mut r, &dim, &selection, &list);
+        assert!(r.0.is_empty(), "{:?}", r.0);
     }
 }

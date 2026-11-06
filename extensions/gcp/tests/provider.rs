@@ -114,6 +114,16 @@ fn missing_adc_asks_the_user_to_sign_in() {
 }
 
 #[test]
+fn network_failure_while_checking_sign_in_is_unknown() {
+    let http = Arc::new(FakeHttp {
+        network_down: true,
+        ..Default::default()
+    });
+    let p = provider(http);
+    assert_eq!(p.auth_status(&call(&TestHost), None), AuthStatus::Unknown);
+}
+
+#[test]
 fn usable_adc_completes_auth() {
     let p = provider(Arc::new(FakeHttp::default()));
     let host = TestHost;

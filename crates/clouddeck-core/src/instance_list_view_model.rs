@@ -423,13 +423,12 @@ fn whole_load_error<'a>(
     result: &'a ListResult,
     selection: &Selection,
 ) -> Option<&'a ProviderError> {
-    if !result.resources.is_empty() {
-        return None;
-    }
     result
         .failures
         .iter()
-        .find(|failure| &failure.cell == selection)
+        .find(|failure| {
+            failure.cell.is_empty() || (&failure.cell == selection && result.resources.is_empty())
+        })
         .map(|failure| &failure.error)
 }
 
@@ -1170,5 +1169,66 @@ mod tests {
 
         assert!(vm.error_message().is_some());
         assert!(vm.partial_failures().is_empty());
+    }
+
+    #[test]
+    fn whole_call_failure_with_empty_cell_is_whole_load_not_a_blank_region() {
+        let mut vm = InstanceListViewModel::new(service_provider(Box::new(
+            crate::MockComputeService::new(vec![], None),
+        )));
+        vm.selection = Selection::new().with("region", vec![ValueId::from("eu-west-1")]);
+        let result = ListResult {
+            resources: Vec::new(),
+            failures: vec![CellFailure {
+                cell: Selection::new(),
+                error: ProviderError::new(ErrorKind::Network, "API unreachable"),
+            }],
+        };
+
+        vm.finish_load(result);
+
+        assert!(vm.error_message().is_some());
+        assert!(vm.partial_failures().is_empty());
+        assert_eq!(vm.partial_failure_summary(), None);
+    }
+
+    #[test]
+    fn selected_region_failure_alongside_rows_stays_a_partial_failure() {
+        let mut vm = InstanceListViewModel::new(service_provider(Box::new(
+            crate::MockComputeService::new(vec![], None),
+        )));
+        let selection = Selection::new().with("region", vec![ValueId::from("eu-west-1")]);
+        vm.selection = selection.clone();
+        let mut result = loaded(vec![("eu-west-1", "a")], &[]);
+        result.failures.push(CellFailure {
+            cell: selection,
+            error: ProviderError::new(ErrorKind::Throttled, "eu-west-1 is throttled"),
+        });
+
+        vm.finish_load(result);
+
+        assert_eq!(vm.error_message(), None);
+        assert_eq!(vm.partial_failures().len(), 1);
+        assert_eq!(vm.partial_failures()[0].region, "eu-west-1");
+    }
+
+    #[test]
+    fn whole_call_failure_alongside_resources_keeps_previous_rows_and_sets_error() {
+        let mut vm = InstanceListViewModel::new(service_provider(Box::new(
+            crate::MockComputeService::new(vec![], None),
+        )));
+        vm.finish_load_at(loaded(vec![("us-east-1", "a")], &[]), at(T1_SECS));
+
+        let mut result = loaded(vec![("us-east-1", "b")], &[]);
+        result.failures.push(CellFailure {
+            cell: Selection::new(),
+            error: ProviderError::new(ErrorKind::Auth, "credentials expired"),
+        });
+        vm.finish_load_at(result, at(T2_SECS));
+
+        assert!(vm.error_message().is_some());
+        assert!(vm.partial_failures().is_empty());
+        assert_eq!(loaded_ids(&vm), vec!["a"]);
+        assert_eq!(vm.last_success(), Some(at(T1_SECS)));
     }
 }

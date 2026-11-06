@@ -160,7 +160,8 @@ impl AwsAuth {
         match self.credential_kind(connection.as_str()) {
             Ok(AwsCredentialKind::Sso(config)) => self.sso_token_status(&config),
             Ok(AwsCredentialKind::SharedCredentials) => AuthStatus::SignedIn { expires: None },
-            _ => AuthStatus::SignedOut,
+            Ok(_) => AuthStatus::SignedOut,
+            Err(_) => AuthStatus::Unknown,
         }
     }
 
@@ -515,6 +516,19 @@ credential_process = /usr/local/bin/creds
         assert_eq!(
             fixture.auth.status(Some(&connection)),
             AuthStatus::SignedOut
+        );
+    }
+
+    #[test]
+    fn unreadable_config_leaves_sign_in_unknown() {
+        let fixture = fixture(approved_after_one_pending_poll());
+        let config = fixture.home.join("config");
+        std::fs::remove_file(&config).unwrap();
+        std::fs::create_dir(&config).unwrap();
+
+        assert_eq!(
+            fixture.auth.status(Some(&ConnectionId::from("sso"))),
+            AuthStatus::Unknown
         );
     }
 
