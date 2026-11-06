@@ -14,6 +14,7 @@ const UNSUPPORTED_ENTRY: &str = "unsupported entry type in archive";
 const TOO_MANY_ENTRIES: &str = "archive has too many entries";
 const FILE_TOO_LARGE: &str = "archive file is larger than the size limit";
 const TOTAL_TOO_LARGE: &str = "archive expands past the size limit";
+const BUNDLED_EXTENSIONS: &str = "extensions-bundled";
 
 const MIB: u64 = 1024 * 1024;
 const GIB: u64 = 1024 * MIB;
@@ -136,24 +137,78 @@ pub fn install_macos(tar_gz: &[u8], bundle: &Path) -> Result<(), String> {
     swap_bundle(&new, bundle)
 }
 
-/// Replaces the running executable with the one in the archive, rolling back on failure.
+/// Replaces the running executable and the bundled extensions beside it, rolling back on failure.
 pub fn install_linux(tar_gz: &[u8], exe: &Path) -> Result<(), String> {
     let parent = exe
         .parent()
         .ok_or_else(|| "executable has no parent directory".to_string())?;
     let staging = StagingDir::create(parent)?;
     unpack(tar_gz, staging.path(), APP_UNPACK_LIMITS)?;
-    let new = staging.path().join("clouddeck");
-    if !is_real_file(&new) {
+    let new_binary = staging.path().join("clouddeck");
+    if !is_real_file(&new_binary) {
         return Err("archive has no clouddeck binary".into());
+    }
+    let new_plugins = staging.path().join(BUNDLED_EXTENSIONS);
+    if !is_real_dir(&new_plugins) {
+        return Err("archive has no extensions-bundled folder".into());
     }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&new, fs::Permissions::from_mode(0o755))
+        fs::set_permissions(&new_binary, fs::Permissions::from_mode(0o755))
             .map_err(|e| format!("could not make new binary executable: {e}"))?;
     }
-    fs::rename(&new, exe).map_err(|e| format!("could not put new build in place: {e}"))
+
+    let live_plugins = parent.join(BUNDLED_EXTENSIONS);
+    let old_plugins = sibling_with_suffix(&live_plugins, ".old");
+    let had_plugins = fs::symlink_metadata(&live_plugins).is_ok();
+    remove_existing(&old_plugins)
+        .map_err(|e| format!("could not clear {}: {e}", old_plugins.display()))?;
+    if had_plugins {
+        fs::rename(&live_plugins, &old_plugins)
+            .map_err(|e| format!("could not move {} aside: {e}", live_plugins.display()))?;
+    }
+    if let Err(e) = fs::rename(&new_plugins, &live_plugins) {
+        return Err(restore_plugins(
+            &live_plugins,
+            &old_plugins,
+            had_plugins,
+            "new extensions",
+            e,
+        ));
+    }
+    if let Err(e) = fs::rename(&new_binary, exe) {
+        let _ = remove_existing(&live_plugins);
+        return Err(restore_plugins(
+            &live_plugins,
+            &old_plugins,
+            had_plugins,
+            "new build",
+            e,
+        ));
+    }
+    let _ = remove_existing(&old_plugins);
+    Ok(())
+}
+
+fn restore_plugins(
+    live: &Path,
+    old: &Path,
+    had_plugins: bool,
+    what: &str,
+    cause: io::Error,
+) -> String {
+    let message = format!("could not put {what} in place: {cause}");
+    if !had_plugins {
+        return message;
+    }
+    match fs::rename(old, live) {
+        Ok(()) => message,
+        Err(re) => format!(
+            "{message}; rollback failed ({re}), previous extensions left at {}",
+            old.display()
+        ),
+    }
 }
 
 fn is_real_file(path: &Path) -> bool {
@@ -215,7 +270,6 @@ fn swap(new: &Path, live: &Path, old: &Path) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(not(target_os = "macos"))]
 fn remove_existing(path: &Path) -> io::Result<()> {
     match fs::symlink_metadata(path) {
         Ok(meta) if meta.is_dir() => fs::remove_dir_all(path),
@@ -593,7 +647,10 @@ mod tests {
         let exe = dir.path().join("clouddeck");
         fs::write(&exe, "old").unwrap();
 
-        let tgz = archive(&[("clouddeck", b"new")]);
+        let tgz = archive(&[
+            ("clouddeck", b"new"),
+            ("extensions-bundled/aws/extension.toml", b"m"),
+        ]);
         install_linux(&tgz, &exe).unwrap();
 
         assert_eq!(fs::read_to_string(&exe).unwrap(), "new");
@@ -607,7 +664,10 @@ mod tests {
         let exe = dir.path().join("clouddeck");
         fs::write(&exe, "old").unwrap();
 
-        let tgz = archive(&[("clouddeck", b"new")]);
+        let tgz = archive(&[
+            ("clouddeck", b"new"),
+            ("extensions-bundled/aws/extension.toml", b"m"),
+        ]);
         install_linux(&tgz, &exe).unwrap();
 
         let mode = fs::metadata(&exe).unwrap().permissions().mode() & 0o777;
@@ -631,13 +691,60 @@ mod tests {
     }
 
     #[test]
+    fn install_linux_without_bundled_extensions_leaves_old_untouched() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("clouddeck");
+        fs::write(&exe, "old").unwrap();
+
+        let tgz = archive(&[("clouddeck", b"new")]);
+        assert_eq!(
+            install_linux(&tgz, &exe),
+            Err("archive has no extensions-bundled folder".to_string())
+        );
+
+        assert_eq!(fs::read_to_string(&exe).unwrap(), "old");
+        assert_eq!(only_entries(dir.path()), vec!["clouddeck".to_string()]);
+    }
+
+    #[test]
+    fn install_linux_replaces_bundled_extensions_with_the_binary() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("clouddeck");
+        fs::write(&exe, "old").unwrap();
+        let live = dir.path().join("extensions-bundled/aws");
+        fs::create_dir_all(&live).unwrap();
+        fs::write(live.join("libaws.so"), "old-lib").unwrap();
+
+        let tgz = archive(&[
+            ("clouddeck", b"new"),
+            ("extensions-bundled/aws/extension.toml", b"m"),
+            ("extensions-bundled/gcp/extension.toml", b"g"),
+        ]);
+        install_linux(&tgz, &exe).unwrap();
+
+        assert_eq!(fs::read_to_string(&exe).unwrap(), "new");
+        assert!(!live.join("libaws.so").exists());
+        assert_eq!(
+            fs::read_to_string(dir.path().join("extensions-bundled/gcp/extension.toml")).unwrap(),
+            "g"
+        );
+        assert_eq!(
+            only_entries(dir.path()),
+            vec!["clouddeck".to_string(), "extensions-bundled".to_string()]
+        );
+    }
+
+    #[test]
     fn install_linux_never_moves_live_binary_aside() {
         let dir = tempfile::tempdir().unwrap();
         let exe = dir.path().join("clouddeck");
         fs::write(&exe, "old").unwrap();
         fs::write(dir.path().join("clouddeck.old"), "stale").unwrap();
 
-        let tgz = archive(&[("clouddeck", b"new")]);
+        let tgz = archive(&[
+            ("clouddeck", b"new"),
+            ("extensions-bundled/aws/extension.toml", b"m"),
+        ]);
         install_linux(&tgz, &exe).unwrap();
 
         assert_eq!(fs::read_to_string(&exe).unwrap(), "new");
@@ -647,7 +754,11 @@ mod tests {
         );
         assert_eq!(
             only_entries(dir.path()),
-            vec!["clouddeck".to_string(), "clouddeck.old".to_string()]
+            vec![
+                "clouddeck".to_string(),
+                "clouddeck.old".to_string(),
+                "extensions-bundled".to_string(),
+            ]
         );
     }
 

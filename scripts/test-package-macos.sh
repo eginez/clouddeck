@@ -20,8 +20,9 @@ check() { # desc cmd...
 R="$T/repo"
 mkdir -p "$R/scripts" "$R/crates/clouddeck-app" "$T/bin"
 cp "$SRC/scripts/package-macos.sh" "$SRC/scripts/stage-bundled-extensions.sh" "$R/scripts/"
-mkdir -p "$R/extensions/aws"
+mkdir -p "$R/extensions/aws" "$R/extensions/gcp"
 cp "$SRC/extensions/aws/extension.toml" "$R/extensions/aws/"
+cp "$SRC/extensions/gcp/extension.toml" "$R/extensions/gcp/"
 cp "$SRC/crates/clouddeck-app/Cargo.toml" "$R/crates/clouddeck-app/"
 mkdir -p "$R/design/icon"
 cp "$SRC/design/icon/AppIcon.icns" "$R/design/icon/"
@@ -46,7 +47,11 @@ done
 [ -n "$manifest" ] || { echo "fake cargo: no --manifest-path" >&2; exit 2; }
 root="$(dirname "$manifest")"
 out="${CARGO_TARGET_DIR:-$root/target}/release"
-mkdir -p "$out" && cp /bin/true "$out/clouddeck" && cp /bin/true "$out/libclouddeck_aws.dylib"
+mkdir -p "$out" && cp /bin/true "$out/clouddeck" && cp /bin/true "$out/libclouddeck_aws.dylib" && cp /bin/true "$out/libclouddeck_gcp.dylib"
+EOF
+cat >"$T/bin/codesign" <<'EOF'
+#!/bin/sh
+echo "codesign $*" >> "$CODESIGN_LOG"
 EOF
 cat >"$T/bin/hdiutil" <<'EOF'
 #!/bin/sh
@@ -55,9 +60,9 @@ out=""
 for arg in "$@"; do out="$arg"; done
 echo "fake dmg" > "$out"
 EOF
-chmod +x "$T/bin/uname" "$T/bin/cargo" "$T/bin/hdiutil"
+chmod +x "$T/bin/uname" "$T/bin/cargo" "$T/bin/codesign" "$T/bin/hdiutil"
 
-export HDIUTIL_LOG="$T/hdiutil.log"
+export HDIUTIL_LOG="$T/hdiutil.log" CODESIGN_LOG="$T/codesign.log"
 PATH="$T/bin:$PATH" "$R/scripts/package-macos.sh" >"$T/out.log" 2>&1
 check "package-macos.sh succeeds with cargo build --manifest-path first" test $? -eq 0
 
@@ -68,6 +73,12 @@ check "bundled aws extension manifest is in Contents/PlugIns" \
     test -f "$R/dist/CloudDeck.app/Contents/PlugIns/extensions-bundled/aws/extension.toml"
 check "bundled aws library is in Contents/PlugIns" \
     test -x "$R/dist/CloudDeck.app/Contents/PlugIns/extensions-bundled/aws/libaws.dylib"
+check "bundled gcp extension manifest is in Contents/PlugIns" \
+    test -f "$R/dist/CloudDeck.app/Contents/PlugIns/extensions-bundled/gcp/extension.toml"
+check "bundled gcp library is in Contents/PlugIns" \
+    test -x "$R/dist/CloudDeck.app/Contents/PlugIns/extensions-bundled/gcp/libgcp.dylib"
+check "bundled libraries are ad-hoc signed" \
+    bash -c "grep -q -- '--sign - .*extensions-bundled/aws/libaws.dylib' '$CODESIGN_LOG' && grep -q -- '--sign - .*extensions-bundled/gcp/libgcp.dylib' '$CODESIGN_LOG'"
 check "app icon is installed into Contents/Resources" \
     cmp -s "$SRC/design/icon/AppIcon.icns" "$R/dist/CloudDeck.app/Contents/Resources/AppIcon.icns"
 check "Info.plist sets CFBundleIconFile to AppIcon" \

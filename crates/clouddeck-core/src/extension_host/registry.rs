@@ -19,7 +19,7 @@ use super::state::{CRASH_LIMIT, State, StateStore, state_path};
 
 const CLOUDDECK_VERSION: &str = env!("CARGO_PKG_VERSION");
 const BUNDLED_DIR: &str = "extensions-bundled";
-const FIRST_PARTY_BUNDLED: &[&str] = &["aws"];
+const FIRST_PARTY_BUNDLED: &[&str] = &["aws", "gcp"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Refusal {

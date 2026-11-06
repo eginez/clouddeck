@@ -27,11 +27,12 @@ cp "$SRC/scripts/package-linux.sh" "$SRC/scripts/stage-bundled-extensions.sh" "$
 cp -r "$SRC/design/icon/AppIcon.iconset" "$SRC/design/icon/clouddeck-icon-1024.png" "$R/design/icon/"
 cp -r "$SRC/packaging/linux" "$R/packaging/"
 cp "$SRC/crates/clouddeck-app/Cargo.toml" "$R/crates/clouddeck-app/"
-mkdir -p "$R/extensions/aws"
+mkdir -p "$R/extensions/aws" "$R/extensions/gcp"
 cp "$SRC/extensions/aws/extension.toml" "$R/extensions/aws/"
+cp "$SRC/extensions/gcp/extension.toml" "$R/extensions/gcp/"
 cat >"$T/bin/cargo" <<'EOF'
 #!/bin/sh
-mkdir -p "$CARGO_TARGET_DIR/release" && cp /bin/true "$CARGO_TARGET_DIR/release/clouddeck" && cp /bin/true "$CARGO_TARGET_DIR/release/libclouddeck_aws.so"
+mkdir -p "$CARGO_TARGET_DIR/release" && cp /bin/true "$CARGO_TARGET_DIR/release/clouddeck" && cp /bin/true "$CARGO_TARGET_DIR/release/libclouddeck_aws.so" && cp /bin/true "$CARGO_TARGET_DIR/release/libclouddeck_gcp.so"
 EOF
 chmod +x "$T/bin/cargo"
 
@@ -57,6 +58,9 @@ check "hicolor 16 icon matches the iconset source" \
 check "bundled aws extension manifest is in the tarball" \
     test -f "$X/extensions-bundled/aws/extension.toml"
 check "bundled aws library is in the tarball" test -x "$X/extensions-bundled/aws/libaws.so"
+check "bundled gcp extension manifest is in the tarball" \
+    test -f "$X/extensions-bundled/gcp/extension.toml"
+check "bundled gcp library is in the tarball" test -x "$X/extensions-bundled/gcp/libgcp.so"
 
 check "clouddeck.desktop is in the tarball" test -f "$X/clouddeck.desktop"
 check "clouddeck.desktop has Icon=clouddeck" grep -qx "Icon=clouddeck" "$X/clouddeck.desktop"
