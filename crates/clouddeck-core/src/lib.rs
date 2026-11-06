@@ -86,3 +86,4 @@ mod stale;
 pub use layout::*;
 pub use stale::*;
 pub mod release;
+pub mod about;
