@@ -418,6 +418,12 @@ mod tests {
         header.set_mode(0o755);
         header.set_cksum();
         builder.append(&header, content).unwrap();
+        let mut plugin = tar::Header::new_gnu();
+        plugin.set_path("extensions-bundled/aws/extension.toml").unwrap();
+        plugin.set_size(1);
+        plugin.set_mode(0o644);
+        plugin.set_cksum();
+        builder.append(&plugin, &b"m"[..]).unwrap();
         builder.into_inner().unwrap().finish().unwrap()
     }
 
