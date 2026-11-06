@@ -106,11 +106,12 @@ set +e
 fixture() { # name; prints a work repo whose origin is a bare repo beside it
     local base="$T/$1"
     rm -rf "$base"
-    mkdir -p "$base/repo/crates/clouddeck-app" "$base/repo/crates/clouddeck-core"
+    mkdir -p "$base/repo/crates/clouddeck-app" "$base/repo/crates/clouddeck-core" "$base/repo/crates/clouddeck-provider-api"
     git init -q --bare -b main "$base/origin.git"
     git init -q -b main "$base/repo"
     printf '[package]\nname = "clouddeck-app"\nversion = "0.1.0"\n' > "$base/repo/crates/clouddeck-app/Cargo.toml"
     printf '[package]\nname = "clouddeck-core"\nversion = "0.1.0"\n' > "$base/repo/crates/clouddeck-core/Cargo.toml"
+    printf '[package]\nname = "clouddeck-provider-api"\nversion = "0.1.0"\n' > "$base/repo/crates/clouddeck-provider-api/Cargo.toml"
     echo "fixture" > "$base/repo/README.md"
     echo "# lock" > "$base/repo/Cargo.lock"
     git -C "$base/repo" add -A
@@ -185,6 +186,7 @@ check "dry-run leaves origin main unchanged" test "$before" = "$(git -C "$T/dry-
 check "dry-run creates no tag on origin" test -z "$(git -C "$T/dry-run/origin.git" tag -l v0.2.0)"
 check "dry-run never calls gh release create" bash -c "! grep -q 'release create' '$FAKE_LOG/gh.log' 2>/dev/null"
 check "dry-run leaves the local checkout at 0.1.0" grep -qx 'version = "0.1.0"' "$R/crates/clouddeck-app/Cargo.toml"
+check "dry-run leaves every crates manifest at 0.1.0" grep -qx 'version = "0.1.0"' "$R/crates/clouddeck-provider-api/Cargo.toml"
 
 R="$(fixture dry-run-no-linux)"
 PKG_LINUX='' release_in "$R" 0.2.0 "$T/notes.md" --dry-run; rc=$?
@@ -197,6 +199,7 @@ release_in "$R" 0.2.0 "$T/notes.md"; rc=$?
 check "full run exits 0" test "$rc" -eq 0
 check "full run bumps clouddeck-app to 0.2.0" grep -qx 'version = "0.2.0"' "$R/crates/clouddeck-app/Cargo.toml"
 check "full run bumps clouddeck-core to 0.2.0" grep -qx 'version = "0.2.0"' "$R/crates/clouddeck-core/Cargo.toml"
+check "full run bumps every crates manifest to 0.2.0" grep -qx 'version = "0.2.0"' "$R/crates/clouddeck-provider-api/Cargo.toml"
 check "full run pushes the release commit to origin main" test "$(git -C "$R" rev-parse main)" = "$(git -C "$T/full-run/origin.git" rev-parse main)"
 check "full run pushes tag v0.2.0 to origin" test -n "$(git -C "$T/full-run/origin.git" tag -l v0.2.0)"
 check "gh release create gets the five assets in order" bash -c "diff <(cat '$FAKE_LOG/gh-assets.log') <(printf '%s\n' \

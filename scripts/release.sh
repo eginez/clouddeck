@@ -98,10 +98,12 @@ preflight() { # version
 }
 
 prepare_release() { # work dir, version
-    set_cargo_version "$1/crates/clouddeck-app/Cargo.toml" "$2"
-    set_cargo_version "$1/crates/clouddeck-core/Cargo.toml" "$2"
+    local manifest
+    for manifest in "$1"/crates/*/Cargo.toml; do
+        set_cargo_version "$manifest" "$2"
+    done
     if ! { (cd "$1" && "$RELEASE_CARGO" build --workspace) && (cd "$1" && "$RELEASE_CARGO" test --workspace); }; then
-        git -C "$1" checkout -q -- crates/clouddeck-app/Cargo.toml crates/clouddeck-core/Cargo.toml Cargo.lock
+        git -C "$1" checkout -q -- 'crates/*/Cargo.toml' Cargo.lock
         die "cargo build or test --workspace failed; version bump reverted, nothing committed"
     fi
     git -C "$1" add -u
