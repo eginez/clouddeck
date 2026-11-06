@@ -45,6 +45,20 @@ clouddeck-extension-api = { git = "https://github.com/eginez/clouddeck", tag = "
   sessions in a row the extension is disabled. The app quit path must call
   `ProviderRegistry::shutdown` once it adopts the registry.
 
+## Bundled extensions
+
+- First-party extensions ship in `extensions-bundled` beside the executable (inside the macOS app
+  at `Contents/PlugIns/extensions-bundled`). Only ids in `FIRST_PARTY_BUNDLED` are accepted there.
+- They get bundled trust: the external-extensions gate and capability grants do not apply.
+- Location check: every folder from `extensions-bundled` down to the library, and the library
+  itself, must be owned by the user running CloudDeck or by root, and must not be writable by
+  group or others. Folders above `extensions-bundled` are not checked.
+- Threat model: this protects against other local users planting a library. It does not protect
+  against code already running as the same user, which could equally replace the `clouddeck`
+  executable. Root ownership is not required because the in-app updater runs as the user and
+  replaces the app folder, including `extensions-bundled`.
+- Requiring root-owned bundled files is possible only once a privileged installer exists.
+
 ## Managing extensions
 
 `clouddeck extension <command>` manages folders under `~/.config/clouddeck/extensions/`:

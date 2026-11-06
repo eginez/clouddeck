@@ -448,6 +448,86 @@ mod tests {
         assert!(!host.allows(&Capability::Credentials));
     }
 
+    #[cfg(unix)]
+    fn trust_fixture() -> (tempfile::TempDir, PathBuf, PathBuf) {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let app = dir.path().join("app");
+        let root = app.join("extensions-bundled");
+        let folder = root.join("aws");
+        fs::create_dir_all(&folder).unwrap();
+        let library = folder.join("libaws.so");
+        fs::write(&library, b"library").unwrap();
+        for path in [&app, &root, &folder] {
+            fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        fs::set_permissions(&library, fs::Permissions::from_mode(0o644)).unwrap();
+        let library = library.canonicalize().unwrap();
+        (dir, root, library)
+    }
+
+    #[cfg(unix)]
+    fn set_mode(path: &Path, mode: u32) {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bundled_library_owned_by_user_is_trusted() {
+        let (_dir, root, library) = trust_fixture();
+        assert!(check_trusted_location(&library, &root, true).is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bundled_library_in_group_writable_folder_is_refused() {
+        let (_dir, root, library) = trust_fixture();
+        set_mode(library.parent().unwrap(), 0o775);
+        let error = check_trusted_location(&library, &root, true).unwrap_err();
+        assert!(error.contains("writable by other users"), "{error}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bundled_library_writable_by_others_is_refused() {
+        let (_dir, root, library) = trust_fixture();
+        set_mode(&library, 0o666);
+        let error = check_trusted_location(&library, &root, true).unwrap_err();
+        assert!(error.contains("writable by other users"), "{error}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bundled_trust_ignores_folders_above_the_root() {
+        let (dir, root, library) = trust_fixture();
+        set_mode(&dir.path().join("app"), 0o777);
+        assert!(check_trusted_location(&library, &root, true).is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn library_outside_root_is_refused() {
+        let (dir, root, _library) = trust_fixture();
+        let other = dir.path().join("app/other");
+        fs::create_dir_all(&other).unwrap();
+        let outside = other.join("libx.so");
+        fs::write(&outside, b"library").unwrap();
+        let outside = outside.canonicalize().unwrap();
+        let error = check_trusted_location(&outside, &root, true).unwrap_err();
+        assert!(
+            error.contains("is outside the extensions folder"),
+            "{error}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn installed_library_owned_by_user_is_trusted() {
+        let (_dir, root, library) = trust_fixture();
+        assert!(check_trusted_location(&library, &root, false).is_ok());
+    }
+
     #[test]
     fn links_open_only_during_sign_in() {
         let opened = std::cell::RefCell::new(Vec::new());
