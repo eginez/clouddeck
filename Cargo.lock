@@ -1366,7 +1366,7 @@ dependencies = [
 
 [[package]]
 name = "clouddeck-aws"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "async-trait",
  "aws-config",
@@ -1434,7 +1434,7 @@ dependencies = [
 
 [[package]]
 name = "clouddeck-gcp"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "clouddeck-extension-api",
  "serde",

@@ -117,13 +117,18 @@ check "version script rejects tag without v" bash -c "! '$VERSION_SCRIPT' 0.1.0 
 
 DRIFT="$(mktemp -d)"
 trap 'rm -rf "$DRIFT"' EXIT
-mkdir -p "$DRIFT/scripts" "$DRIFT/crates/clouddeck-app" "$DRIFT/crates/clouddeck-core"
+mkdir -p "$DRIFT/scripts" "$DRIFT/crates/clouddeck-app" "$DRIFT/crates/clouddeck-core" "$DRIFT/extensions/aws"
 cp "$VERSION_SCRIPT" "$DRIFT/scripts/"
 printf '[package]\nname = "clouddeck-app"\nversion = "0.2.1"\n' > "$DRIFT/crates/clouddeck-app/Cargo.toml"
 printf '[package]\nname = "clouddeck-core"\nversion = "0.1.0"\n' > "$DRIFT/crates/clouddeck-core/Cargo.toml"
+printf '[package]\nname = "aws"\nversion = "0.2.1"\n' > "$DRIFT/extensions/aws/Cargo.toml"
 check "version script rejects a crate that drifts from clouddeck-app" bash -c "! '$DRIFT/scripts/release-version.sh' >/dev/null 2>&1"
 printf '[package]\nname = "clouddeck-core"\nversion = "0.2.1"\n' > "$DRIFT/crates/clouddeck-core/Cargo.toml"
 check "version script accepts matching crate versions" bash -c "[[ \"\$('$DRIFT/scripts/release-version.sh')\" == '0.2.1' ]]"
+printf '[package]\nname = "aws"\nversion = "0.1.0"\n' > "$DRIFT/extensions/aws/Cargo.toml"
+check "version script rejects an extension that drifts from clouddeck-app" bash -c "! '$DRIFT/scripts/release-version.sh' >/dev/null 2>&1"
+printf '[package]\nname = "aws"\nversion = "0.2.1"\n' > "$DRIFT/extensions/aws/Cargo.toml"
+check "version script accepts matching extension versions" bash -c "[[ \"\$('$DRIFT/scripts/release-version.sh')\" == '0.2.1' ]]"
 
 echo "$PASS passed, $FAIL failed"
 [[ "$FAIL" -eq 0 ]]

@@ -7,7 +7,7 @@ root_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cargo_version="$(awk -F'"' '/^version = / { print $2; exit }' "$root_dir/crates/clouddeck-app/Cargo.toml")"
 [[ -n "$cargo_version" ]] || { echo "release-version: no version in crates/clouddeck-app/Cargo.toml" >&2; exit 1; }
 
-for manifest in "$root_dir"/crates/*/Cargo.toml; do
+for manifest in "$root_dir"/crates/*/Cargo.toml "$root_dir"/extensions/*/Cargo.toml; do
     crate_version="$(awk -F'"' '/^version = / { print $2; exit }' "$manifest")"
     [[ "$crate_version" == "$cargo_version" ]] || {
         echo "release-version: $(basename "$(dirname "$manifest")") is $crate_version but clouddeck-app is $cargo_version" >&2

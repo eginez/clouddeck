@@ -99,11 +99,11 @@ preflight() { # version
 
 prepare_release() { # work dir, version
     local manifest
-    for manifest in "$1"/crates/*/Cargo.toml; do
+    for manifest in "$1"/crates/*/Cargo.toml "$1"/extensions/*/Cargo.toml; do
         set_cargo_version "$manifest" "$2"
     done
     if ! { (cd "$1" && "$RELEASE_CARGO" build --workspace) && (cd "$1" && "$RELEASE_CARGO" test --workspace); }; then
-        git -C "$1" checkout -q -- 'crates/*/Cargo.toml' Cargo.lock
+        git -C "$1" checkout -q -- 'crates/*/Cargo.toml' 'extensions/*/Cargo.toml' Cargo.lock
         die "cargo build or test --workspace failed; version bump reverted, nothing committed"
     fi
     git -C "$1" add -u
