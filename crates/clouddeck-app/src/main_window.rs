@@ -251,7 +251,14 @@ impl MainWindow {
                 ContextBarEvent::OpenFailureDetails => {
                     this.toggle_overlay(Overlay::Failure, window, cx)
                 }
-                ContextBarEvent::SignIn => cx.emit(MainWindowEvent::ConnectToAws),
+                ContextBarEvent::SignIn => {
+                    let provider = this.context_model.active_provider();
+                    if provider == "aws" {
+                        cx.emit(MainWindowEvent::ConnectToAws);
+                    } else {
+                        cx.emit(MainWindowEvent::SignIn(provider.to_string()));
+                    }
+                }
             },
         )
         .detach();

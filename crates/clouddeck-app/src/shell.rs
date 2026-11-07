@@ -901,10 +901,22 @@ impl AppShell {
             });
             return;
         };
+        let shell = cx.weak_entity();
+        let window_handle = self.window_handle;
+        let on_signed_in = move |cx: &mut gpui::App| {
+            let _ = window_handle.update(cx, |_, window, cx| {
+                let _ = shell.update(cx, |shell, cx| {
+                    let providers = app_providers::providers(cx);
+                    shell.reload_active_provider(&providers, window, cx);
+                    shell.refresh(cx);
+                });
+            });
+        };
         crate::provider_sign_in::begin_provider_sign_in(
             provider,
             self.fleet.clone(),
             self.sign_ins_in_flight.clone(),
+            on_signed_in,
             cx,
         );
     }
@@ -932,8 +944,17 @@ impl AppShell {
         if switched && let Err(error) = settings.save(settings_file) {
             self.message = Some(format!("Could not remember this provider: {error}"));
         }
-        Self::load_connections(&mut self.context_model, &providers);
-        Self::load_dimensions(&mut self.context_model, &providers);
+        self.reload_active_provider(&providers, window, cx);
+    }
+
+    fn reload_active_provider(
+        &mut self,
+        providers: &[std::sync::Arc<dyn Provider>],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        Self::load_connections(&mut self.context_model, providers);
+        Self::load_dimensions(&mut self.context_model, providers);
         let scope = self.main_window.read(cx).scope.clone();
         let available = Self::available_regions(self.demo, self.demo_scenario);
         Self::sync_region_selection(&mut self.context_model, &scope, &available);
@@ -1594,6 +1615,22 @@ mod provider_switch_tests {
             Some("aws")
         );
         let _ = std::fs::remove_file(&settings_file);
+    }
+
+    #[gpui::test]
+    fn sign_in_event_for_a_non_aws_provider_starts_its_flow(cx: &mut TestAppContext) {
+        install_registry(cx, std::sync::Arc::new(SignedOut(compute_provider("gcp"))));
+        let (shell, cx) = add_rooted_shell(cx, AppShell::new_demo);
+        let main_window = shell.read_with(cx, |shell, _| shell.main_window.clone());
+
+        main_window.update(cx, |_, cx| {
+            cx.emit(MainWindowEvent::SignIn("gcp".to_string()))
+        });
+
+        shell.read_with(cx, |shell, _| {
+            assert!(shell.sign_ins_in_flight.borrow().contains("gcp"));
+            assert!(shell.wizard.is_none());
+        });
     }
 
     #[gpui::test]
