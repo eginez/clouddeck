@@ -26,6 +26,7 @@ mod main_window;
 mod plugins_window;
 mod profile_picker_view;
 mod provider_picker_view;
+mod provider_sign_in;
 mod region_picker_view;
 mod render_state;
 mod row_context_menu;

@@ -17,7 +17,7 @@ use gpui::{
     Styled, Subscription, Task, Window, WindowHandle, actions, div, point, prelude::*, px, size,
 };
 use gpui_component::Root;
-use std::{path::PathBuf, time::Duration};
+use std::{cell::RefCell, collections::HashSet, path::PathBuf, rc::Rc, time::Duration};
 
 actions!(clouddeck, [Refresh]);
 
@@ -36,6 +36,7 @@ pub struct AppShell {
     window_handle: AnyWindowHandle,
     context: WorkspaceContext,
     context_model: ContextModel,
+    sign_ins_in_flight: Rc<RefCell<HashSet<String>>>,
     demo: bool,
     demo_scenario: DemoFleet,
     wizard: Option<Entity<crate::account_window::AccountWindowView>>,
@@ -590,6 +591,7 @@ impl AppShell {
             window_handle: window.window_handle(),
             context,
             context_model,
+            sign_ins_in_flight: Rc::default(),
             demo,
             demo_scenario,
             message,
@@ -751,12 +753,36 @@ impl AppShell {
                     this.apply_context(WorkspaceContext { profile, region }, window, cx);
                 }
                 MainWindowEvent::ConnectToAws => this.open_setup(cx),
+                MainWindowEvent::SignIn(id) => this.sign_in(id, cx),
                 MainWindowEvent::Retry(_) => this.refresh(cx),
                 MainWindowEvent::OpenSettings => this.open_settings(cx),
             },
         )
         .detach();
         main_window
+    }
+
+    fn sign_in(&mut self, id: &str, cx: &mut Context<Self>) {
+        if id == "aws" {
+            self.open_setup(cx);
+            return;
+        }
+        let providers = app_providers::providers(cx);
+        let Some(provider) = providers
+            .into_iter()
+            .find(|provider| provider.info().id == id)
+        else {
+            self.fleet.update(cx, |fleet, cx| {
+                fleet.set_flash(format!("{id} is not installed"), cx)
+            });
+            return;
+        };
+        crate::provider_sign_in::begin_provider_sign_in(
+            provider,
+            self.fleet.clone(),
+            self.sign_ins_in_flight.clone(),
+            cx,
+        );
     }
 
     fn pick_provider(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
@@ -1904,6 +1930,35 @@ mod tests {
             assert!(
                 shell.wizard.is_some(),
                 "the ConnectToAws event should open the Connect to AWS window"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn sign_in_event_for_aws_opens_the_wizard(cx: &mut TestAppContext) {
+        let (shell, cx) = add_rooted_shell(cx, AppShell::new_demo);
+
+        emit_main_window_event(cx, &shell, MainWindowEvent::SignIn("aws".to_string()));
+
+        shell.read_with(cx, |shell, _| {
+            assert!(
+                shell.wizard.is_some(),
+                "SignIn(aws) should open the AWS wizard"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn sign_in_event_for_an_unknown_provider_flashes_and_opens_nothing(cx: &mut TestAppContext) {
+        let (shell, cx) = add_rooted_shell(cx, AppShell::new_demo);
+
+        emit_main_window_event(cx, &shell, MainWindowEvent::SignIn("nope".to_string()));
+
+        shell.read_with(cx, |shell, cx| {
+            assert!(shell.wizard.is_none());
+            assert_eq!(
+                shell.fleet.read(cx).flash.as_deref(),
+                Some("nope is not installed")
             );
         });
     }
