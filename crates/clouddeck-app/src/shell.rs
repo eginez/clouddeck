@@ -8,9 +8,9 @@ use crate::{
 };
 use clouddeck_core::{
     Call, ContextModel, DemoFleet, FLEET_REGIONS, InstanceListViewModel, LoadHost, ProfileInput,
-    Provider, ProviderEntry, RegionScope, Settings, UiState, WindowFrame, WorkspaceContext,
-    demo_profiles, demo_region_names, settings_path, short_name, switch_active_provider,
-    workspace_provider_for,
+    Provider, ProviderEntry, REGION, RegionScope, Settings, UiState, ValueId, WindowFrame,
+    WorkspaceContext, demo_profiles, demo_region_names, settings_path, short_name,
+    switch_active_provider, workspace_provider_for,
 };
 use gpui::{
     AnyWindowHandle, App, Bounds, Context, Entity, IntoElement, KeyBinding, ParentElement, Render,
@@ -454,6 +454,63 @@ impl AppShell {
         model.set_signed_in(&active, !model.needs_sign_in());
     }
 
+    fn load_dimensions(model: &mut ContextModel, providers: &[std::sync::Arc<dyn Provider>]) {
+        let active = model.active_provider().to_string();
+        let Some(provider) = providers.iter().find(|p| p.info().id == active) else {
+            return;
+        };
+        let Some(connection) = model.connection().cloned() else {
+            return;
+        };
+        let call = Call {
+            deadline: None,
+            host: &LoadHost,
+        };
+        if let Ok(dimensions) = provider.dimensions(&call, &connection) {
+            model.set_dimensions(dimensions);
+        }
+    }
+
+    fn sync_region_selection(model: &mut ContextModel, scope: &RegionScope, available: &[String]) {
+        if scope.is_all(available) {
+            model.select_all(REGION);
+        } else {
+            let values = scope
+                .selected()
+                .iter()
+                .map(|region| ValueId::from(region.as_str()))
+                .collect();
+            model.set_values(REGION, values);
+        }
+    }
+
+    fn fleet_regions_from_selection(
+        model: &ContextModel,
+        scope: &RegionScope,
+        available: &[String],
+        demo: bool,
+    ) -> Vec<String> {
+        let has_region = model
+            .dimensions()
+            .iter()
+            .any(|dim| dim.id.as_str() == REGION);
+        if demo || !has_region {
+            return Self::fleet_regions(scope, available);
+        }
+        if model.is_all(REGION) {
+            return FLEET_REGIONS
+                .iter()
+                .map(|region| (*region).into())
+                .collect();
+        }
+        model
+            .selection()
+            .values(REGION)
+            .iter()
+            .map(|value| value.as_str().to_string())
+            .collect()
+    }
+
     fn sync_provider_view(main_window: &Entity<MainWindow>, model: &ContextModel, cx: &mut App) {
         let provider_short_name = model
             .active_info()
@@ -547,7 +604,6 @@ impl AppShell {
             context.region = Self::region_for_scope(&restored, &available);
             restored
         };
-        let fleet_regions = Self::fleet_regions(&scope, &available);
         let request_timeout = SCOPE_REQUEST_TIMEOUT;
         let providers = app_providers::providers(cx);
         let mut context_model = ContextModel::new(
@@ -564,6 +620,10 @@ impl AppShell {
             "aws",
         );
         Self::load_connections(&mut context_model, &providers);
+        Self::load_dimensions(&mut context_model, &providers);
+        Self::sync_region_selection(&mut context_model, &scope, &available);
+        let fleet_regions =
+            Self::fleet_regions_from_selection(&context_model, &scope, &available, demo);
         let view_model = InstanceListViewModel::new(Self::provider_for_id(
             context_model.active_provider(),
             &providers,
@@ -757,7 +817,19 @@ impl AppShell {
             });
         })
         .detach();
-        cx.observe(&fleet, |this: &mut Self, _, cx| {
+        cx.observe(&fleet, |this: &mut Self, observed, cx| {
+            if observed.entity_id() == this.fleet.entity_id() {
+                let result = observed.read(cx).view_model.last_result().cloned();
+                if let Some(result) = result {
+                    this.context_model.set_list_result(&result, |instance| {
+                        instance
+                            .region
+                            .iter()
+                            .map(|region| ValueId::from(region.as_str()))
+                            .collect()
+                    });
+                }
+            }
             this.schedule_ui_state_save(cx)
         })
         .detach();
@@ -840,6 +912,10 @@ impl AppShell {
             self.message = Some(format!("Could not remember this provider: {error}"));
         }
         Self::load_connections(&mut self.context_model, &providers);
+        Self::load_dimensions(&mut self.context_model, &providers);
+        let scope = self.main_window.read(cx).scope.clone();
+        let available = Self::available_regions(self.demo, self.demo_scenario);
+        Self::sync_region_selection(&mut self.context_model, &scope, &available);
         let profile = self
             .context_model
             .connections()
@@ -883,7 +959,9 @@ impl AppShell {
         };
         let available = Self::available_regions(self.demo, self.demo_scenario);
         let scope = Self::scope_for_region(&self.context.region, scope, &available);
-        let fleet_regions = Self::fleet_regions(&scope, &available);
+        Self::sync_region_selection(&mut self.context_model, &scope, &available);
+        let fleet_regions =
+            Self::fleet_regions_from_selection(&self.context_model, &scope, &available, self.demo);
         scope_changed(&scope, &self.applied_scope)
             .then(|| self.remembered_scope = Self::remembered_regions(&scope, &available));
         self.applied_scope = scope.clone();
@@ -1026,6 +1104,7 @@ impl AppShell {
                                 }
                                 let providers = app_providers::providers(cx);
                                 Self::load_connections(&mut shell.context_model, &providers);
+                                Self::load_dimensions(&mut shell.context_model, &providers);
                                 Self::sync_provider_view(
                                     &shell.main_window,
                                     &shell.context_model,
@@ -1165,16 +1244,267 @@ mod provider_switch_tests {
         }
     }
 
-    fn install_registry(cx: &mut TestAppContext, gcp: std::sync::Arc<dyn Provider>) {
+    fn install_providers(cx: &mut TestAppContext, providers: Vec<std::sync::Arc<dyn Provider>>) {
         cx.update(|cx| {
             let registry = clouddeck_core::extension_host::app_registry(
                 None,
                 Path::new("/nonexistent-clouddeck-extensions"),
                 Path::new("/nonexistent-clouddeck-state"),
-                vec![compute_provider("aws"), gcp],
+                providers,
             );
             cx.set_global(crate::app_providers::AppProviders::new(registry));
         });
+    }
+
+    fn install_registry(cx: &mut TestAppContext, gcp: std::sync::Arc<dyn Provider>) {
+        install_providers(cx, vec![compute_provider("aws"), gcp]);
+    }
+
+    fn bare_ec2(region: &str, instance_id: &str) -> clouddeck_core::EC2Instance {
+        clouddeck_core::EC2Instance {
+            instance_id: instance_id.to_string(),
+            region: Some(region.to_string()),
+            instance_type: None,
+            state: None,
+            launch_time: None,
+            public_ip_address: None,
+            private_ip_address: None,
+            vpc_id: None,
+            subnet_id: None,
+            security_groups: Vec::new(),
+            tags: Vec::new(),
+            availability_zone: None,
+            image_id: None,
+            key_name: None,
+            architecture: None,
+            state_transition_reason: None,
+            iam_instance_profile_arn: None,
+            private_dns_name: None,
+            public_dns_name: None,
+        }
+    }
+
+    fn recording_aws(
+        regions: Vec<String>,
+    ) -> (
+        std::sync::Arc<dyn Provider>,
+        std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    ) {
+        let queried = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = queried.clone();
+        let provider = clouddeck_core::ComputeServiceProvider::new(
+            "aws",
+            vec![clouddeck_core::Connection {
+                id: "default".into(),
+                display_name: "default".to_string(),
+            }],
+            regions,
+            move |_, region| {
+                sink.lock().unwrap().push(region.to_string());
+                Box::new(clouddeck_core::MockComputeService::new(
+                    vec![bare_ec2(region, &format!("i-{region}"))],
+                    None,
+                ))
+            },
+        );
+        (std::sync::Arc::new(provider), queried)
+    }
+
+    fn sorted_queries(queried: &std::sync::Mutex<Vec<String>>) -> Vec<String> {
+        let mut regions = queried.lock().unwrap().clone();
+        regions.sort();
+        regions.dedup();
+        regions
+    }
+
+    fn region_dimension_values(
+        shell: &Entity<AppShell>,
+        cx: &mut VisualTestContext,
+    ) -> Vec<String> {
+        shell.read_with(cx, |shell, _| {
+            shell
+                .context_model
+                .dimensions()
+                .iter()
+                .find(|dim| dim.id.as_str() == REGION)
+                .map(|dim| {
+                    dim.values
+                        .iter()
+                        .map(|v| v.id.as_str().to_string())
+                        .collect()
+                })
+                .unwrap_or_default()
+        })
+    }
+
+    fn aws_regions() -> Vec<String> {
+        clouddeck_core::REGIONS
+            .iter()
+            .map(|region| (*region).to_string())
+            .collect()
+    }
+
+    #[gpui::test]
+    fn switching_provider_reloads_the_context_dimensions(cx: &mut TestAppContext) {
+        let (aws, _) = recording_aws(vec!["us-east-1".into(), "eu-west-1".into()]);
+        let gcp: std::sync::Arc<dyn Provider> =
+            std::sync::Arc::new(clouddeck_core::ComputeServiceProvider::new(
+                "gcp",
+                vec![clouddeck_core::Connection {
+                    id: "default".into(),
+                    display_name: "default".to_string(),
+                }],
+                vec!["europe-west1".into()],
+                |_, _| Box::new(clouddeck_core::MockComputeService::new(Vec::new(), None)),
+            ));
+        install_providers(cx, vec![aws, gcp]);
+        let (shell, cx) = add_rooted_shell(cx, |window, cx| {
+            AppShell::build_with_profiles(
+                window,
+                true,
+                DemoFleet::Happy,
+                Ok(Vec::new()),
+                None,
+                Settings::default(),
+                cx,
+            )
+        });
+        assert_eq!(
+            region_dimension_values(&shell, cx),
+            ["us-east-1", "eu-west-1"]
+        );
+
+        let settings_file =
+            std::env::temp_dir().join(format!("clouddeck-dimensions-{}.json", std::process::id()));
+        let _ = std::fs::remove_file(&settings_file);
+        shell.update_in(cx, |shell, window, cx| {
+            shell.switch_provider_to("gcp", &settings_file, window, cx)
+        });
+        cx.run_until_parked();
+
+        assert_eq!(region_dimension_values(&shell, cx), ["europe-west1"]);
+        let _ = std::fs::remove_file(&settings_file);
+    }
+
+    #[gpui::test]
+    fn partial_region_selection_reaches_the_listing_call(cx: &mut TestAppContext) {
+        let ui_file =
+            std::env::temp_dir().join(format!("clouddeck-selection-{}.json", std::process::id()));
+        UiState {
+            selected_regions: vec!["us-west-2".into(), "eu-west-1".into()],
+            ..UiState::default()
+        }
+        .save(&ui_file)
+        .expect("save ui state");
+        let (aws, queried) = recording_aws(aws_regions());
+        install_providers(cx, vec![aws]);
+        let (shell, cx) = add_rooted_shell(cx, move |window, cx| {
+            AppShell::build_with_profiles(
+                window,
+                false,
+                DemoFleet::Happy,
+                Ok(Vec::new()),
+                Some(ui_file.clone()),
+                Settings::default(),
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        assert_eq!(sorted_queries(&queried), ["eu-west-1", "us-west-2"]);
+        shell.read_with(cx, |shell, _| {
+            assert_eq!(
+                shell.context_model.selection().values(REGION),
+                [ValueId::from("us-west-2"), ValueId::from("eu-west-1")]
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn fleet_selection_queries_its_regions_and_counts_loaded_instances(cx: &mut TestAppContext) {
+        let ui_file = std::env::temp_dir().join(format!(
+            "clouddeck-fleet-selection-{}.json",
+            std::process::id()
+        ));
+        UiState {
+            selected_regions: FLEET_REGIONS.iter().map(|r| r.to_string()).collect(),
+            ..UiState::default()
+        }
+        .save(&ui_file)
+        .expect("save ui state");
+        let (aws, queried) = recording_aws(aws_regions());
+        install_providers(cx, vec![aws]);
+        let (shell, cx) = add_rooted_shell(cx, move |window, cx| {
+            AppShell::build_with_profiles(
+                window,
+                false,
+                DemoFleet::Happy,
+                Ok(Vec::new()),
+                Some(ui_file.clone()),
+                Settings::default(),
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        let mut expected: Vec<String> = FLEET_REGIONS.iter().map(|r| r.to_string()).collect();
+        expected.sort();
+        assert_eq!(sorted_queries(&queried), expected);
+        shell.read_with(cx, |shell, _| {
+            assert_eq!(
+                shell
+                    .context_model
+                    .value_count(REGION, &ValueId::from("us-west-2")),
+                1
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn select_all_maps_the_model_to_the_fleet_regions(cx: &mut TestAppContext) {
+        let (aws, _) = recording_aws(aws_regions());
+        install_providers(cx, vec![aws]);
+        let (shell, cx) = add_rooted_shell(cx, |window, cx| {
+            AppShell::build_with_profiles(
+                window,
+                false,
+                DemoFleet::Happy,
+                Ok(Vec::new()),
+                None,
+                Settings::default(),
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        let available: Vec<String> = aws_regions()
+            .into_iter()
+            .filter(|region| region != "fleet")
+            .collect();
+        let scope = RegionScope::all(&available);
+        let mut model = shell.read_with(cx, |shell, _| shell.context_model.clone());
+        AppShell::sync_region_selection(&mut model, &scope, &available);
+        assert_eq!(
+            AppShell::fleet_regions_from_selection(&model, &scope, &available, false),
+            FLEET_REGIONS
+        );
+    }
+
+    #[test]
+    fn fleet_regions_fall_back_to_the_scope_without_region_dimensions() {
+        let model = ContextModel::new(Vec::new(), None, "aws");
+        let available: Vec<String> = aws_regions()
+            .into_iter()
+            .filter(|region| region != "fleet")
+            .collect();
+        let all = RegionScope::all(&available);
+        let partial = RegionScope::from_selected(&["eu-west-1".to_string()], &available);
+        for scope in [&all, &partial] {
+            assert_eq!(
+                AppShell::fleet_regions_from_selection(&model, scope, &available, false),
+                AppShell::fleet_regions(scope, &available)
+            );
+        }
     }
 
     fn scoped_provider_id(shell: &Entity<AppShell>, cx: &mut VisualTestContext) -> String {

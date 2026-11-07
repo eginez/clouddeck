@@ -133,6 +133,7 @@ impl Provider for ComputeServiceProvider {
             values: self
                 .regions
                 .iter()
+                .filter(|region| region.as_str() != "fleet")
                 .map(|region| DimValue {
                     id: ValueId::from(region.as_str()),
                     label: region.clone(),
@@ -411,6 +412,25 @@ mod tests {
         assert!(!region.optional);
         let value_ids: Vec<&str> = region.values.iter().map(|v| v.id.as_str()).collect();
         let expected: Vec<&str> = expected.iter().map(String::as_str).collect();
+        assert_eq!(value_ids, expected);
+    }
+
+    #[test]
+    fn dimensions_drop_the_fleet_pseudo_region_from_the_raw_region_list() {
+        let raw: Vec<String> = crate::context::REGIONS
+            .iter()
+            .map(|region| region.to_string())
+            .collect();
+        let provider = ComputeServiceProvider::new("aws", vec![], raw, |_, _| unreachable!());
+        let dimensions =
+            with_call(|cx| provider.dimensions(cx, &default_connection())).expect("dimensions");
+
+        let value_ids: Vec<&str> = dimensions[0].values.iter().map(|v| v.id.as_str()).collect();
+        let expected: Vec<&str> = crate::context::REGIONS
+            .iter()
+            .copied()
+            .filter(|region| *region != "fleet")
+            .collect();
         assert_eq!(value_ids, expected);
     }
 

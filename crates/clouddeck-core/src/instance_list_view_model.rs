@@ -38,6 +38,7 @@ pub struct InstanceListViewModel {
     stale_regions: Vec<String>,
     last_success: Option<SystemTime>,
     region_loaded_at: HashMap<String, SystemTime>,
+    last_result: Option<ListResult>,
 }
 
 impl InstanceListViewModel {
@@ -61,7 +62,12 @@ impl InstanceListViewModel {
             stale_regions: Vec::new(),
             last_success: None,
             region_loaded_at: HashMap::new(),
+            last_result: None,
         }
+    }
+
+    pub fn last_result(&self) -> Option<&ListResult> {
+        self.last_result.as_ref()
     }
 
     pub fn instances(&self) -> &[Instance] {
@@ -313,6 +319,7 @@ impl InstanceListViewModel {
 
     /// Like `finish_load`, recording `now` as the load's finish time.
     pub fn finish_load_at(&mut self, result: ListResult, now: SystemTime) {
+        self.last_result = Some(result.clone());
         if let Some(error) = whole_load_error(&result, &self.selection) {
             let classified = cloud_deck_error(error);
             self.error_message = Some(classified.message_for("list instances"));
