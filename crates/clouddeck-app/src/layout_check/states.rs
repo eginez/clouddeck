@@ -6,7 +6,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use clouddeck_core::about::{AboutInfo, PluginOrigin, PluginRow, PluginStatus};
-use clouddeck_core::{ProfileInput, Provider, RegionScope, TestScenarioKind, fixture_fleet};
+use clouddeck_core::{
+    ProfileInput, Provider, RegionScope, Settings, TestScenarioKind, fixture_fleet,
+};
 use gpui::{AppContext, Bounds, Entity, TestAppContext, VisualTestContext, point, px, size};
 
 use clouddeck_core::extension_manager::plugins::{Action, PluginsViewModel, Tab};
@@ -19,6 +21,7 @@ use crate::plugins_window::fixtures::{
     ToggleOnlyActions, bundled_set, inert_manager, inert_roots, refused_set, with_installed_set,
 };
 use crate::render_state::{DEFAULT_ROW_MENU_ANCHOR, apply_render_state};
+use crate::settings_window;
 use crate::tokens::{ActivePalette, Palette};
 use crate::view_models::InstanceListViewModel;
 use crate::welcome_window::WelcomeWindow;
@@ -71,7 +74,10 @@ fn service_for(state: State) -> (Arc<dyn Provider>, Vec<String>) {
         | State::PluginsEmptySearch
         | State::PluginsAvailableEmpty
         | State::PluginsRestart
-        | State::PluginsNarrow => {
+        | State::PluginsNarrow
+        | State::SettingsLight
+        | State::SettingsDark
+        | State::SettingsNarrow => {
             unreachable!("only main window states have a fleet service")
         }
     }
@@ -270,7 +276,26 @@ fn open_plugins(
     cx
 }
 
-/// Builds `state` in a fresh window; the welcome, About and Plugins states return no fleet or main window.
+/// Opens a fresh Settings window for `state`; the window is not the app's single Settings window.
+fn open_settings(
+    state: State,
+    width: f32,
+    height: f32,
+    cx: &mut TestAppContext,
+) -> &mut VisualTestContext {
+    let dark = state == State::SettingsDark;
+    cx.update(|app| app.set_global(ActivePalette(Palette::for_dark(dark))));
+    let window = cx.update(|app| {
+        gpui_component::init(app);
+        settings_window::open_window_for(app, Settings::default(), (width, height))
+            .expect("settings window opens")
+    });
+    let cx = VisualTestContext::from_window(window.into(), cx).into_mut();
+    cx.run_until_parked();
+    cx
+}
+
+/// Builds `state` in a fresh window; the welcome, About, Plugins and Settings states return no fleet or main window.
 pub(crate) fn build(
     state: State,
     width: f32,
@@ -289,6 +314,9 @@ pub(crate) fn build(
     }
     if state.is_plugins() {
         return (None, None, open_plugins(state, width, height, cx));
+    }
+    if state.is_settings() {
+        return (None, None, open_settings(state, width, height, cx));
     }
 
     let (service, regions) = service_for(state);
@@ -406,7 +434,7 @@ mod tests {
     /// One key element per state that `apply_render_state` must produce.
     #[gpui::test]
     fn every_state_shows_its_key_element(cx: &mut TestAppContext) {
-        let key_elements: [(State, &str); 27] = [
+        let key_elements: [(State, &str); 30] = [
             (State::MainIdle, "main.root"),
             (State::MainRowSelected, "main.inspector"),
             (State::MainEmpty, "main.center-state"),
@@ -434,6 +462,9 @@ mod tests {
             (State::PluginsAvailableEmpty, "plugins.empty"),
             (State::PluginsRestart, "plugins.restart"),
             (State::PluginsNarrow, "plugins.list"),
+            (State::SettingsLight, "settings.footer"),
+            (State::SettingsDark, "settings.footer"),
+            (State::SettingsNarrow, "settings.footer"),
         ];
         assert_eq!(
             key_elements.len() + 1,
