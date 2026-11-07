@@ -822,7 +822,7 @@ impl AppShell {
             .connections()
             .first()
             .map(|connection| connection.id.as_str().to_string())
-            .unwrap_or_else(|| self.context.profile.clone());
+            .unwrap_or_default();
         let region = self.context.region.clone();
         self.apply_context(WorkspaceContext { profile, region }, window, cx);
     }
@@ -917,7 +917,7 @@ impl AppShell {
         Self::sync_provider_view(&self.main_window, &self.context_model, cx);
         self.fleet = fleet;
         self.fleet.update(cx, |fleet, cx| fleet.refresh(cx));
-        (!self.demo).then(|| {
+        (!self.demo && self.context.is_usable()).then(|| {
             self.message = self
                 .context
                 .save(&clouddeck_core::context_path())
