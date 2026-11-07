@@ -71,6 +71,8 @@ mod commands;
 pub use commands::*;
 mod table;
 pub use table::*;
+mod display_rows;
+pub use display_rows::*;
 mod region_scope;
 pub use region_scope::*;
 mod profile_picker;
