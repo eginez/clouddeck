@@ -8,8 +8,17 @@ use clouddeck_extension_api::{Call, Host, LogLevel, ProviderError};
 use clouddeck_gcp::{GcpProvider, Http, HttpError, Request, TokenSource, parse_adc};
 
 pub fn fixture(name: &str) -> String {
-    let path = format!("{}/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));
-    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path}: {e}"))
+    match name {
+        "adc_authorized_user.json" => include_str!("../fixtures/adc_authorized_user.json"),
+        "adc_service_account.json" => include_str!("../fixtures/adc_service_account.json"),
+        "aggregated_empty.json" => include_str!("../fixtures/aggregated_empty.json"),
+        "aggregated_instances.json" => include_str!("../fixtures/aggregated_instances.json"),
+        "projects.json" => include_str!("../fixtures/projects.json"),
+        "token.json" => include_str!("../fixtures/token.json"),
+        "zones.json" => include_str!("../fixtures/zones.json"),
+        other => panic!("unknown gcp test fixture: {other}"),
+    }
+    .to_string()
 }
 
 /// Serves recorded JSON by URL shape and remembers every URL it was asked for.
