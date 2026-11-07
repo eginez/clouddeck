@@ -5,11 +5,11 @@ use std::time::Duration;
 use clouddeck_core::{
     AddressKind, CenterContext, CenterInput, CenterState, CenterText, CloudDeckError,
     CommandContext, CommandId, ComputeServicePartialFailure, EscapeAction, EscapeContext, Instance,
-    MAIN_WINDOW_MIN_WIDTH, OPEN_IN_CONSOLE_FLASH, ProfileInput, RegionScope, Settings, Theme,
-    center_state, center_text, clock_text, console_url_for, copied_flash, escape_action,
-    filter_command_query, known_tag_keys, layout_rules, native_id, region_failure_reason,
-    region_scope_label, settings_path, should_auto_refresh, should_refresh_on_focus, stale_count,
-    updated_text,
+    MAIN_WINDOW_MIN_WIDTH, OPEN_IN_CONSOLE_FLASH, ProfileInput, ProviderMenuRow, RegionScope,
+    Settings, Theme, center_state, center_text, clock_text, console_url_for, copied_flash,
+    escape_action, filter_command_query, known_tag_keys, layout_rules, native_id,
+    region_failure_reason, region_scope_label, settings_path, should_auto_refresh,
+    should_refresh_on_focus, stale_count, updated_text,
 };
 use gpui::{
     AnyElement, AnyView, App, Bounds, ClickEvent, ClipboardItem, Context, Corner, Div, Entity,
@@ -28,6 +28,7 @@ use crate::fleet_state::FleetState;
 use crate::inspector_pane::InspectorPane;
 use crate::instance_table::{InstanceTable, InstanceTableEvent, table_key_bindings};
 use crate::profile_picker_view::{ProfilePicker, ProfilePickerEvent};
+use crate::provider_picker_view::{ProviderPicker, ProviderPickerEvent};
 use crate::region_picker_view::{RegionPicker, RegionPickerEvent};
 use crate::row_context_menu::{RowContextMenu, RowMenuEvent};
 use crate::search_field::{SearchField, search_key_bindings};
@@ -53,6 +54,7 @@ const AUTO_REFRESH_TICK: Duration = Duration::from_secs(30);
 #[derive(Debug, Clone, PartialEq)]
 pub enum Overlay {
     Profile,
+    Provider,
     Region,
     Palette,
     RowMenu {
@@ -65,6 +67,7 @@ pub enum Overlay {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MainWindowEvent {
     PickProfile(String),
+    PickProvider(String),
     ConnectToAws,
     RegionsChanged(Vec<String>),
     Retry(Option<String>),
@@ -81,6 +84,10 @@ pub struct MainWindow {
     pub available_regions: Vec<String>,
     pub failures: Vec<ComputeServicePartialFailure>,
     pub profiles: Vec<ProfileInput>,
+    pub provider_short_name: String,
+    pub connection_label: String,
+    pub sign_in: bool,
+    pub provider_menu: Vec<ProviderMenuRow>,
     pub overlay: Option<Overlay>,
     toolbar: Entity<Toolbar>,
     sidebar: Entity<Sidebar>,
@@ -232,12 +239,16 @@ impl MainWindow {
                 ContextBarEvent::OpenProfilePicker => {
                     this.toggle_overlay(Overlay::Profile, window, cx)
                 }
+                ContextBarEvent::OpenProviderPicker => {
+                    this.toggle_overlay(Overlay::Provider, window, cx)
+                }
                 ContextBarEvent::OpenRegionPicker => {
                     this.toggle_overlay(Overlay::Region, window, cx)
                 }
                 ContextBarEvent::OpenFailureDetails => {
                     this.toggle_overlay(Overlay::Failure, window, cx)
                 }
+                ContextBarEvent::SignIn => cx.emit(MainWindowEvent::ConnectToAws),
             },
         )
         .detach();
@@ -278,6 +289,10 @@ impl MainWindow {
             available_regions,
             failures: Vec::new(),
             profiles: Vec::new(),
+            provider_short_name: "AWS".to_string(),
+            connection_label: "Profile".to_string(),
+            sign_in: false,
+            provider_menu: Vec::new(),
             overlay: None,
             toolbar,
             sidebar,
@@ -409,6 +424,21 @@ impl MainWindow {
                             cx.emit(MainWindowEvent::ConnectToAws);
                         }
                         ProfilePickerEvent::Dismissed => this.close_overlay(window, cx),
+                    },
+                );
+                (picker.into(), subscription)
+            }
+            Overlay::Provider => {
+                let rows = self.provider_menu.clone();
+                let picker = cx.new(|_| ProviderPicker::new(rows));
+                let subscription = cx.subscribe_in(
+                    &picker,
+                    window,
+                    |this, _, event: &ProviderPickerEvent, window, cx| match event {
+                        ProviderPickerEvent::Picked(id) => {
+                            this.close_overlay(window, cx);
+                            cx.emit(MainWindowEvent::PickProvider(id.clone()));
+                        }
                     },
                 );
                 (picker.into(), subscription)
@@ -719,6 +749,13 @@ impl MainWindow {
                     .left(px(OVERLAY_EDGE_INSET))
                     .bottom(px(OVERLAY_ABOVE_STATUS_BAR)),
             ),
+            Overlay::Provider => (
+                "main.overlay.provider",
+                overlay_panel("main.overlay.provider", view)
+                    .absolute()
+                    .left(px(OVERLAY_EDGE_INSET))
+                    .bottom(px(OVERLAY_ABOVE_STATUS_BAR)),
+            ),
             Overlay::Region => (
                 "main.overlay.region",
                 overlay_panel("main.overlay.region", view)
@@ -816,12 +853,18 @@ impl MainWindow {
             && fleet.view_model.instances().is_empty()
             && !fleet.view_model.is_loading();
         self.last_load_error = shown_error;
+        let provider_short_name = self.provider_short_name.clone();
+        let connection_label = self.connection_label.clone();
+        let sign_in = self.sign_in;
         self.context_bar.update(cx, |bar, cx| {
             if bar.region_label == region_label
                 && bar.failed_regions == failed_regions
                 && bar.last_success_text == last_success_text
                 && bar.load_error_text == load_error_text
                 && bar.load_failed == load_failed
+                && bar.provider_short_name == provider_short_name
+                && bar.connection_label == connection_label
+                && bar.sign_in == sign_in
             {
                 return;
             }
@@ -830,6 +873,9 @@ impl MainWindow {
             bar.last_success_text = last_success_text;
             bar.load_error_text = load_error_text;
             bar.load_failed = load_failed;
+            bar.provider_short_name = provider_short_name;
+            bar.connection_label = connection_label;
+            bar.sign_in = sign_in;
             cx.notify();
         });
     }
