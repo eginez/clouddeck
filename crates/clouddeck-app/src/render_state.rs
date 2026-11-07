@@ -74,10 +74,12 @@ pub(crate) enum State {
     SettingsDark,
     /// Settings window at a width where the footer text has to be truncated.
     SettingsNarrow,
+    /// Settings window at the narrow width in the dark palette.
+    SettingsNarrowDark,
 }
 
 impl State {
-    pub(crate) const ALL: [State; 31] = [
+    pub(crate) const ALL: [State; 32] = [
         State::MainIdle,
         State::MainRowSelected,
         State::MainEmpty,
@@ -109,6 +111,7 @@ impl State {
         State::SettingsLight,
         State::SettingsDark,
         State::SettingsNarrow,
+        State::SettingsNarrowDark,
     ];
 
     /// The variant name, as accepted by `--render-state`.
@@ -145,6 +148,7 @@ impl State {
             State::SettingsLight => "SettingsLight",
             State::SettingsDark => "SettingsDark",
             State::SettingsNarrow => "SettingsNarrow",
+            State::SettingsNarrowDark => "SettingsNarrowDark",
         }
     }
 
@@ -167,7 +171,10 @@ impl State {
     pub(crate) fn is_settings(self) -> bool {
         matches!(
             self,
-            State::SettingsLight | State::SettingsDark | State::SettingsNarrow
+            State::SettingsLight
+                | State::SettingsDark
+                | State::SettingsNarrow
+                | State::SettingsNarrowDark
         )
     }
 
@@ -285,7 +292,8 @@ pub(crate) fn apply_render_state(
         | State::PluginsNarrow
         | State::SettingsLight
         | State::SettingsDark
-        | State::SettingsNarrow => {}
+        | State::SettingsNarrow
+        | State::SettingsNarrowDark => {}
     }
     // Focus and overlays settle on the next frame; make sure one is drawn.
     window.refresh();

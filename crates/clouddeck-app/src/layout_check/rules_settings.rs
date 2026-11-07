@@ -88,5 +88,10 @@ pub(crate) fn rules() -> Vec<Rule> {
         NARROW_WINDOW,
         "settings-narrow"
     ));
+    rules.extend(footer_rules!(
+        State::SettingsNarrowDark,
+        NARROW_WINDOW,
+        "settings-narrow-dark"
+    ));
     rules
 }

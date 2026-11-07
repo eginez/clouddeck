@@ -98,7 +98,7 @@ fn layout_rules_hold(cx: &mut TestAppContext) {
 /// Every named state has at least one layout rule.
 #[gpui::test]
 fn layout_rules_cover_states(_cx: &mut TestAppContext) {
-    const ALL: [State; 31] = [
+    const ALL: [State; 32] = [
         State::MainIdle,
         State::MainRowSelected,
         State::MainEmpty,
@@ -130,6 +130,7 @@ fn layout_rules_cover_states(_cx: &mut TestAppContext) {
         State::SettingsLight,
         State::SettingsDark,
         State::SettingsNarrow,
+        State::SettingsNarrowDark,
     ];
     let rules = all_rules();
     let uncovered: Vec<State> = ALL

@@ -77,7 +77,8 @@ fn service_for(state: State) -> (Arc<dyn Provider>, Vec<String>) {
         | State::PluginsNarrow
         | State::SettingsLight
         | State::SettingsDark
-        | State::SettingsNarrow => {
+        | State::SettingsNarrow
+        | State::SettingsNarrowDark => {
             unreachable!("only main window states have a fleet service")
         }
     }
@@ -283,7 +284,7 @@ fn open_settings(
     height: f32,
     cx: &mut TestAppContext,
 ) -> &mut VisualTestContext {
-    let dark = state == State::SettingsDark;
+    let dark = matches!(state, State::SettingsDark | State::SettingsNarrowDark);
     cx.update(|app| app.set_global(ActivePalette(Palette::for_dark(dark))));
     let window = cx.update(|app| {
         gpui_component::init(app);
@@ -434,7 +435,7 @@ mod tests {
     /// One key element per state that `apply_render_state` must produce.
     #[gpui::test]
     fn every_state_shows_its_key_element(cx: &mut TestAppContext) {
-        let key_elements: [(State, &str); 30] = [
+        let key_elements: [(State, &str); 31] = [
             (State::MainIdle, "main.root"),
             (State::MainRowSelected, "main.inspector"),
             (State::MainEmpty, "main.center-state"),
@@ -465,6 +466,7 @@ mod tests {
             (State::SettingsLight, "settings.footer"),
             (State::SettingsDark, "settings.footer"),
             (State::SettingsNarrow, "settings.footer"),
+            (State::SettingsNarrowDark, "settings.footer"),
         ];
         assert_eq!(
             key_elements.len() + 1,
