@@ -7,9 +7,10 @@ use crate::{
     theme::SurgicalTheme,
 };
 use clouddeck_core::{
-    DemoFleet, FLEET_REGIONS, InstanceListViewModel, ProfileInput, Provider, RegionScope, Settings,
-    UiState, WindowFrame, WorkspaceContext, demo_profiles, demo_region_names, settings_path,
-    workspace_provider,
+    Call, ContextModel, DemoFleet, FLEET_REGIONS, InstanceListViewModel, LoadHost, ProfileInput,
+    Provider, ProviderEntry, RegionScope, Settings, UiState, WindowFrame, WorkspaceContext,
+    demo_profiles, demo_region_names, settings_path, short_name, switch_active_provider,
+    workspace_provider_for,
 };
 use gpui::{
     AnyWindowHandle, App, Bounds, Context, Entity, IntoElement, KeyBinding, ParentElement, Render,
@@ -34,6 +35,7 @@ pub struct AppShell {
     main_window: Entity<MainWindow>,
     window_handle: AnyWindowHandle,
     context: WorkspaceContext,
+    context_model: ContextModel,
     demo: bool,
     demo_scenario: DemoFleet,
     wizard: Option<Entity<crate::account_window::AccountWindowView>>,
@@ -399,7 +401,28 @@ impl AppShell {
         fleet_regions: &[String],
         request_timeout: Duration,
     ) -> std::sync::Arc<dyn Provider> {
-        workspace_provider(
+        Self::provider_for_id(
+            "aws",
+            providers,
+            context,
+            demo,
+            demo_fleet,
+            fleet_regions,
+            request_timeout,
+        )
+    }
+
+    fn provider_for_id(
+        id: &str,
+        providers: &[std::sync::Arc<dyn Provider>],
+        context: &WorkspaceContext,
+        demo: bool,
+        demo_fleet: DemoFleet,
+        fleet_regions: &[String],
+        request_timeout: Duration,
+    ) -> std::sync::Arc<dyn Provider> {
+        workspace_provider_for(
+            id,
             providers,
             &context.profile,
             &context.region,
@@ -407,6 +430,23 @@ impl AppShell {
             fleet_regions,
             request_timeout,
         )
+    }
+
+    fn sync_provider_view(main_window: &Entity<MainWindow>, model: &ContextModel, cx: &mut App) {
+        let provider_short_name = model
+            .active_info()
+            .map(short_name)
+            .unwrap_or_else(|| "AWS".to_string());
+        let connection_label = model.connection_label().unwrap_or("Profile").to_string();
+        let sign_in = model.needs_sign_in();
+        let provider_menu = model.provider_menu();
+        main_window.update(cx, |main_window, cx| {
+            main_window.provider_short_name = provider_short_name;
+            main_window.connection_label = connection_label;
+            main_window.sign_in = sign_in;
+            main_window.provider_menu = provider_menu;
+            cx.notify();
+        });
     }
 
     fn build_with_scenario(
@@ -476,9 +516,23 @@ impl AppShell {
             restored
         };
         let fleet_regions = Self::fleet_regions(&scope, &available);
-        let request_timeout = Settings::load(&settings_path()).request_timeout();
+        let settings = Settings::load(&settings_path());
+        let request_timeout = settings.request_timeout();
         let providers = app_providers::providers(cx);
-        let view_model = InstanceListViewModel::new(Self::provider_for(
+        let context_model = ContextModel::new(
+            providers
+                .iter()
+                .map(|provider| ProviderEntry {
+                    info: provider.info(),
+                    signed_in: false,
+                    bundled: true,
+                })
+                .collect(),
+            settings.active_provider.as_deref(),
+            "aws",
+        );
+        let view_model = InstanceListViewModel::new(Self::provider_for_id(
+            context_model.active_provider(),
             &providers,
             &context,
             demo,
@@ -512,6 +566,7 @@ impl AppShell {
             window,
             cx,
         );
+        Self::sync_provider_view(&main_window, &context_model, cx);
         let window_bounds = cx.observe_window_bounds(window, |this: &mut Self, window, cx| {
             this.ui_window_frame = Some(Self::window_frame(window));
             this.schedule_ui_state_save(cx);
@@ -534,6 +589,7 @@ impl AppShell {
             main_window,
             window_handle: window.window_handle(),
             context,
+            context_model,
             demo,
             demo_scenario,
             message,
@@ -685,6 +741,7 @@ impl AppShell {
                         this.apply_context(next, window, cx);
                     }
                 }
+                MainWindowEvent::PickProvider(id) => this.pick_provider(id, window, cx),
                 MainWindowEvent::RegionsChanged(regions) => {
                     let region = match regions.as_slice() {
                         [only] => only.clone(),
@@ -700,6 +757,45 @@ impl AppShell {
         )
         .detach();
         main_window
+    }
+
+    fn pick_provider(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let providers = app_providers::providers(cx);
+        let Some(provider) = providers
+            .iter()
+            .find(|provider| provider.info().id == id)
+            .cloned()
+        else {
+            return;
+        };
+        let mut settings = Settings::load(&settings_path());
+        if !switch_active_provider(&mut self.context_model, &mut settings, id) {
+            return;
+        }
+        if let Err(error) = settings.save(&settings_path()) {
+            self.message = Some(format!("Could not remember this provider: {error}"));
+        }
+        let call = Call {
+            deadline: None,
+            host: &LoadHost,
+        };
+        self.context_model
+            .set_connections(provider.connections(&call));
+        let needs_sign_in = self.context_model.needs_sign_in();
+        self.context_model
+            .set_signed_in(provider.info().id.as_str(), !needs_sign_in);
+        if needs_sign_in {
+            Self::sync_provider_view(&self.main_window, &self.context_model, cx);
+            return;
+        }
+        let profile = self
+            .context_model
+            .connections()
+            .first()
+            .map(|connection| connection.id.as_str().to_string())
+            .unwrap_or_else(|| self.context.profile.clone());
+        let region = self.context.region.clone();
+        self.apply_context(WorkspaceContext { profile, region }, window, cx);
     }
 
     fn open_settings(&mut self, cx: &mut Context<Self>) {
@@ -737,7 +833,8 @@ impl AppShell {
         let providers = app_providers::providers(cx);
         #[cfg(test)]
         let provider = self.test_service_override.clone().unwrap_or_else(|| {
-            Self::provider_for(
+            Self::provider_for_id(
+                self.context_model.active_provider(),
                 &providers,
                 &self.context,
                 self.demo,
@@ -747,7 +844,8 @@ impl AppShell {
             )
         });
         #[cfg(not(test))]
-        let provider = Self::provider_for(
+        let provider = Self::provider_for_id(
+            self.context_model.active_provider(),
             &providers,
             &self.context,
             self.demo,
@@ -787,6 +885,7 @@ impl AppShell {
             window,
             cx,
         );
+        Self::sync_provider_view(&self.main_window, &self.context_model, cx);
         self.fleet = fleet;
         self.fleet.update(cx, |fleet, cx| fleet.refresh(cx));
         (!self.demo).then(|| {
@@ -908,6 +1007,53 @@ impl Render for AppShell {
                     .child(self.main_window.clone()),
             )
             .on_action(cx.listener(|this, _: &Refresh, _, cx| this.refresh(cx)))
+    }
+}
+
+#[cfg(test)]
+mod provider_switch_tests {
+    use super::*;
+    use gpui::{TestAppContext, VisualTestContext};
+
+    fn add_rooted_shell(
+        cx: &mut TestAppContext,
+        build: impl FnOnce(&mut Window, &mut Context<AppShell>) -> AppShell + 'static,
+    ) -> (Entity<AppShell>, &mut VisualTestContext) {
+        let slot = std::rc::Rc::new(std::cell::RefCell::new(None));
+        let slot_for_window = slot.clone();
+        let (_root, cx) = cx.add_window_view(move |window, cx| {
+            gpui_component::init(cx);
+            let shell = cx.new(|cx| build(window, cx));
+            *slot_for_window.borrow_mut() = Some(shell.clone());
+            gpui_component::Root::new(shell, window, cx)
+        });
+        let shell = slot
+            .borrow()
+            .as_ref()
+            .expect("rooted shell entity should be created")
+            .clone();
+        (shell, cx)
+    }
+
+    #[gpui::test]
+    fn unregistered_provider_id_leaves_the_active_provider_unchanged(cx: &mut TestAppContext) {
+        let (shell, cx) = add_rooted_shell(cx, AppShell::new_demo);
+        let before = shell.read_with(cx, |shell, _| {
+            shell.context_model.active_provider().to_string()
+        });
+        let main_window = shell.read_with(cx, |shell, _| shell.main_window.clone());
+
+        main_window.update(cx, |_, cx| {
+            cx.emit(MainWindowEvent::PickProvider(
+                "no-such-provider".to_string(),
+            ))
+        });
+        cx.run_until_parked();
+
+        let after = shell.read_with(cx, |shell, _| {
+            shell.context_model.active_provider().to_string()
+        });
+        assert_eq!(before, after);
     }
 }
 

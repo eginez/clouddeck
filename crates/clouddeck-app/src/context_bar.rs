@@ -1,7 +1,8 @@
 //! Bottom status bar: provider, profile, region, counts, status (design/images/01).
 
 use clouddeck_core::{
-    StatusItem, instance_count_text, layout_rules, shown_count_text, status_item,
+    StatusItem, connection_tooltip, instance_count_text, layout_rules, shown_count_text,
+    status_item,
 };
 use gpui::{
     AnyElement, AnyView, AppContext, ClickEvent, Context, Entity, EventEmitter, IntoElement,
@@ -23,10 +24,12 @@ const CONTROL_RADIUS: f32 = 4.0;
 pub enum ContextBarEvent {
     OpenProfilePicker,
     OpenRegionPicker,
+    OpenProviderPicker,
     OpenFailureDetails,
     Refresh,
     ToggleInspector,
     ToggleSidebar,
+    SignIn,
 }
 
 /// Callers that change the public fields must `cx.notify()` the bar themselves.
@@ -37,6 +40,9 @@ pub struct ContextBar {
     pub last_success_text: String,
     pub load_error_text: Option<String>,
     pub load_failed: bool,
+    pub provider_short_name: String,
+    pub connection_label: String,
+    pub sign_in: bool,
 }
 
 impl EventEmitter<ContextBarEvent> for ContextBar {}
@@ -51,6 +57,9 @@ impl ContextBar {
             last_success_text: String::new(),
             load_error_text: None,
             load_failed: false,
+            provider_short_name: "AWS".to_string(),
+            connection_label: "Profile".to_string(),
+            sign_in: false,
         }
     }
 }
@@ -77,8 +86,11 @@ impl Render for ContextBar {
         let inspector_open = state.inspector_open;
         let sidebar_open = state.sidebar_open;
 
-        record(cx, "bar.profile", text_in(profile.clone(), "text"));
-        record(cx, "bar.region", text_in(self.region_label.clone(), "text"));
+        record(
+            cx,
+            "bar.aws",
+            text_in(self.provider_short_name.clone(), "dim"),
+        );
         if item.is_warning() {
             record(cx, "bar.failure", text_in(item.text(), "warntext"));
         } else {
@@ -90,25 +102,32 @@ impl Render for ContextBar {
             .flex()
             .items_center()
             .gap(px(GAP))
-            .child(aws_mark(demo, &palette))
-            .child(picker_button(
-                "bar.profile",
-                AppIcon::User,
-                profile,
-                "Switch profile  ⌘P",
-                ContextBarEvent::OpenProfilePicker,
-                &palette,
-                cx,
-            ))
-            .child(picker_button(
-                "bar.region",
-                AppIcon::Globe,
-                self.region_label.clone(),
-                "Switch region  ⌘⇧R",
-                ContextBarEvent::OpenRegionPicker,
-                &palette,
-                cx,
-            ));
+            .child(provider_mark(&self.provider_short_name, demo, &palette, cx));
+        if self.sign_in {
+            left = left.child(sign_in_button(&palette, cx));
+        } else {
+            record(cx, "bar.profile", text_in(profile.clone(), "text"));
+            record(cx, "bar.region", text_in(self.region_label.clone(), "text"));
+            left = left
+                .child(picker_button(
+                    "bar.profile",
+                    AppIcon::User,
+                    profile,
+                    connection_tooltip(&self.connection_label, "⌘P"),
+                    ContextBarEvent::OpenProfilePicker,
+                    &palette,
+                    cx,
+                ))
+                .child(picker_button(
+                    "bar.region",
+                    AppIcon::Globe,
+                    self.region_label.clone(),
+                    "Switch region  ⌘⇧R".to_string(),
+                    ContextBarEvent::OpenRegionPicker,
+                    &palette,
+                    cx,
+                ));
+        }
         if rules.show_instance_count {
             let count = instance_count_text(total);
             record(cx, "bar.count", text_in(count.clone(), "dim"));
@@ -209,14 +228,23 @@ fn text_in(text: String, fg: &'static str) -> Recorded {
     }
 }
 
-fn aws_mark(demo: bool, palette: &Palette) -> impl IntoElement {
+fn provider_mark(
+    short_name: &str,
+    demo: bool,
+    palette: &Palette,
+    cx: &Context<ContextBar>,
+) -> impl IntoElement {
     div()
+        .id("bar.aws")
         .debug_selector(|| "bar.aws".into())
         .flex()
         .items_center()
         .gap(px(6.0))
+        .on_click(
+            cx.listener(|_, _: &ClickEvent, _, cx| cx.emit(ContextBarEvent::OpenProviderPicker)),
+        )
         .child(AppIcon::Cloud.icon().xsmall().text_color(palette.dim))
-        .child("AWS")
+        .child(short_name.to_string())
         .when(demo, |row| {
             row.child(
                 div()
@@ -230,11 +258,26 @@ fn aws_mark(demo: bool, palette: &Palette) -> impl IntoElement {
         })
 }
 
+fn sign_in_button(palette: &Palette, cx: &Context<ContextBar>) -> impl IntoElement {
+    div()
+        .id("bar.sign-in")
+        .debug_selector(|| "bar.sign-in".into())
+        .flex()
+        .items_center()
+        .px(px(6.0))
+        .h(px(CONTROL_HEIGHT))
+        .rounded(px(CONTROL_RADIUS))
+        .text_color(palette.accent)
+        .hover(|button| button.bg(palette.hover))
+        .on_click(cx.listener(|_, _: &ClickEvent, _, cx| cx.emit(ContextBarEvent::SignIn)))
+        .child("Sign in")
+}
+
 fn picker_button(
     id: &'static str,
     icon: AppIcon,
     label: String,
-    tooltip: &'static str,
+    tooltip: String,
     event: ContextBarEvent,
     palette: &Palette,
     cx: &Context<ContextBar>,
@@ -250,7 +293,7 @@ fn picker_button(
         .rounded(px(CONTROL_RADIUS))
         .text_color(palette.text)
         .hover(|button| button.bg(palette.hover))
-        .tooltip(move |_, cx| AnyView::from(cx.new(|_| Tooltip::new(tooltip))))
+        .tooltip(move |_, cx| AnyView::from(cx.new(|_| Tooltip::new(tooltip.clone()))))
         .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.emit(event)))
         .child(icon.icon().xsmall().text_color(palette.dim))
         .child(label)

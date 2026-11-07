@@ -16,6 +16,26 @@ pub fn workspace_provider(
     fleet_regions: &[String],
     request_timeout: Duration,
 ) -> Arc<dyn Provider> {
+    workspace_provider_for(
+        "aws",
+        providers,
+        profile,
+        region,
+        demo,
+        fleet_regions,
+        request_timeout,
+    )
+}
+
+pub fn workspace_provider_for(
+    provider_id: &str,
+    providers: &[Arc<dyn Provider>],
+    profile: &str,
+    region: &str,
+    demo: Option<DemoFleet>,
+    fleet_regions: &[String],
+    request_timeout: Duration,
+) -> Arc<dyn Provider> {
     let fleet = region == "fleet";
     let settings = ScopeSettings {
         request_timeout,
@@ -34,15 +54,19 @@ pub fn workspace_provider(
         Selection::new().with(REGION, vec![ValueId::from(region)])
     };
     scoped_provider(
-        registry_entry(providers, demo),
+        registry_entry(provider_id, providers, demo),
         ConnectionId::from(profile),
         selection,
         settings,
     )
 }
 
-fn registry_entry(providers: &[Arc<dyn Provider>], demo: Option<DemoFleet>) -> Arc<dyn Provider> {
-    let id = if demo.is_some() { "demo" } else { "aws" };
+fn registry_entry(
+    provider_id: &str,
+    providers: &[Arc<dyn Provider>],
+    demo: Option<DemoFleet>,
+) -> Arc<dyn Provider> {
+    let id = if demo.is_some() { "demo" } else { provider_id };
     providers
         .iter()
         .find(|provider| provider.info().id == id)
@@ -62,4 +86,84 @@ fn registry_entry(providers: &[Arc<dyn Provider>], demo: Option<DemoFleet>) -> A
                 )))
             }
         })
+}
+
+#[cfg(test)]
+mod registry_entry_tests {
+    use super::*;
+    use clouddeck_provider_api::{
+        Call, Connection, Dimension, KindInfo, ListResult, ProviderError,
+    };
+
+    struct Named(&'static str);
+
+    impl Provider for Named {
+        fn info(&self) -> clouddeck_provider_api::ProviderInfo {
+            clouddeck_provider_api::ProviderInfo {
+                id: self.0.to_string(),
+                name: self.0.to_string(),
+                version: "1.0.0".to_string(),
+                connection_label: "Profile".to_string(),
+            }
+        }
+
+        fn connections(&self, _cx: &Call<'_>) -> Result<Vec<Connection>, ProviderError> {
+            Ok(Vec::new())
+        }
+
+        fn dimensions(
+            &self,
+            _cx: &Call<'_>,
+            _connection: &ConnectionId,
+        ) -> Result<Vec<Dimension>, ProviderError> {
+            Ok(Vec::new())
+        }
+
+        fn kinds(&self) -> Vec<KindInfo> {
+            Vec::new()
+        }
+
+        fn list(
+            &self,
+            _cx: &Call<'_>,
+            _connection: &ConnectionId,
+            _kind: &clouddeck_provider_api::KindId,
+            _selection: &Selection,
+        ) -> ListResult {
+            ListResult {
+                resources: Vec::new(),
+                failures: Vec::new(),
+            }
+        }
+
+        fn console_url(
+            &self,
+            _connection: &ConnectionId,
+            _kind: &clouddeck_provider_api::KindId,
+            _resource: &clouddeck_provider_api::Instance,
+        ) -> Option<String> {
+            None
+        }
+
+        fn fields(
+            &self,
+            _kind: &clouddeck_provider_api::KindId,
+        ) -> Vec<clouddeck_provider_api::FieldDef> {
+            Vec::new()
+        }
+    }
+
+    fn registered() -> Vec<Arc<dyn Provider>> {
+        vec![Arc::new(Named("aws")), Arc::new(Named("gcp"))]
+    }
+
+    #[test]
+    fn requested_provider_is_chosen_and_unknown_ids_fall_back_to_aws() {
+        let providers = registered();
+        let picked = registry_entry("gcp", &providers, None);
+        assert_eq!(picked.info().id, "gcp");
+
+        let fallback = registry_entry("missing", &providers, None);
+        assert_eq!(fallback.info().id, "aws");
+    }
 }

@@ -25,6 +25,7 @@ mod linux_titlebar;
 mod main_window;
 mod plugins_window;
 mod profile_picker_view;
+mod provider_picker_view;
 mod region_picker_view;
 mod render_state;
 mod row_context_menu;
@@ -44,6 +45,8 @@ mod updater;
 // a full-width central table with a bottom context bar. `shell.rs` already
 // composes the shell without it; see
 // `AppShell::render`'s `table_and_status_are_docked_without_a_sidebar` test.
+#[cfg(test)]
+mod context_bar_provider_tests;
 mod view_models;
 mod welcome_window;
 
