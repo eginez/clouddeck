@@ -6,8 +6,8 @@ use crate::instance::{Instance, native_id};
 use crate::service_provider::{LoadHost, REGION, cloud_deck_error, join_failure};
 use crate::{
     Call, CellFailure, CloudDeckError, CompiledQuery, ComputeServicePartialFailure, ConnectionId,
-    KindId, ListResult, Provider, ProviderError, ProviderFacet, QueryError, Selection,
-    SearchIndex, StateFacetCounts, merge_with_previous, provider_facet_counts,
+    KindId, ListResult, Provider, ProviderError, ProviderFacet, ProviderInfo, QueryError,
+    Selection, SearchIndex, StateFacetCounts, merge_with_previous, provider_facet_counts,
     state_facet_counts_indexed, type_facet_counts_indexed,
 };
 
@@ -171,6 +171,10 @@ impl InstanceListViewModel {
                 .iter()
                 .filter_map(|i| i.instance_type.clone()),
         )
+    }
+
+    pub fn provider_info(&self) -> ProviderInfo {
+        self.provider.info()
     }
 
     pub fn row_provider_id(&self) -> String {
