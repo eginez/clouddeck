@@ -17,7 +17,13 @@ use gpui::{
     Styled, Subscription, Task, Window, WindowHandle, actions, div, point, prelude::*, px, size,
 };
 use gpui_component::Root;
-use std::{cell::RefCell, collections::HashSet, path::PathBuf, rc::Rc, time::Duration};
+use std::{
+    cell::RefCell,
+    collections::HashSet,
+    path::{Path, PathBuf},
+    rc::Rc,
+    time::Duration,
+};
 
 actions!(clouddeck, [Refresh]);
 
@@ -481,7 +487,16 @@ impl AppShell {
         cx: &mut Context<Self>,
     ) -> Self {
         let loaded = Self::profiles(demo, demo_scenario);
-        Self::build_with_profiles(window, demo, demo_scenario, loaded, ui_state_path, cx)
+        let settings = Settings::load(&settings_path());
+        Self::build_with_profiles(
+            window,
+            demo,
+            demo_scenario,
+            loaded,
+            ui_state_path,
+            settings,
+            cx,
+        )
     }
 
     fn build_with_profiles(
@@ -490,6 +505,7 @@ impl AppShell {
         demo_scenario: DemoFleet,
         loaded: Result<Vec<clouddeck_core::AwsProfile>, std::io::Error>,
         ui_state_path: Option<PathBuf>,
+        settings: Settings,
         cx: &mut Context<Self>,
     ) -> Self {
         let message = loaded
@@ -530,12 +546,12 @@ impl AppShell {
             restored
         };
         let fleet_regions = Self::fleet_regions(&scope, &available);
-        let settings = Settings::load(&settings_path());
         let request_timeout = settings.request_timeout();
         let providers = app_providers::providers(cx);
         let mut context_model = ContextModel::new(
             providers
                 .iter()
+                .filter(|provider| demo || provider.info().id != "demo")
                 .map(|provider| ProviderEntry {
                     info: provider.info(),
                     signed_in: false,
@@ -800,29 +816,38 @@ impl AppShell {
     }
 
     fn pick_provider(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.switch_provider_to(id, &settings_path(), window, cx);
+    }
+
+    fn switch_provider_to(
+        &mut self,
+        id: &str,
+        settings_file: &Path,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let providers = app_providers::providers(cx);
         if !providers.iter().any(|provider| provider.info().id == id) {
             return;
         }
-        let mut settings = Settings::load(&settings_path());
+        let mut settings = Settings::load(settings_file);
         let switched = switch_active_provider(&mut self.context_model, &mut settings, id);
         if !switched && !self.context_model.needs_sign_in() {
             return;
         }
-        if switched && let Err(error) = settings.save(&settings_path()) {
+        if switched && let Err(error) = settings.save(settings_file) {
             self.message = Some(format!("Could not remember this provider: {error}"));
         }
         Self::load_connections(&mut self.context_model, &providers);
-        if self.context_model.needs_sign_in() {
-            Self::sync_provider_view(&self.main_window, &self.context_model, cx);
-            return;
-        }
         let profile = self
             .context_model
             .connections()
             .first()
-            .map(|connection| connection.id.as_str().to_string())
-            .unwrap_or_default();
+            .map(|connection| connection.id.as_str().to_string());
+        let Some(profile) = profile.filter(|_| !self.context_model.needs_sign_in()) else {
+            Self::sync_provider_view(&self.main_window, &self.context_model, cx);
+            return;
+        };
         let region = self.context.region.clone();
         self.apply_context(WorkspaceContext { profile, region }, window, cx);
     }
@@ -1071,6 +1096,174 @@ mod provider_switch_tests {
             .expect("rooted shell entity should be created")
             .clone();
         (shell, cx)
+    }
+
+    fn compute_provider(id: &str) -> std::sync::Arc<dyn Provider> {
+        std::sync::Arc::new(clouddeck_core::ComputeServiceProvider::new(
+            id,
+            vec![clouddeck_core::Connection {
+                id: "default".into(),
+                display_name: "default".to_string(),
+            }],
+            Vec::new(),
+            |_, _| Box::new(clouddeck_core::MockComputeService::new(Vec::new(), None)),
+        ))
+    }
+
+    struct SignedOut(std::sync::Arc<dyn Provider>);
+
+    impl Provider for SignedOut {
+        fn info(&self) -> clouddeck_core::ProviderInfo {
+            self.0.info()
+        }
+
+        fn connections(
+            &self,
+            _cx: &clouddeck_core::Call<'_>,
+        ) -> Result<Vec<clouddeck_core::Connection>, clouddeck_core::ProviderError> {
+            Err(clouddeck_core::ProviderError::of(
+                clouddeck_core::ErrorKind::Auth,
+            ))
+        }
+
+        fn dimensions(
+            &self,
+            cx: &clouddeck_core::Call<'_>,
+            connection: &clouddeck_core::ConnectionId,
+        ) -> Result<Vec<clouddeck_core::Dimension>, clouddeck_core::ProviderError> {
+            self.0.dimensions(cx, connection)
+        }
+
+        fn kinds(&self) -> Vec<clouddeck_core::KindInfo> {
+            self.0.kinds()
+        }
+
+        fn list(
+            &self,
+            cx: &clouddeck_core::Call<'_>,
+            connection: &clouddeck_core::ConnectionId,
+            kind: &clouddeck_core::KindId,
+            selection: &clouddeck_core::Selection,
+        ) -> clouddeck_core::ListResult {
+            self.0.list(cx, connection, kind, selection)
+        }
+
+        fn console_url(
+            &self,
+            connection: &clouddeck_core::ConnectionId,
+            kind: &clouddeck_core::KindId,
+            resource: &clouddeck_core::Instance,
+        ) -> Option<String> {
+            self.0.console_url(connection, kind, resource)
+        }
+
+        fn fields(&self, kind: &clouddeck_core::KindId) -> Vec<clouddeck_core::FieldDef> {
+            self.0.fields(kind)
+        }
+    }
+
+    fn install_registry(cx: &mut TestAppContext, gcp: std::sync::Arc<dyn Provider>) {
+        cx.update(|cx| {
+            let registry = clouddeck_core::extension_host::app_registry(
+                None,
+                Path::new("/nonexistent-clouddeck-extensions"),
+                Path::new("/nonexistent-clouddeck-state"),
+                vec![compute_provider("aws"), gcp],
+            );
+            cx.set_global(crate::app_providers::AppProviders::new(registry));
+        });
+    }
+
+    fn scoped_provider_id(shell: &Entity<AppShell>, cx: &mut VisualTestContext) -> String {
+        shell.read_with(cx, |shell, cx| {
+            shell.fleet.read(cx).view_model.row_provider_id()
+        })
+    }
+
+    #[gpui::test]
+    fn switching_provider_persists_the_choice_and_rebuilds_the_fleet(cx: &mut TestAppContext) {
+        install_registry(cx, compute_provider("gcp"));
+        let (shell, cx) = add_rooted_shell(cx, AppShell::new_demo);
+        let settings_file =
+            std::env::temp_dir().join(format!("clouddeck-switch-{}.json", std::process::id()));
+        let _ = std::fs::remove_file(&settings_file);
+        let fleet_before = shell.read_with(cx, |shell, _| shell.fleet.entity_id());
+
+        shell.update_in(cx, |shell, window, cx| {
+            shell.switch_provider_to("gcp", &settings_file, window, cx)
+        });
+        cx.run_until_parked();
+
+        shell.read_with(cx, |shell, _| {
+            assert_eq!(shell.context_model.active_provider(), "gcp");
+            assert_eq!(shell.context_model.connections().len(), 1);
+        });
+        assert_eq!(
+            Settings::load(&settings_file).active_provider.as_deref(),
+            Some("gcp")
+        );
+        let fleet_after = shell.read_with(cx, |shell, _| shell.fleet.entity_id());
+        assert_ne!(fleet_before, fleet_after);
+
+        shell.update_in(cx, |shell, window, cx| {
+            shell.switch_provider_to("aws", &settings_file, window, cx)
+        });
+        cx.run_until_parked();
+
+        shell.read_with(cx, |shell, _| {
+            assert_eq!(shell.context_model.active_provider(), "aws");
+        });
+        assert_eq!(
+            Settings::load(&settings_file).active_provider.as_deref(),
+            Some("aws")
+        );
+        let _ = std::fs::remove_file(&settings_file);
+    }
+
+    #[gpui::test]
+    fn switching_to_a_provider_that_needs_sign_in_shows_the_prompt(cx: &mut TestAppContext) {
+        install_registry(cx, std::sync::Arc::new(SignedOut(compute_provider("gcp"))));
+        let (shell, cx) = add_rooted_shell(cx, AppShell::new_demo);
+        let settings_file =
+            std::env::temp_dir().join(format!("clouddeck-sign-in-{}.json", std::process::id()));
+        let _ = std::fs::remove_file(&settings_file);
+
+        shell.update_in(cx, |shell, window, cx| {
+            shell.switch_provider_to("gcp", &settings_file, window, cx)
+        });
+        cx.run_until_parked();
+
+        shell.read_with(cx, |shell, _| {
+            assert!(shell.context_model.needs_sign_in());
+        });
+        let main_window = shell.read_with(cx, |shell, _| shell.main_window.clone());
+        assert!(main_window.read_with(cx, |main_window, _| main_window.sign_in));
+        let _ = std::fs::remove_file(&settings_file);
+    }
+
+    #[gpui::test]
+    fn persisted_active_provider_is_used_at_launch(cx: &mut TestAppContext) {
+        install_registry(cx, compute_provider("gcp"));
+        let settings = Settings {
+            active_provider: Some("gcp".to_string()),
+            ..Settings::default()
+        };
+        let (shell, cx) = add_rooted_shell(cx, move |window, cx| {
+            AppShell::build_with_profiles(
+                window,
+                false,
+                DemoFleet::Happy,
+                Ok(Vec::new()),
+                None,
+                settings,
+                cx,
+            )
+        });
+
+        shell.read_with(cx, |shell, _| {
+            assert_eq!(shell.context_model.active_provider(), "gcp");
+        });
+        assert_eq!(scoped_provider_id(&shell, cx), "gcp");
     }
 
     #[gpui::test]
@@ -1596,6 +1789,7 @@ mod tests {
                     DemoFleet::Happy,
                     Ok(Vec::new()),
                     Some(build_path),
+                    Settings::default(),
                     cx,
                 )
             } else {
