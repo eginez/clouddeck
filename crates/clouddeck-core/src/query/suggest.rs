@@ -403,6 +403,7 @@ fn field_hint(field: QueryField) -> &'static str {
         QueryField::Ip => "private or public",
         QueryField::Private => "private IP",
         QueryField::Public => "public IP",
+        QueryField::ProviderFacet => "provider id, e.g. aws",
         QueryField::Provider(name) => provider_field(name).map_or("", |def| def.hint.as_str()),
         QueryField::Age => "time since launch, e.g. >30d",
         QueryField::Has => "public-ip, tags, name",
@@ -504,8 +505,8 @@ mod tests {
     }
 
     #[test]
-    fn letter_p_suggests_private_public() {
-        assert_eq!(labels("p"), ["private:", "public:"]);
+    fn letter_p_suggests_private_public_provider() {
+        assert_eq!(labels("p"), ["private:", "public:", "provider:"]);
     }
 
     #[test]

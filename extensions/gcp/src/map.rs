@@ -137,6 +137,7 @@ pub fn zone_dimension(zones: &[Zone]) -> Dimension {
     Dimension {
         id: ZONE_DIM.into(),
         label: "Zone".to_string(),
+        plural_label: None,
         multi: true,
         optional: true,
         values,

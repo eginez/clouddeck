@@ -6,8 +6,9 @@ use crate::instance::{Instance, native_id};
 use crate::service_provider::{LoadHost, REGION, cloud_deck_error, join_failure};
 use crate::{
     Call, CellFailure, CloudDeckError, CompiledQuery, ComputeServicePartialFailure, ConnectionId,
-    KindId, ListResult, Provider, ProviderError, QueryError, Selection, SearchIndex,
-    StateFacetCounts, merge_with_previous, state_facet_counts_indexed, type_facet_counts_indexed,
+    KindId, ListResult, Provider, ProviderError, ProviderFacet, QueryError, Selection,
+    SearchIndex, StateFacetCounts, merge_with_previous, provider_facet_counts,
+    state_facet_counts_indexed, type_facet_counts_indexed,
 };
 
 /// Rust port of the Swift oracle's `InstanceListViewModel`
@@ -172,15 +173,30 @@ impl InstanceListViewModel {
         )
     }
 
+    pub fn row_provider_id(&self) -> String {
+        self.provider.info().id
+    }
+
+    pub fn provider_facet(&self) -> Vec<ProviderFacet> {
+        let info = self.provider.info();
+        let rows: Vec<(String, String)> = self
+            .instances
+            .iter()
+            .map(|_| (info.id.clone(), info.name.clone()))
+            .collect();
+        provider_facet_counts(&rows)
+    }
+
     /// The current instance list with search/state/type filters applied,
     /// sorted by instance ID case-insensitively.
     pub fn filtered_instances(&self) -> Vec<Instance> {
         let states = normalized_selection(&self.selected_state);
         let instance_types = normalized_selection(&self.selected_instance_type);
+        let provider_id = self.row_provider_id();
 
         let mut filtered: Vec<Instance> = self
             .search_index
-            .matching(&self.compile_search(), &self.instances)
+            .matching(Some(provider_id.as_str()), &self.compile_search(), &self.instances)
             .into_iter()
             .filter(|instance| {
                 states.is_empty() || states.contains(&instance.state.raw.to_lowercase())
@@ -698,6 +714,36 @@ mod tests {
         vm.refresh().await;
 
         assert_eq!(vm.instances().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn provider_term_filters_rows_by_their_provider() {
+        let mut vm = view_model_for(TestScenarioKind::SmallHappyPath);
+        assert_eq!(vm.row_provider_id(), "aws");
+        vm.load_instances().await;
+        let total = vm.instances().len();
+
+        vm.set_search_text("provider:aws");
+        assert_eq!(vm.filtered_instances().len(), total);
+        vm.set_search_text("provider:AW");
+        assert_eq!(vm.filtered_instances().len(), total);
+        vm.set_search_text("provider:gcp");
+        assert!(vm.filtered_instances().is_empty());
+        vm.set_search_text("-provider:aws");
+        assert!(vm.filtered_instances().is_empty());
+    }
+
+    #[tokio::test]
+    async fn provider_facet_has_one_entry_once_rows_load() {
+        let mut vm = view_model_for(TestScenarioKind::SmallHappyPath);
+        assert!(vm.provider_facet().is_empty());
+        vm.load_instances().await;
+
+        let facet = vm.provider_facet();
+        assert_eq!(facet.len(), 1);
+        assert_eq!(facet[0].id, "aws");
+        assert_eq!(facet[0].name, "AWS");
+        assert_eq!(facet[0].count, vm.instances().len());
     }
 
     #[tokio::test]

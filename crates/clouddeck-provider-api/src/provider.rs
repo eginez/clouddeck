@@ -243,6 +243,7 @@ mod tests {
             Ok(vec![Dimension {
                 id: "place".into(),
                 label: "Place".to_string(),
+                plural_label: None,
                 multi: true,
                 optional: true,
                 values: vec![

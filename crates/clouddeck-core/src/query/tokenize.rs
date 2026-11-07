@@ -32,6 +32,8 @@ pub enum QueryField {
     Private,
     /// `public:` public IP.
     Public,
+    /// `provider:` provider id prefix.
+    ProviderFacet,
     /// `age:` launch age.
     Age,
     /// `has:` attribute presence.
@@ -55,6 +57,7 @@ impl QueryField {
             QueryField::Ip,
             QueryField::Private,
             QueryField::Public,
+            QueryField::ProviderFacet,
         ];
         fields.extend(
             super::fields::provider_fields()
@@ -78,6 +81,7 @@ impl QueryField {
             QueryField::Ip => "ip",
             QueryField::Private => "private",
             QueryField::Public => "public",
+            QueryField::ProviderFacet => "provider",
             QueryField::Age => "age",
             QueryField::Has => "has",
             QueryField::Tag => "tag",
@@ -185,15 +189,15 @@ mod tests {
 
     #[test]
     fn all_fields_have_expected_names() {
-        assert_eq!(QueryField::all().len(), 17);
+        assert_eq!(QueryField::all().len(), 18);
         assert_eq!(
             QueryField::all()
                 .iter()
                 .map(|f| f.name())
                 .collect::<Vec<_>>(),
             [
-                "name", "id", "state", "type", "az", "region", "ip", "private", "public", "vpc",
-                "subnet", "sg", "ami", "key", "age", "has", "tag",
+                "name", "id", "state", "type", "az", "region", "ip", "private", "public",
+                "provider", "vpc", "subnet", "sg", "ami", "key", "age", "has", "tag",
             ]
         );
     }

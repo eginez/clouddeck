@@ -516,6 +516,7 @@ mod tests {
         let dim = Dimension {
             id: "region".into(),
             label: "Region".into(),
+            plural_label: None,
             multi: true,
             optional: true,
             values: vec![DimValue {

@@ -47,7 +47,7 @@ pub fn state_facet_counts_indexed(
     let q = query_without_field(query, QueryField::State, known_tag_keys);
     let compiled = compile(&q, known_tag_keys, now);
     let mut counts = StateFacetCounts::default();
-    for instance in index.matching(&compiled, instances) {
+    for instance in index.matching(None, &compiled, instances) {
         counts.all += 1;
         counts.running += has_state(instance, "running") as usize;
         counts.stopped += has_state(instance, "stopped") as usize;
@@ -91,7 +91,7 @@ pub fn type_facet_counts_indexed(
 
     let q = query_without_field(query, QueryField::Type, known_tag_keys);
     let compiled = compile(&q, known_tag_keys, now);
-    for instance in index.matching(&compiled, instances) {
+    for instance in index.matching(None, &compiled, instances) {
         if let Some((_, count)) = instance
             .instance_type
             .as_deref()
@@ -117,6 +117,32 @@ pub fn top_types(counts: &[(String, usize)], n: usize) -> Vec<(String, usize)> {
     ranked.truncate(n);
     ranked.sort_by_key(|(name, _)| name.to_lowercase());
     ranked
+}
+
+/// Rows belonging to one provider.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderFacet {
+    pub id: String,
+    pub name: String,
+    pub count: usize,
+}
+
+/// Counts rows per provider from `(id, name)` pairs, keeping providers with rows, sorted by name.
+pub fn provider_facet_counts(rows: &[(String, String)]) -> Vec<ProviderFacet> {
+    let mut by_id: BTreeMap<&str, ProviderFacet> = BTreeMap::new();
+    for (id, name) in rows {
+        by_id
+            .entry(id.as_str())
+            .or_insert_with(|| ProviderFacet {
+                id: id.clone(),
+                name: name.clone(),
+                count: 0,
+            })
+            .count += 1;
+    }
+    let mut facets: Vec<ProviderFacet> = by_id.into_values().collect();
+    facets.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.id.cmp(&b.id)));
+    facets
 }
 
 fn has_state(instance: &Instance, state: &str) -> bool {
@@ -230,6 +256,33 @@ mod tests {
     fn type_counts_of_empty_slice_are_empty() {
         let k = known_tag_keys(&fleet_instances());
         assert!(type_facet_counts(&[], "", &k, now()).is_empty());
+    }
+
+    #[test]
+    fn provider_facet_counts_rows_per_provider_sorted_by_name() {
+        let pair = |id: &str, name: &str| (id.to_string(), name.to_string());
+        let rows = [
+            pair("gcp", "Google Cloud"),
+            pair("aws", "AWS"),
+            pair("aws", "AWS"),
+        ];
+        let facets = provider_facet_counts(&rows);
+        assert_eq!(
+            facets,
+            vec![
+                ProviderFacet {
+                    id: "aws".into(),
+                    name: "AWS".into(),
+                    count: 2,
+                },
+                ProviderFacet {
+                    id: "gcp".into(),
+                    name: "Google Cloud".into(),
+                    count: 1,
+                },
+            ]
+        );
+        assert!(provider_facet_counts(&[]).is_empty());
     }
 
     #[test]

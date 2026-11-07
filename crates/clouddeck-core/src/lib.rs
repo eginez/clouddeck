@@ -59,6 +59,8 @@ mod inspector;
 pub use inspector::*;
 mod status_text;
 pub use status_text::*;
+mod context_model;
+pub use context_model::*;
 mod failure_advice;
 pub use failure_advice::*;
 mod commands;

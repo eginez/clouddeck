@@ -94,6 +94,8 @@ pub struct Settings {
     pub on_launch: LaunchBehavior,
     /// Regions shown in the fleet.
     pub regions: Vec<String>,
+    /// Provider shown at launch, unset until the user picks one.
+    pub active_provider: Option<String>,
     /// Default ordering of instance lists.
     pub default_sort: DefaultSort,
     /// Whether instances without a name show an unnamed label.
@@ -128,6 +130,7 @@ impl Default for Settings {
                 .iter()
                 .map(|region| (*region).to_owned())
                 .collect(),
+            active_provider: None,
             default_sort: DefaultSort::Name,
             show_unnamed_label: true,
             recent_search_limit: 10,
@@ -632,6 +635,24 @@ mod tests {
     }
 
     #[test]
+    fn active_provider_defaults_to_none_and_round_trips() {
+        assert_eq!(Settings::default().active_provider, None);
+
+        let path = temp_file("active-provider");
+        let settings = Settings {
+            active_provider: Some("gcp".to_owned()),
+            ..Settings::default()
+        };
+        settings.save(&path).unwrap();
+        assert_eq!(Settings::load(&path).active_provider, Some("gcp".to_owned()));
+        std::fs::write(&path, br#"{"theme":"dark"}"#).unwrap();
+        let old = Settings::load(&path);
+        assert_eq!(old.theme, Theme::Dark);
+        assert_eq!(old.active_provider, None);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
     fn save_then_load_round_trips() {
         let path = temp_file("round-trip");
         let settings = Settings {
@@ -873,6 +894,7 @@ mod tests {
             refresh_on_focus: false,
             on_launch: LaunchBehavior::AlwaysAsk,
             regions: vec!["us-east-1".into()],
+            active_provider: None,
             default_sort: DefaultSort::State,
             show_unnamed_label: false,
             recent_search_limit: 0,

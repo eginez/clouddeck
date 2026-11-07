@@ -4,9 +4,14 @@ use std::cmp::Ordering;
 use std::net::Ipv4Addr;
 
 use chrono::{DateTime, Utc};
+use clouddeck_provider_api::ProviderInfo;
 
+use crate::context_model::short_name;
 use crate::instance::native_id;
 use crate::{AddressKind, Instance};
+
+pub const PROVIDER_COLUMN_TITLE: &str = "Provider";
+pub const PROVIDER_COLUMN_WIDTH: f32 = 64.0;
 
 /// Instance table column, in display order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -109,6 +114,43 @@ pub fn cell_text(instance: &Instance, column: Column) -> CellText {
                 .to_string()
         })),
     }
+}
+
+/// Header for a column; a mixed view across providers uses the shared generic titles.
+pub fn column_header(column: Column, mixed: bool) -> &'static str {
+    if !mixed {
+        return column.title();
+    }
+    match column {
+        Column::Name => "Name",
+        Column::InstanceId => "ID",
+        Column::State => "State",
+        Column::Type => "Type",
+        Column::Az => "Location",
+        Column::PrivateIp => "Private IP",
+        Column::PublicIp => "Public IP",
+        Column::Launched => "Launched",
+    }
+}
+
+/// The Provider column is shown by default only when more than one provider has loaded.
+pub fn provider_column_default_visible(loaded_providers: usize) -> bool {
+    loaded_providers > 1
+}
+
+/// Short provider name shown in the Provider column.
+pub fn provider_cell_text(info: &ProviderInfo) -> CellText {
+    CellText {
+        text: short_name(info),
+        muted: false,
+    }
+}
+
+/// Orders providers by short name, ignoring case.
+pub fn compare_provider(a: &ProviderInfo, b: &ProviderInfo) -> Ordering {
+    short_name(a)
+        .to_lowercase()
+        .cmp(&short_name(b).to_lowercase())
 }
 
 /// Columns that fit a window of the given width, dropping from the right as it narrows.
@@ -533,5 +575,69 @@ mod tests {
     fn sorts_by_launch_time() {
         assert_eq!(sorted_ids(Column::Launched, true), [2, 4, 1, 3, 5]);
         assert_eq!(sorted_ids(Column::Launched, false), [3, 1, 4, 2, 5]);
+    }
+
+    fn provider(id: &str, name: &str) -> ProviderInfo {
+        ProviderInfo {
+            id: id.to_string(),
+            name: name.to_string(),
+            version: "1.0.0".to_string(),
+            connection_label: "Profile".to_string(),
+        }
+    }
+
+    #[test]
+    fn single_provider_headers_match_titles() {
+        for column in Column::ALL {
+            assert_eq!(column_header(column, false), column.title());
+        }
+    }
+
+    #[test]
+    fn mixed_headers_use_generic_names() {
+        let headers: Vec<&str> = Column::ALL
+            .into_iter()
+            .map(|column| column_header(column, true))
+            .collect();
+        assert_eq!(
+            headers,
+            [
+                "Name",
+                "ID",
+                "State",
+                "Type",
+                "Location",
+                "Private IP",
+                "Public IP",
+                "Launched"
+            ]
+        );
+    }
+
+    #[test]
+    fn provider_column_shows_by_default_only_with_several_providers() {
+        assert!(!provider_column_default_visible(0));
+        assert!(!provider_column_default_visible(1));
+        assert!(provider_column_default_visible(2));
+    }
+
+    #[test]
+    fn provider_cell_uses_short_name() {
+        assert_eq!(provider_cell_text(&provider("aws", "AWS")).text, "AWS");
+        assert_eq!(provider_cell_text(&provider("gcp", "Google Cloud")).text, "GCP");
+    }
+
+    #[test]
+    fn provider_order_ignores_case() {
+        let aws = provider("aws", "AWS");
+        let demo = provider("demo", "demo");
+        let gcp = provider("gcp", "Google Cloud");
+        assert_eq!(compare_provider(&aws, &demo), Ordering::Less);
+        assert_eq!(compare_provider(&demo, &gcp), Ordering::Less);
+        assert_eq!(compare_provider(&gcp, &demo), Ordering::Greater);
+        assert_eq!(
+            compare_provider(&provider("x", "aws"), &aws),
+            Ordering::Equal
+        );
     }
 }
