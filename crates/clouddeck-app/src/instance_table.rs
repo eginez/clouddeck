@@ -2,13 +2,13 @@
 
 use clouddeck_core::{
     CellText, Column, DisplayRow, GroupBy, GroupHeader, Instance, SortState, cell_text,
-    display_index_of, is_stale_instance, layout_rules, visible_columns_fit,
+    display_index_of, is_stale_instance, layout_rules, visible_columns_fit_hidden,
 };
 use gpui::{
     ClickEvent, Context, Div, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Hsla,
     IntoElement, KeyBinding, MouseButton, MouseDownEvent, ParentElement, Pixels, Point, Render,
     ScrollStrategy, SharedString, Stateful, Styled, UniformListScrollHandle, Window, actions, div,
-    prelude::*, px, uniform_list,
+    prelude::*, px, uniform_list, white,
 };
 
 use crate::{
@@ -18,7 +18,23 @@ use crate::{
     ui_record::{Recorded, forget_prefix, record},
 };
 
-actions!(instance_table, [SelectNext, SelectPrevious]);
+const COLUMN_MENU_WIDTH: f32 = 180.0;
+const COLUMN_MENU_RADIUS: f32 = 6.0;
+const COLUMN_MENU_PADDING: f32 = 4.0;
+const COLUMN_MENU_ITEM_RADIUS: f32 = 4.0;
+
+actions!(
+    instance_table,
+    [
+        SelectNext,
+        SelectPrevious,
+        ToggleColumnMenu,
+        ColumnMenuNext,
+        ColumnMenuPrevious,
+        ColumnMenuToggle,
+        ColumnMenuClose,
+    ]
+);
 
 pub fn table_key_bindings() -> Vec<KeyBinding> {
     vec![
@@ -26,6 +42,14 @@ pub fn table_key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("j", SelectNext, Some("InstanceTable")),
         KeyBinding::new("up", SelectPrevious, Some("InstanceTable")),
         KeyBinding::new("k", SelectPrevious, Some("InstanceTable")),
+        KeyBinding::new("secondary-alt-c", ToggleColumnMenu, Some("InstanceTable")),
+        KeyBinding::new("down", ColumnMenuNext, Some("ColumnMenu")),
+        KeyBinding::new("j", ColumnMenuNext, Some("ColumnMenu")),
+        KeyBinding::new("up", ColumnMenuPrevious, Some("ColumnMenu")),
+        KeyBinding::new("k", ColumnMenuPrevious, Some("ColumnMenu")),
+        KeyBinding::new("space", ColumnMenuToggle, Some("ColumnMenu")),
+        KeyBinding::new("enter", ColumnMenuToggle, Some("ColumnMenu")),
+        KeyBinding::new("escape", ColumnMenuClose, Some("ColumnMenu")),
     ]
 }
 
@@ -40,6 +64,7 @@ pub enum InstanceTableEvent {
 pub struct InstanceTable {
     state: Entity<FleetState>,
     focus_handle: FocusHandle,
+    column_menu_handle: FocusHandle,
     scroll: UniformListScrollHandle,
 }
 
@@ -51,8 +76,58 @@ impl InstanceTable {
         Self {
             state,
             focus_handle: cx.focus_handle(),
+            column_menu_handle: cx.focus_handle(),
             scroll: UniformListScrollHandle::new(),
         }
+    }
+
+    fn set_column_menu(&mut self, open: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.state
+            .update(cx, |state, cx| state.set_column_menu_open(open, cx));
+        if open {
+            self.column_menu_handle.focus(window);
+        } else {
+            self.focus_handle.focus(window);
+        }
+    }
+
+    fn toggle_column_menu(
+        &mut self,
+        _: &ToggleColumnMenu,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let open = !self.state.read(cx).column_menu_open;
+        self.set_column_menu(open, window, cx);
+    }
+
+    fn column_menu_next(&mut self, _: &ColumnMenuNext, _: &mut Window, cx: &mut Context<Self>) {
+        self.state
+            .update(cx, |state, cx| state.move_column_menu_focus(true, cx));
+    }
+
+    fn column_menu_previous(
+        &mut self,
+        _: &ColumnMenuPrevious,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.state
+            .update(cx, |state, cx| state.move_column_menu_focus(false, cx));
+    }
+
+    fn column_menu_toggle(&mut self, _: &ColumnMenuToggle, _: &mut Window, cx: &mut Context<Self>) {
+        self.state
+            .update(cx, |state, cx| state.toggle_focused_column(cx));
+    }
+
+    fn column_menu_close(
+        &mut self,
+        _: &ColumnMenuClose,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_column_menu(false, window, cx);
     }
 
     fn step_selection(&mut self, down: bool, cx: &mut Context<Self>) {
@@ -103,13 +178,16 @@ impl Render for InstanceTable {
                 pane_width -= INSPECTOR_WIDTH;
             }
         }
-        let columns = visible_columns_fit(window_width, pane_width);
+        let columns = visible_columns_fit_hidden(window_width, pane_width, &state.hidden_columns);
         let sort = state.sort;
         let selected = state.selected.clone();
         let stale = state.view_model.stale_regions().to_vec();
         let (rows, display) = state.display_rows();
         let row_count = display.len();
         let group_by = state.group_by;
+        let column_menu_open = state.column_menu_open;
+        let column_menu_focus = state.column_menu_focus;
+        let hidden = state.hidden_columns.clone();
 
         for (ix, column) in columns.iter().enumerate() {
             record(
@@ -122,6 +200,76 @@ impl Render for InstanceTable {
                 },
             );
         }
+        if column_menu_open {
+            for column in Column::ALL {
+                record(
+                    cx,
+                    format!("table.columns.item.{}", column.key()),
+                    Recorded {
+                        text: Some(column.title().to_string()),
+                        ..Default::default()
+                    },
+                );
+            }
+        }
+
+        let columns_button = div()
+            .id("table.columns.button")
+            .debug_selector(|| "table.columns.button".into())
+            .cursor_pointer()
+            .text_color(palette.dim)
+            .child("Columns")
+            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                let open = !this.state.read(cx).column_menu_open;
+                this.set_column_menu(open, window, cx);
+            }));
+
+        let column_menu = if column_menu_open {
+            let dismiss = div()
+                .debug_selector(|| "table.columns.dismiss".into())
+                .occlude()
+                .absolute()
+                .top(px(ROW_HEIGHT))
+                .left_0()
+                .right_0()
+                .bottom_0()
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _: &MouseDownEvent, window, cx| {
+                        this.set_column_menu(false, window, cx);
+                    }),
+                );
+            let menu = div()
+                .key_context("ColumnMenu")
+                .track_focus(&self.column_menu_handle)
+                .debug_selector(|| "table.columns.menu".into())
+                .occlude()
+                .absolute()
+                .top(px(ROW_HEIGHT + COLUMN_MENU_PADDING))
+                .right(px(8.))
+                .w(px(COLUMN_MENU_WIDTH))
+                .p(px(COLUMN_MENU_PADDING))
+                .flex()
+                .flex_col()
+                .bg(palette.surf)
+                .border_1()
+                .border_color(palette.line)
+                .rounded(px(COLUMN_MENU_RADIUS))
+                .shadow_lg()
+                .children(Column::ALL.into_iter().enumerate().map(|(ix, column)| {
+                    column_menu_item(
+                        ix,
+                        column,
+                        !hidden.contains(&column),
+                        ix == column_menu_focus,
+                        palette,
+                        entity.clone(),
+                    )
+                }));
+            vec![dismiss.into_any_element(), menu.into_any_element()]
+        } else {
+            Vec::new()
+        };
 
         let header = div()
             .debug_selector(|| "table.header".into())
@@ -139,7 +287,7 @@ impl Render for InstanceTable {
                     .map(|(ix, column)| header_cell(ix, *column, sort, palette, entity.clone())),
             );
 
-        let toolbar = group_by_toolbar(group_by, palette, entity.clone());
+        let toolbar = group_by_toolbar(group_by, palette, entity.clone(), columns_button);
         let row_entity = entity.clone();
         let table = cx.entity();
         let body = uniform_list("table.rows", row_count, move |range, _window, cx| {
@@ -178,7 +326,13 @@ impl Render for InstanceTable {
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_previous))
+            .on_action(cx.listener(Self::toggle_column_menu))
+            .on_action(cx.listener(Self::column_menu_next))
+            .on_action(cx.listener(Self::column_menu_previous))
+            .on_action(cx.listener(Self::column_menu_toggle))
+            .on_action(cx.listener(Self::column_menu_close))
             .size_full()
+            .relative()
             .flex()
             .flex_col()
             .bg(palette.surf)
@@ -187,10 +341,52 @@ impl Render for InstanceTable {
             .child(toolbar)
             .child(header)
             .child(body)
+            .children(column_menu)
     }
 }
 
-fn group_by_toolbar(group_by: GroupBy, palette: Palette, state: Entity<FleetState>) -> Div {
+fn column_menu_item(
+    ix: usize,
+    column: Column,
+    shown: bool,
+    focused: bool,
+    palette: Palette,
+    state: Entity<FleetState>,
+) -> Stateful<Div> {
+    let key = column.key();
+    let text_color = if column == Column::Name {
+        palette.faint
+    } else {
+        palette.text
+    };
+    let mut row = div()
+        .id(("table.columns.item", ix))
+        .debug_selector(move || format!("table.columns.item.{key}"))
+        .on_click(move |_: &ClickEvent, _, cx| {
+            state.update(cx, |state, cx| state.toggle_column(column, cx));
+        })
+        .flex()
+        .items_center()
+        .gap(px(8.))
+        .h(px(ROW_HEIGHT))
+        .px(px(8.))
+        .rounded(px(COLUMN_MENU_ITEM_RADIUS))
+        .text_color(text_color);
+    if focused {
+        row = row.bg(palette.accent).text_color(white());
+    }
+    row.child(div().w(px(14.)).flex_shrink_0().when(shown, |check| {
+        check.child(AppIcon::Check.icon().text_color(palette.dim))
+    }))
+    .child(div().flex_1().child(column.title()))
+}
+
+fn group_by_toolbar(
+    group_by: GroupBy,
+    palette: Palette,
+    state: Entity<FleetState>,
+    columns_button: Stateful<Div>,
+) -> Div {
     let button = div()
         .id("table.groupby.button")
         .debug_selector(|| "table.groupby.button".into())
@@ -204,6 +400,7 @@ fn group_by_toolbar(group_by: GroupBy, palette: Palette, state: Entity<FleetStat
         .debug_selector(|| "table.groupby".into())
         .flex()
         .items_center()
+        .justify_between()
         .w_full()
         .h(px(ROW_HEIGHT))
         .px(px(8.))
@@ -211,6 +408,7 @@ fn group_by_toolbar(group_by: GroupBy, palette: Palette, state: Entity<FleetStat
         .border_b_1()
         .border_color(palette.line)
         .child(button)
+        .child(columns_button)
 }
 
 fn group_header(
@@ -786,6 +984,102 @@ mod tests {
         );
         assert_eq!(recorded_cell(cx, &format!("{row}.id")).font, Some("mono"));
         assert!(recorded_cell(cx, &format!("{row}.state")).fg.is_some());
+    }
+
+    fn header_titles(cx: &mut VisualTestContext) -> Vec<String> {
+        (0..8)
+            .filter_map(|ix| {
+                cx.update(|_, app| recorded(app, &format!("table.header.{ix}")))
+                    .and_then(|recorded| recorded.text)
+            })
+            .collect()
+    }
+
+    #[gpui::test]
+    fn column_chooser_hides_and_restores_a_column(cx: &mut TestAppContext) {
+        let state = loaded_state(cx);
+        let cx = open_table(cx, state.clone(), 1280.0);
+        assert!(header_titles(cx).contains(&"Type".to_string()));
+
+        click(cx, "table.columns.button");
+        assert!(state.read_with(cx, |state, _| state.column_menu_open));
+        assert!(cx.debug_bounds("table.columns.menu").is_some());
+
+        click(cx, "table.columns.item.type");
+        assert_eq!(
+            state.read_with(cx, |state, _| state.hidden_columns.clone()),
+            [Column::Type]
+        );
+        assert!(!header_titles(cx).contains(&"Type".to_string()));
+
+        click(cx, "table.columns.item.type");
+        assert!(header_titles(cx).contains(&"Type".to_string()));
+    }
+
+    #[gpui::test]
+    fn clicking_the_columns_button_again_closes_the_menu(cx: &mut TestAppContext) {
+        let state = loaded_state(cx);
+        let cx = open_table(cx, state.clone(), 1280.0);
+
+        click(cx, "table.columns.button");
+        click(cx, "table.columns.button");
+
+        assert!(!state.read_with(cx, |state, _| state.column_menu_open));
+    }
+
+    #[gpui::test]
+    fn clicking_outside_the_chooser_closes_it_without_acting_on_the_table(cx: &mut TestAppContext) {
+        let state = loaded_state(cx);
+        let cx = open_table(cx, state.clone(), 1280.0);
+
+        click(cx, "table.columns.button");
+        click(cx, "table.header.0");
+
+        assert!(!state.read_with(cx, |state, _| state.column_menu_open));
+        assert_eq!(
+            state.read_with(cx, |state, _| state.sort),
+            SortState::default()
+        );
+    }
+
+    #[gpui::test]
+    fn name_column_cannot_be_hidden_from_the_chooser(cx: &mut TestAppContext) {
+        let state = loaded_state(cx);
+        let cx = open_table(cx, state.clone(), 1280.0);
+
+        click(cx, "table.columns.button");
+        click(cx, "table.columns.item.name");
+
+        assert!(state.read_with(cx, |state, _| state.hidden_columns.is_empty()));
+        assert!(header_titles(cx).contains(&"Name".to_string()));
+    }
+
+    #[gpui::test]
+    fn column_chooser_is_operable_from_the_keyboard(cx: &mut TestAppContext) {
+        let state = loaded_state(cx);
+        let (table, cx) = open_table_view(cx, state.clone(), 1280.0);
+        cx.update(|_, cx| cx.bind_keys(table_key_bindings()));
+        let focus = table.read_with(cx, |table, _| table.focus_handle.clone());
+        cx.update(|window, _| focus.focus(window));
+        cx.run_until_parked();
+
+        cx.simulate_keystrokes("secondary-alt-c");
+        cx.run_until_parked();
+        assert!(state.read_with(cx, |state, _| state.column_menu_open));
+
+        for keys in ["down", "down", "down", "space"] {
+            cx.simulate_keystrokes(keys);
+            cx.run_until_parked();
+        }
+        assert_eq!(
+            state.read_with(cx, |state, _| state.hidden_columns.clone()),
+            [Column::Type]
+        );
+
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+        assert!(!state.read_with(cx, |state, _| state.column_menu_open));
+        assert!(cx.update(|window, _| focus.is_focused(window)));
     }
 
     #[test]

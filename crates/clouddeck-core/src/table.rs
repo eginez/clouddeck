@@ -39,6 +39,25 @@ impl Column {
         Column::Launched,
     ];
 
+    /// Stable key that identifies the column in saved UI state.
+    pub fn key(self) -> &'static str {
+        match self {
+            Column::Name => "name",
+            Column::InstanceId => "instance_id",
+            Column::State => "state",
+            Column::Type => "type",
+            Column::Az => "az",
+            Column::PrivateIp => "private_ip",
+            Column::PublicIp => "public_ip",
+            Column::Launched => "launched",
+        }
+    }
+
+    /// The column with the given saved key.
+    pub fn from_key(key: &str) -> Option<Column> {
+        Column::ALL.into_iter().find(|column| column.key() == key)
+    }
+
     /// Header title shown above the column.
     pub fn title(self) -> &'static str {
         match self {
@@ -169,7 +188,19 @@ pub fn visible_columns(window_width: f32) -> Vec<Column> {
 
 /// Columns that fit the table pane, dropping from the right until their widths fit or three remain.
 pub fn visible_columns_fit(window_width: f32, pane_width: f32) -> Vec<Column> {
-    let mut columns = visible_columns(window_width);
+    visible_columns_fit_hidden(window_width, pane_width, &[])
+}
+
+/// Like [`visible_columns_fit`], after removing the hidden columns. Name is never hidden.
+pub fn visible_columns_fit_hidden(
+    window_width: f32,
+    pane_width: f32,
+    hidden: &[Column],
+) -> Vec<Column> {
+    let mut columns: Vec<Column> = visible_columns(window_width)
+        .into_iter()
+        .filter(|column| *column == Column::Name || !hidden.contains(column))
+        .collect();
     while columns.len() > 3
         && columns
             .iter()
@@ -458,6 +489,80 @@ mod tests {
         );
     }
 
+    #[test]
+    fn column_keys_round_trip() {
+        for column in Column::ALL {
+            assert_eq!(Column::from_key(column.key()), Some(column));
+        }
+        let keys: Vec<&str> = Column::ALL.into_iter().map(Column::key).collect();
+        assert_eq!(
+            keys,
+            [
+                "name",
+                "instance_id",
+                "state",
+                "type",
+                "az",
+                "private_ip",
+                "public_ip",
+                "launched"
+            ]
+        );
+        assert_eq!(Column::from_key("provider"), None);
+        assert_eq!(Column::from_key("bogus"), None);
+    }
+
+    #[test]
+    fn hidden_columns_are_removed_before_width_fitting() {
+        for (window, pane) in [
+            (1280.0, 1280.0),
+            (1280.0, 730.0),
+            (960.0, 750.0),
+            (520.0, 520.0),
+            (1100.0, 100.0),
+        ] {
+            assert_eq!(
+                visible_columns_fit_hidden(window, pane, &[]),
+                visible_columns_fit(window, pane)
+            );
+        }
+        assert_eq!(
+            visible_columns_fit_hidden(1280.0, 1280.0, &[Column::Az]),
+            [
+                Column::Name,
+                Column::InstanceId,
+                Column::State,
+                Column::Type,
+                Column::PrivateIp,
+                Column::PublicIp,
+                Column::Launched
+            ]
+        );
+        assert_eq!(
+            visible_columns_fit_hidden(1280.0, 730.0, &[Column::InstanceId]),
+            [
+                Column::Name,
+                Column::State,
+                Column::Type,
+                Column::Az,
+                Column::PrivateIp,
+                Column::PublicIp
+            ]
+        );
+        assert_eq!(
+            visible_columns_fit_hidden(1280.0, 1280.0, &[Column::Name]),
+            visible_columns_fit(1280.0, 1280.0)
+        );
+        let all_but_name: Vec<Column> = Column::ALL
+            .into_iter()
+            .filter(|column| *column != Column::Name)
+            .collect();
+        assert_eq!(
+            visible_columns_fit_hidden(1280.0, 100.0, &all_but_name),
+            [Column::Name]
+        );
+    }
+
     fn sorted_ids(column: Column, ascending: bool) -> Vec<u32> {
         let mut fleet = fixtures::fleet_instances();
         sort_instances(&mut fleet, SortState { column, ascending });
@@ -626,7 +731,10 @@ mod tests {
     #[test]
     fn provider_cell_uses_short_name() {
         assert_eq!(provider_cell_text(&provider("aws", "AWS")).text, "AWS");
-        assert_eq!(provider_cell_text(&provider("gcp", "Google Cloud")).text, "GCP");
+        assert_eq!(
+            provider_cell_text(&provider("gcp", "Google Cloud")).text,
+            "GCP"
+        );
     }
 
     #[test]

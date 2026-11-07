@@ -5,7 +5,7 @@ use super::states::State;
 
 /// Layout rules contributed by the overlays area.
 pub(crate) fn rules() -> Vec<Rule> {
-    vec![
+    let mut rules = vec![
         // Profile picker
         Rule {
             id: "ovl-profile-above-bar",
@@ -221,6 +221,94 @@ pub(crate) fn rules() -> Vec<Rule> {
             window: (520.0, 760.0),
             check: Check::NonZero("rowmenu.item.0"),
             why: "first item rendered when compact",
+            known_bug: None,
+        },
+        Rule {
+            id: "tbl-columns-button-in-toolbar",
+            state: State::MainIdle,
+            window: (1280.0, 760.0),
+            check: Check::Inside {
+                inner: "table.columns.button",
+                outer: "table.groupby",
+            },
+            why: "Columns button sits in the group-by toolbar",
+            known_bug: None,
+        },
+    ];
+    rules.extend(column_menu_rules(
+        State::OverlayColumnMenu,
+        [
+            "ovl-columns-in-window",
+            "ovl-columns-w",
+            "ovl-columns-name-inside",
+            "ovl-columns-launched-inside",
+            "ovl-columns-name-above-launched",
+        ],
+    ));
+    rules.extend(column_menu_rules(
+        State::OverlayColumnMenuDark,
+        [
+            "ovl-columns-dark-in-window",
+            "ovl-columns-dark-w",
+            "ovl-columns-dark-name-inside",
+            "ovl-columns-dark-launched-inside",
+            "ovl-columns-dark-name-above-launched",
+        ],
+    ));
+    rules
+}
+
+/// Rules for the column chooser opened over the idle main window.
+fn column_menu_rules(state: State, ids: [&'static str; 5]) -> Vec<Rule> {
+    let window = (1280.0, 760.0);
+    vec![
+        Rule {
+            id: ids[0],
+            state,
+            window,
+            check: Check::InWindow("table.columns.menu"),
+            why: "column chooser fully visible",
+            known_bug: None,
+        },
+        Rule {
+            id: ids[1],
+            state,
+            window,
+            check: Check::WidthBetween("table.columns.menu", 170.0, 190.0),
+            why: "column chooser ~180pt",
+            known_bug: None,
+        },
+        Rule {
+            id: ids[2],
+            state,
+            window,
+            check: Check::Inside {
+                inner: "table.columns.item.name",
+                outer: "table.columns.menu",
+            },
+            why: "first item fully inside the chooser",
+            known_bug: None,
+        },
+        Rule {
+            id: ids[3],
+            state,
+            window,
+            check: Check::Inside {
+                inner: "table.columns.item.launched",
+                outer: "table.columns.menu",
+            },
+            why: "last item fully inside the chooser",
+            known_bug: None,
+        },
+        Rule {
+            id: ids[4],
+            state,
+            window,
+            check: Check::Above {
+                upper: "table.columns.item.name",
+                lower: "table.columns.item.launched",
+            },
+            why: "items are stacked in column order",
             known_bug: None,
         },
     ]

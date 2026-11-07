@@ -42,6 +42,8 @@ fn service_for(state: State) -> (Arc<dyn Provider>, Vec<String>) {
         | State::OverlayRegion
         | State::OverlayPalette
         | State::OverlayRowMenu
+        | State::OverlayColumnMenu
+        | State::OverlayColumnMenuDark
         | State::MainStateGrouped
         | State::MainStateGroupedDark
         | State::MainStateGroupedCollapsed
@@ -487,7 +489,7 @@ mod tests {
     /// One key element per state that `apply_render_state` must produce.
     #[gpui::test]
     fn every_state_shows_its_key_element(cx: &mut TestAppContext) {
-        let key_elements: [(State, &str); 40] = [
+        let key_elements: [(State, &str); 42] = [
             (State::MainIdle, "main.root"),
             (State::MainRowSelected, "main.inspector"),
             (State::MainEmpty, "main.center-state"),
@@ -506,6 +508,8 @@ mod tests {
             (State::OverlayPalette, "main.overlay.palette"),
             (State::OverlayFailure, "main.overlay.failure"),
             (State::OverlayRowMenu, "main.overlay.rowmenu"),
+            (State::OverlayColumnMenu, "table.columns.menu"),
+            (State::OverlayColumnMenuDark, "table.columns.menu"),
             (State::AboutLight, "about.title"),
             (State::AboutDark, "about.title"),
             (State::AboutRefusedPlugin, "about.title"),
@@ -684,6 +688,13 @@ mod tests {
         let (_fleet, _main, cx) = build(State::OverlayRowMenu, 1280.0, 760.0, cx);
 
         assert!(cx.debug_bounds("main.overlay.rowmenu").is_some());
+    }
+
+    #[gpui::test]
+    fn column_menu_overlay_shows_its_panel(cx: &mut TestAppContext) {
+        let (_fleet, _main, cx) = build(State::OverlayColumnMenu, 1280.0, 760.0, cx);
+
+        assert!(cx.debug_bounds("table.columns.menu").is_some());
     }
 
     #[gpui::test]

@@ -48,6 +48,10 @@ pub(crate) enum State {
     OverlayFailure,
     /// Row context menu opened on the first row.
     OverlayRowMenu,
+    /// Column chooser opened over the idle main window, in the light palette.
+    OverlayColumnMenu,
+    /// Column chooser opened over the idle main window, in the dark palette.
+    OverlayColumnMenuDark,
     /// First-run welcome window listing three profiles.
     Welcome,
     /// About window in the light palette, with the demo plus two bundled or installed plugins.
@@ -97,7 +101,7 @@ pub(crate) enum State {
 }
 
 impl State {
-    pub(crate) const ALL: [State; 41] = [
+    pub(crate) const ALL: [State; 43] = [
         State::MainIdle,
         State::MainRowSelected,
         State::MainEmpty,
@@ -116,6 +120,8 @@ impl State {
         State::OverlayPalette,
         State::OverlayFailure,
         State::OverlayRowMenu,
+        State::OverlayColumnMenu,
+        State::OverlayColumnMenuDark,
         State::Welcome,
         State::AboutLight,
         State::AboutDark,
@@ -162,6 +168,8 @@ impl State {
             State::OverlayPalette => "OverlayPalette",
             State::OverlayFailure => "OverlayFailure",
             State::OverlayRowMenu => "OverlayRowMenu",
+            State::OverlayColumnMenu => "OverlayColumnMenu",
+            State::OverlayColumnMenuDark => "OverlayColumnMenuDark",
             State::Welcome => "Welcome",
             State::AboutLight => "AboutLight",
             State::AboutDark => "AboutDark",
@@ -205,7 +213,9 @@ impl State {
     pub(crate) fn is_dark_main(self) -> bool {
         matches!(
             self,
-            State::MainStateGroupedDark | State::MainStateGroupedCollapsedDark
+            State::MainStateGroupedDark
+                | State::MainStateGroupedCollapsedDark
+                | State::OverlayColumnMenuDark
         )
     }
 
@@ -341,6 +351,9 @@ pub(crate) fn apply_render_state(
             main.update(cx, |main, cx| {
                 main.open_row_menu(key, row_menu_anchor, window, cx)
             });
+        }
+        State::OverlayColumnMenu | State::OverlayColumnMenuDark => {
+            fleet.update(cx, |fleet, cx| fleet.set_column_menu_open(true, cx));
         }
         State::MainIdle
         | State::MainEmpty

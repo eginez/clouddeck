@@ -47,6 +47,12 @@ pub struct FleetState {
     pub group_by: GroupBy,
     /// Keys of the groups the user has collapsed.
     pub collapsed_groups: BTreeSet<String>,
+    /// Columns the column chooser has hidden. Name is never hidden.
+    pub hidden_columns: Vec<Column>,
+    /// Whether the column chooser menu is open.
+    pub column_menu_open: bool,
+    /// Index into `Column::ALL` of the item the keyboard is on in the column chooser.
+    pub column_menu_focus: usize,
     /// Seconds until a throttled load is retried, while one is scheduled.
     pub retry_in_seconds: Option<u32>,
     flash_generation: u64,
@@ -76,6 +82,9 @@ impl FleetState {
             recent_instances: Vec::new(),
             group_by: GroupBy::None,
             collapsed_groups: BTreeSet::new(),
+            hidden_columns: Vec::new(),
+            column_menu_open: false,
+            column_menu_focus: 0,
             retry_in_seconds: None,
             flash_generation: 0,
             throttle_attempt: 0,
@@ -209,6 +218,43 @@ impl FleetState {
             }
         }
         cx.notify();
+    }
+
+    /// Shows or hides `column`; Name cannot be hidden.
+    pub fn toggle_column(&mut self, column: Column, cx: &mut Context<Self>) {
+        if column == Column::Name {
+            return;
+        }
+        if let Some(index) = self
+            .hidden_columns
+            .iter()
+            .position(|hidden| *hidden == column)
+        {
+            self.hidden_columns.remove(index);
+        } else {
+            self.hidden_columns.push(column);
+        }
+        cx.notify();
+    }
+
+    pub fn set_column_menu_open(&mut self, open: bool, cx: &mut Context<Self>) {
+        self.column_menu_open = open;
+        self.column_menu_focus = 0;
+        cx.notify();
+    }
+
+    pub fn move_column_menu_focus(&mut self, down: bool, cx: &mut Context<Self>) {
+        let last = Column::ALL.len() - 1;
+        self.column_menu_focus = if down {
+            (self.column_menu_focus + 1).min(last)
+        } else {
+            self.column_menu_focus.saturating_sub(1)
+        };
+        cx.notify();
+    }
+
+    pub fn toggle_focused_column(&mut self, cx: &mut Context<Self>) {
+        self.toggle_column(Column::ALL[self.column_menu_focus], cx);
     }
 
     /// Sorts by `column`, flipping direction when it is already the sort column.

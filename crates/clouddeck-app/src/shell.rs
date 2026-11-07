@@ -7,10 +7,10 @@ use crate::{
     theme::SurgicalTheme,
 };
 use clouddeck_core::{
-    ALL_PROVIDERS, Call, ContextModel, DemoFleet, FLEET_REGIONS, InstanceListViewModel, ListView,
-    LoadHost, ProfileInput, Provider, ProviderEntry, REGION, RegionScope, Settings, UiState,
-    ValueId, WindowFrame, WorkspaceContext, all_providers_view, demo_profiles, demo_region_names,
-    settings_path, short_name, switch_active_provider, workspace_provider_for,
+    ALL_PROVIDERS, Call, Column, ContextModel, DemoFleet, FLEET_REGIONS, InstanceListViewModel,
+    ListView, LoadHost, ProfileInput, Provider, ProviderEntry, REGION, RegionScope, Settings,
+    UiState, ValueId, WindowFrame, WorkspaceContext, all_providers_view, demo_profiles,
+    demo_region_names, settings_path, short_name, switch_active_provider, workspace_provider_for,
 };
 use gpui::{
     AnyWindowHandle, App, Bounds, Context, Entity, IntoElement, KeyBinding, ParentElement, Render,
@@ -649,6 +649,11 @@ impl AppShell {
         fleet_state.recent_instances = ui_state.recent_instances.clone();
         fleet_state.sidebar_open = ui_state.sidebar_open;
         fleet_state.inspector_open = ui_state.inspector_open;
+        fleet_state.hidden_columns = ui_state
+            .hidden_columns
+            .iter()
+            .filter_map(|key| Column::from_key(key))
+            .collect();
         let fleet = cx.new(|_| fleet_state);
         let profile_inputs: Vec<ProfileInput> = profiles
             .iter()
@@ -792,6 +797,11 @@ impl AppShell {
             sidebar_width: self.ui_state_saved.sidebar_width,
             inspector_width: self.ui_state_saved.inspector_width,
             window: self.ui_window_frame.clone(),
+            hidden_columns: fleet
+                .hidden_columns
+                .iter()
+                .map(|column| column.key().to_string())
+                .collect(),
         }
         .normalized()
     }
@@ -1023,6 +1033,7 @@ impl AppShell {
             previous.sidebar_open,
             previous.inspector_open,
         );
+        let hidden_columns = previous.hidden_columns.clone();
         // A fresh fleet and window, not an in-place reset: the previous load
         // holds only a weak handle to the old fleet, so it cannot write into
         // the new context once that entity is dropped.
@@ -1033,6 +1044,7 @@ impl AppShell {
             fleet.recent_instances = recent_instances;
             fleet.sidebar_open = sidebar_open;
             fleet.inspector_open = inspector_open;
+            fleet.hidden_columns = hidden_columns;
             fleet
         });
         self.main_window = Self::new_main_window(
@@ -2627,6 +2639,36 @@ mod tests {
         cx.cx.update(|cx| cx.shutdown());
 
         assert_eq!(UiState::load(&path).sidebar_open, sidebar_open);
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
+    #[gpui::test]
+    fn hidden_columns_are_restored_and_saved(cx: &mut TestAppContext) {
+        let path = temp_ui_state_path("hidden-columns");
+        UiState {
+            hidden_columns: vec!["az".into()],
+            ..UiState::default()
+        }
+        .save(&path)
+        .unwrap();
+        let build_path = path.clone();
+        let (shell, cx) = add_rooted_shell(cx, move |window, cx| {
+            AppShell::build(window, true, DemoFleet::Happy, Some(build_path), cx)
+        });
+        assert_eq!(
+            shell.read_with(cx, |shell, cx| shell.fleet.read(cx).hidden_columns.clone()),
+            [Column::Az]
+        );
+
+        shell.update(cx, |shell, cx| {
+            shell.fleet.update(cx, |fleet, cx| {
+                fleet.toggle_column(Column::Launched, cx);
+            });
+            shell.save_ui_state(cx);
+        });
+        assert_eq!(UiState::load(&path).hidden_columns, ["az", "launched"]);
         if let Some(dir) = path.parent() {
             let _ = std::fs::remove_dir_all(dir);
         }

@@ -1,4 +1,5 @@
 use crate::context_path;
+use crate::table::Column;
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
@@ -60,6 +61,8 @@ pub struct UiState {
     pub inspector_width: f32,
     /// Last window frame, if known.
     pub window: Option<WindowFrame>,
+    /// Column keys hidden by the column chooser.
+    pub hidden_columns: Vec<String>,
 }
 
 impl Default for UiState {
@@ -74,6 +77,7 @@ impl Default for UiState {
             sidebar_width: 210.0,
             inspector_width: 340.0,
             window: None,
+            hidden_columns: Vec::new(),
         }
     }
 }
@@ -89,6 +93,13 @@ impl UiState {
                 && frame.width >= MAIN_WINDOW_MIN_WIDTH
                 && frame.height >= 400.0
         });
+        let mut hidden_columns: Vec<String> = Vec::new();
+        for key in self.hidden_columns.iter() {
+            let hideable = Column::from_key(key).is_some_and(|column| column != Column::Name);
+            if hideable && !hidden_columns.contains(key) {
+                hidden_columns.push(key.clone());
+            }
+        }
         Self {
             sidebar_width: clamp_or_default(
                 self.sidebar_width,
@@ -101,6 +112,7 @@ impl UiState {
                 defaults.inspector_width,
             ),
             window,
+            hidden_columns,
             ..self
         }
     }
@@ -345,6 +357,39 @@ mod tests {
                 height: 400.0,
             })
         );
+    }
+
+    #[test]
+    fn hidden_columns_default_empty_and_missing_key_loads_empty() {
+        assert!(UiState::default().hidden_columns.is_empty());
+        let path = temp_path("hidden-missing");
+        std::fs::write(&path, br#"{"sidebar_open":false}"#).unwrap();
+        assert!(UiState::load(&path).hidden_columns.is_empty());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn hidden_columns_save_then_load_round_trips() {
+        let path = temp_path("hidden-round-trip");
+        let state = UiState {
+            hidden_columns: vec!["az".into(), "launched".into()],
+            ..UiState::default()
+        };
+        state.save(&path).unwrap();
+        assert_eq!(UiState::load(&path), state);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn normalized_keeps_only_unique_hideable_column_keys_in_order() {
+        let state = UiState {
+            hidden_columns: ["az", "bogus", "name", "az", "provider"]
+                .map(String::from)
+                .to_vec(),
+            ..UiState::default()
+        }
+        .normalized();
+        assert_eq!(state.hidden_columns, vec!["az".to_string()]);
     }
 
     #[test]
