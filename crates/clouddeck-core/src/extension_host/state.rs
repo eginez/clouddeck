@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -27,8 +26,6 @@ pub struct State {
     /// Capabilities the user has granted; effective only if the manifest also declares them.
     #[serde(default)]
     pub granted: Vec<Capability>,
-    #[serde(default)]
-    pub settings: BTreeMap<String, String>,
     /// The author public key pinned on first install; later installs and updates must match it.
     #[serde(default)]
     pub author_key: Option<String>,

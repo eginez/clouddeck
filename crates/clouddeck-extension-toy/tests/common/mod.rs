@@ -51,14 +51,14 @@ pub fn built_library() -> PathBuf {
     profile_dir.join(LIBRARY)
 }
 
-pub fn write_manifest(dir: &Path) {
-    fs::write(
-        dir.join("extension.toml"),
-        format!(
-            "id = \"toy\"\nname = \"Toy\"\nversion = \"0.1.0\"\nschema_version = 1\napi_version = 4\nlibrary = \"{LIBRARY}\"\n\n[providers.toy]\nname = \"Toy\"\n"
-        ),
+pub fn manifest_text() -> String {
+    format!(
+        "id = \"toy\"\nname = \"Toy\"\nversion = \"0.1.0\"\nschema_version = 1\napi_version = 4\nlibrary = \"{LIBRARY}\"\n\n[providers.toy]\nname = \"Toy\"\n\n[[settings]]\nkey = \"display_name\"\nlabel = \"Display name\"\nkind = \"text\"\ndefault = \"Default\"\n"
     )
-    .unwrap();
+}
+
+pub fn write_manifest(dir: &Path) {
+    fs::write(dir.join("extension.toml"), manifest_text()).unwrap();
 }
 
 /// Sets modes explicitly: the umask of the machine running the tests decides group-write otherwise.

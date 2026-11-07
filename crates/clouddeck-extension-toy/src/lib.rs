@@ -3,7 +3,8 @@
 use clouddeck_extension_api::{
     AuthAnswer, AuthInput, AuthMethod, AuthStep, Call, Connection, ConnectionId, Dimension,
     ErrorKind, Extension, FieldDef, FlowId, INSTANCES, Instance, KindId, KindInfo, ListResult,
-    Provider, ProviderError, ProviderInfo, ResourceId, Selection, register_extension,
+    Provider, ProviderError, ProviderInfo, ResourceId, Selection, SettingDef, SettingKind,
+    SettingValue, register_extension,
 };
 
 pub struct Toy;
@@ -43,10 +44,26 @@ impl Provider for ToyProvider {
         }
     }
 
-    fn connections(&self, _: &Call<'_>) -> Result<Vec<Connection>, ProviderError> {
+    fn settings(&self) -> Vec<SettingDef> {
+        vec![SettingDef {
+            key: "display_name".into(),
+            label: "Display name".into(),
+            description: None,
+            group: None,
+            kind: SettingKind::Text,
+            default: Some(SettingValue::Text("Default".into())),
+            secret: false,
+        }]
+    }
+
+    fn connections(&self, cx: &Call<'_>) -> Result<Vec<Connection>, ProviderError> {
+        let display_name = cx
+            .host
+            .setting("display_name")
+            .unwrap_or_else(|| "Default".into());
         Ok(vec![Connection {
             id: "default".into(),
-            display_name: "Default".into(),
+            display_name,
         }])
     }
 

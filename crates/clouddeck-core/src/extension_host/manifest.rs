@@ -2,12 +2,13 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
+use clouddeck_provider_api::{SettingDef, SettingKind, SettingOption, SettingValue};
 use serde::{Deserialize, Serialize};
 
 pub const MANIFEST_FILE: &str = "extension.toml";
 pub const SCHEMA_VERSION: u32 = 1;
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Manifest {
     pub id: String,
     pub name: String,
@@ -27,11 +28,43 @@ pub struct Manifest {
     pub providers: BTreeMap<String, ProviderDecl>,
     #[serde(default)]
     pub capabilities: Vec<Capability>,
+    #[serde(default, rename = "settings")]
+    setting_tables: Vec<SettingTable>,
+    /// Settings the extension's providers declare; filled from `[[settings]]` when parsed.
+    #[serde(skip)]
+    pub settings: Vec<SettingDef>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct ProviderDecl {
     pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SettingTable {
+    key: String,
+    label: String,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    group: Option<String>,
+    kind: String,
+    #[serde(default)]
+    default: Option<toml::Value>,
+    #[serde(default)]
+    options: Vec<SettingOptionTable>,
+    #[serde(default)]
+    min: Option<toml::Value>,
+    #[serde(default)]
+    max: Option<toml::Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SettingOptionTable {
+    value: String,
+    label: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -55,9 +88,10 @@ pub enum Capability {
 
 impl Manifest {
     pub fn parse(text: &str) -> Result<Self, String> {
-        let manifest: Self =
+        let mut manifest: Self =
             toml::from_str(text).map_err(|error| format!("invalid {MANIFEST_FILE}: {error}"))?;
         manifest.validate()?;
+        manifest.settings = settings_from_tables(&manifest.setting_tables)?;
         Ok(manifest)
     }
 
@@ -120,6 +154,155 @@ impl Manifest {
             ));
         }
         Ok(path)
+    }
+}
+
+fn settings_from_tables(tables: &[SettingTable]) -> Result<Vec<SettingDef>, String> {
+    let mut defs: Vec<SettingDef> = Vec::with_capacity(tables.len());
+    for table in tables {
+        let def =
+            setting_def(table).map_err(|error| format!("invalid {MANIFEST_FILE}: {error}"))?;
+        if defs.iter().any(|other| other.key == def.key) {
+            return Err(format!(
+                "invalid {MANIFEST_FILE}: setting {:?} is declared twice",
+                def.key
+            ));
+        }
+        defs.push(def);
+    }
+    Ok(defs)
+}
+
+fn setting_def(table: &SettingTable) -> Result<SettingDef, String> {
+    let key = &table.key;
+    let no_bounds = || -> Result<(), String> {
+        if table.min.is_some() || table.max.is_some() {
+            return Err(format!(
+                "setting {key}: min and max only apply to number and duration_secs"
+            ));
+        }
+        Ok(())
+    };
+    let no_options = || -> Result<(), String> {
+        if !table.options.is_empty() {
+            return Err(format!("setting {key}: options only apply to choice"));
+        }
+        Ok(())
+    };
+    let (kind, secret) = match table.kind.as_str() {
+        "text" | "path" | "bool" => {
+            no_bounds()?;
+            no_options()?;
+            let kind = match table.kind.as_str() {
+                "text" => SettingKind::Text,
+                "path" => SettingKind::Path,
+                _ => SettingKind::Bool,
+            };
+            (kind, false)
+        }
+        "secret" => {
+            no_bounds()?;
+            no_options()?;
+            (SettingKind::Text, true)
+        }
+        "number" => {
+            no_options()?;
+            let kind = SettingKind::Number {
+                min: bound(key, "min", table.min.as_ref(), toml_number)?,
+                max: bound(key, "max", table.max.as_ref(), toml_number)?,
+            };
+            (kind, false)
+        }
+        "duration_secs" => {
+            no_options()?;
+            let kind = SettingKind::DurationSecs {
+                min: bound(key, "min", table.min.as_ref(), toml_seconds)?,
+                max: bound(key, "max", table.max.as_ref(), toml_seconds)?,
+            };
+            (kind, false)
+        }
+        "choice" => {
+            no_bounds()?;
+            let options = table
+                .options
+                .iter()
+                .map(|option| SettingOption {
+                    value: option.value.clone(),
+                    label: option.label.clone(),
+                })
+                .collect();
+            (SettingKind::Choice(options), false)
+        }
+        other => {
+            return Err(format!(
+                "setting {key}: unknown kind {other:?}; use text, path, choice, bool, number, duration_secs or secret"
+            ));
+        }
+    };
+    let default = table
+        .default
+        .as_ref()
+        .map(|value| default_value(key, &kind, secret, value))
+        .transpose()?;
+    let def = SettingDef {
+        key: key.clone(),
+        label: table.label.clone(),
+        description: table.description.clone(),
+        group: table.group.clone(),
+        kind,
+        default,
+        secret,
+    };
+    def.check().map_err(|error| error.to_string())?;
+    Ok(def)
+}
+
+fn bound<T>(
+    key: &str,
+    name: &str,
+    value: Option<&toml::Value>,
+    read: fn(&toml::Value) -> Option<T>,
+) -> Result<Option<T>, String> {
+    value
+        .map(|value| read(value).ok_or_else(|| format!("setting {key}: {name} has the wrong type")))
+        .transpose()
+}
+
+fn toml_number(value: &toml::Value) -> Option<f64> {
+    value
+        .as_float()
+        .or_else(|| value.as_integer().map(|i| i as f64))
+}
+
+fn toml_seconds(value: &toml::Value) -> Option<u64> {
+    value.as_integer().and_then(|i| u64::try_from(i).ok())
+}
+
+fn default_value(
+    key: &str,
+    kind: &SettingKind,
+    secret: bool,
+    value: &toml::Value,
+) -> Result<SettingValue, String> {
+    let mismatch = || format!("setting {key}: default has the wrong type for its kind");
+    if secret {
+        return value
+            .as_str()
+            .map(|text| SettingValue::Text(text.to_string()))
+            .ok_or_else(mismatch);
+    }
+    match kind {
+        SettingKind::Text | SettingKind::Path | SettingKind::Choice(_) => value
+            .as_str()
+            .map(|text| SettingValue::Text(text.to_string()))
+            .ok_or_else(mismatch),
+        SettingKind::Bool => value.as_bool().map(SettingValue::Bool).ok_or_else(mismatch),
+        SettingKind::Number { .. } => toml_number(value)
+            .map(SettingValue::Number)
+            .ok_or_else(mismatch),
+        SettingKind::DurationSecs { .. } => toml_seconds(value)
+            .map(SettingValue::DurationSecs)
+            .ok_or_else(mismatch),
     }
 }
 
@@ -218,6 +401,37 @@ kind = "secrets"
     fn rejects_ids_that_are_not_plain_names() {
         let text = MANIFEST.replace("id = \"toy\"", "id = \"../toy\"");
         assert!(Manifest::parse(&text).is_err());
+    }
+
+    #[test]
+    fn parses_settings_into_definitions() {
+        let text = format!(
+            "{MANIFEST}\n[[settings]]\nkey = \"display_name\"\nlabel = \"Display name\"\nkind = \"text\"\ndefault = \"Default\"\n"
+        );
+        let manifest = Manifest::parse(&text).unwrap();
+        assert_eq!(manifest.settings.len(), 1);
+        assert_eq!(manifest.settings[0].key, "display_name");
+        assert_eq!(
+            manifest.settings[0].default,
+            Some(SettingValue::Text("Default".into()))
+        );
+    }
+
+    #[test]
+    fn refuses_invalid_settings() {
+        let setting = |body: &str| {
+            Manifest::parse(&format!(
+                "{MANIFEST}\n[[settings]]\nkey = \"k\"\nlabel = \"K\"\n{body}\n"
+            ))
+        };
+        assert!(setting("kind = \"bogus\"").is_err());
+        assert!(setting("kind = \"text\"\nmin = 1").is_err());
+        assert!(setting("kind = \"text\"\ndefault = 3").is_err());
+
+        let duplicate = format!(
+            "{MANIFEST}\n[[settings]]\nkey = \"k\"\nlabel = \"K\"\nkind = \"text\"\n\n[[settings]]\nkey = \"k\"\nlabel = \"K\"\nkind = \"text\"\n"
+        );
+        assert!(Manifest::parse(&duplicate).is_err());
     }
 
     #[test]

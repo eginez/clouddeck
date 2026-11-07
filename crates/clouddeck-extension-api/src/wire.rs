@@ -39,9 +39,11 @@ pub enum Method {
     Inspector,
     Identity,
     CheckAccess,
+    Settings,
+    SettingsChanged,
 }
 
-const METHODS: [Method; 16] = [
+const METHODS: [Method; 18] = [
     Method::Info,
     Method::Connections,
     Method::Dimensions,
@@ -58,6 +60,8 @@ const METHODS: [Method; 16] = [
     Method::Inspector,
     Method::Identity,
     Method::CheckAccess,
+    Method::Settings,
+    Method::SettingsChanged,
 ];
 
 impl Method {
@@ -166,6 +170,13 @@ pub fn dispatch<E: Extension>(
                 p.check_access(cx, &connection, &kind, &selection)
             },
         ),
+        Method::Settings => serve(extension, host, request, |p, _, ()| Ok(p.settings())),
+        Method::SettingsChanged => {
+            serve(extension, host, request, |p, cx, changed: Vec<String>| {
+                p.settings_changed(cx, &changed);
+                Ok(())
+            })
+        }
     }
 }
 
@@ -227,11 +238,11 @@ mod tests {
 
     #[test]
     fn from_code_round_trips_every_method() {
-        for code in 1..=16 {
-            let method = Method::from_code(code).expect("method codes 1 to 16 are assigned");
+        for code in 1..=18 {
+            let method = Method::from_code(code).expect("method codes 1 to 18 are assigned");
             assert_eq!(method as u32, code);
         }
         assert_eq!(Method::from_code(0), None);
-        assert_eq!(Method::from_code(17), None);
+        assert_eq!(Method::from_code(19), None);
     }
 }

@@ -7,6 +7,7 @@ mod inspector;
 mod instance;
 mod provider;
 mod selection;
+mod settings;
 
 pub use auth::{AuthAnswer, AuthInput, AuthMethod, AuthStatus, AuthStep, PromptField};
 pub use error::{ErrorKind, ProviderError};
@@ -17,3 +18,7 @@ pub use inspector::{InspectorRowDef, InspectorSectionDef, InspectorValue};
 pub use instance::{Address, AddressKind, ExtrasSection, Instance, Label, State, StateKind};
 pub use provider::{CellFailure, Connection, KindInfo, ListResult, Provider, ProviderInfo};
 pub use selection::{DimValue, Dimension, Selection};
+pub use settings::{
+    SettingDef, SettingError, SettingKind, SettingOption, SettingValue, is_valid_setting_key,
+    settings_mismatches,
+};

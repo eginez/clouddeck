@@ -9,13 +9,14 @@ use clouddeck_provider_api::{
     AuthAnswer, AuthInput, AuthMethod, AuthStatus, AuthStep, Call, CellFailure, Connection,
     ConnectionId, Dimension, ErrorKind, ExtrasSection, FieldDef, FlowId, InspectorSectionDef,
     Instance, KindId, KindInfo, ListResult, Provider, ProviderError, ProviderInfo, ResourceId,
-    Selection,
+    Selection, SettingDef, settings_mismatches,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use super::library::{HostContext, Library, Trust, with_cancel_flag, with_sign_in_scope};
 use super::manifest::Manifest;
+use super::provider_settings::ProviderSettings;
 use super::state::{CRASH_LIMIT, State, StateStore};
 
 const DEFAULT_BUDGET: Duration = Duration::from_secs(30);
@@ -31,6 +32,7 @@ pub struct Plugin {
     host: Arc<HostContext>,
     library: Mutex<Option<Arc<Library>>>,
     loaded: AtomicBool,
+    settings_checked: AtomicBool,
     stuck_calls: Arc<AtomicUsize>,
 }
 
@@ -59,6 +61,7 @@ impl Plugin {
         dir: PathBuf,
         manifest: Manifest,
         state: Arc<StateStore>,
+        settings: Arc<ProviderSettings>,
         trust: Trust,
     ) -> Self {
         let data_dir = match &trust {
@@ -70,6 +73,7 @@ impl Plugin {
             data_dir,
             manifest.capabilities.clone(),
             Arc::clone(&state),
+            settings,
             trust.is_bundled(),
         ));
         Self {
@@ -80,6 +84,7 @@ impl Plugin {
             host,
             library: Mutex::new(None),
             loaded: AtomicBool::new(false),
+            settings_checked: AtomicBool::new(false),
             stuck_calls: Arc::new(AtomicUsize::new(0)),
         }
     }
@@ -122,6 +127,80 @@ impl Plugin {
         }
     }
 
+    /// The library's settings must match the manifest's copy. On a mismatch the manifest is trusted.
+    fn check_settings(&self, library: &Library) {
+        for provider in self.manifest.providers.keys() {
+            let Ok(body) = serde_json::to_vec(&Request {
+                provider: provider.clone(),
+                deadline_ms: None,
+                args: (),
+            }) else {
+                continue;
+            };
+            let in_code = library
+                .call(Method::Settings as u32, &body)
+                .map_err(|error| error.to_string())
+                .and_then(|bytes| {
+                    serde_json::from_slice::<Result<Vec<SettingDef>, ProviderError>>(&bytes)
+                        .map_err(|error| error.to_string())
+                });
+            let in_code = match in_code {
+                Ok(Ok(defs)) => defs,
+                Ok(Err(error)) if error.kind == ErrorKind::Unsupported => Vec::new(),
+                Ok(Err(error)) => {
+                    eprintln!(
+                        "[extension {}] settings() failed: {error}",
+                        self.manifest.id
+                    );
+                    continue;
+                }
+                Err(message) => {
+                    eprintln!(
+                        "[extension {}] settings() failed: {message}",
+                        self.manifest.id
+                    );
+                    continue;
+                }
+            };
+            for mismatch in settings_mismatches(&in_code, &self.manifest.settings) {
+                eprintln!(
+                    "[extension {}] {mismatch}; the manifest's declaration is used",
+                    self.manifest.id
+                );
+            }
+        }
+    }
+
+    /// Settings declared in the manifest, which the host shows without loading the library.
+    pub fn declared_settings(&self) -> &[SettingDef] {
+        &self.manifest.settings
+    }
+
+    pub fn provider_ids(&self) -> impl Iterator<Item = &str> {
+        self.manifest.providers.keys().map(String::as_str)
+    }
+
+    /// Tells the loaded library that `changed` settings were stored. Nothing is loaded for this, since
+    /// a library that never ran has no caches to drop.
+    pub fn notify_settings_changed(self: &Arc<Self>, provider: &str, changed: &[String]) {
+        if !self.loaded.load(Ordering::Acquire) {
+            return;
+        }
+        let Ok(body) = serde_json::to_vec(&Request {
+            provider: provider.to_string(),
+            deadline_ms: None,
+            args: changed.to_vec(),
+        }) else {
+            return;
+        };
+        if let Err(error) = self.run(Method::SettingsChanged as u32, body, DEFAULT_BUDGET, false) {
+            eprintln!(
+                "[extension {}] settings_changed failed: {error}",
+                self.manifest.id
+            );
+        }
+    }
+
     fn failure(&self, message: String) -> ProviderError {
         ProviderError::new(ErrorKind::Other, format!("{}: {message}", self.manifest.id))
     }
@@ -143,6 +222,9 @@ impl Plugin {
         sign_in: bool,
     ) -> Result<Vec<u8>, ProviderError> {
         let library = self.load()?;
+        if !self.settings_checked.swap(true, Ordering::AcqRel) {
+            self.check_settings(&library);
+        }
         let call = || library.call(method, request);
         with_cancel_flag(cancel, || {
             if sign_in {
@@ -436,6 +518,14 @@ impl Provider for RemoteProvider {
     fn inspector(&self, kind: &KindId) -> Vec<InspectorSectionDef> {
         self.fallible(self.invoke(None, Method::Inspector, kind))
     }
+
+    fn settings(&self) -> Vec<SettingDef> {
+        self.plugin.declared_settings().to_vec()
+    }
+
+    fn settings_changed(&self, _cx: &Call<'_>, changed: &[String]) {
+        self.plugin.notify_settings_changed(&self.provider, changed);
+    }
 }
 
 #[cfg(test)]
@@ -450,11 +540,13 @@ mod tests {
         let text = "id = \"hung\"\nname = \"Hung\"\nversion = \"0.1.0\"\nschema_version = 1\napi_version = 1\n\n[providers.hung]\nname = \"Hung\"\n";
         let manifest = Manifest::parse(text).unwrap();
         let state = Arc::new(StateStore::open(&state_path(state_root, "hung")).unwrap());
+        let settings = Arc::new(ProviderSettings::new(state_root.join("settings.json")));
         Arc::new(Plugin::new(
             PathBuf::from("/"),
             state_root.join("hung"),
             manifest,
             state,
+            settings,
             Trust::Installed,
         ))
     }

@@ -8,6 +8,7 @@ use crate::ids::{ConnectionId, FlowId, KindId, ResourceId};
 use crate::inspector::InspectorSectionDef;
 use crate::instance::{ExtrasSection, Instance};
 use crate::selection::{Dimension, Selection};
+use crate::settings::SettingDef;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Connection {
@@ -69,6 +70,14 @@ pub trait Provider: Send + Sync {
     ) -> Result<Vec<ExtrasSection>, ProviderError> {
         Err(ProviderError::unsupported())
     }
+
+    /// Settings this provider reads through `Host::setting`. Also declared in the manifest.
+    fn settings(&self) -> Vec<SettingDef> {
+        Vec::new()
+    }
+
+    /// Called after the host stored a new value for one of `changed`, so caches can be dropped.
+    fn settings_changed(&self, _cx: &Call<'_>, _changed: &[String]) {}
 
     fn auth_methods(&self) -> Vec<AuthMethod> {
         Vec::new()

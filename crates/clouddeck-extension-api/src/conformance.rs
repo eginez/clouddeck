@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use clouddeck_provider_api::{
     AuthAnswer, AuthInput, AuthMethod, AuthStatus, AuthStep, Call, ConnectionId, Dimension,
     DimensionId, ErrorKind, FlowId, Host, Instance, KindId, ListResult, LogLevel, Provider,
-    ProviderError, ResourceId, Selection, ValueId,
+    ProviderError, ResourceId, Selection, SettingDef, ValueId, settings_mismatches,
 };
 
 const MISSING: &str = "conformance-no-such-value";
@@ -105,11 +105,45 @@ pub fn check_provider(shared: Arc<dyn Provider>) -> Vec<String> {
         }
     }
     check_auth(p, &cx, &mut r);
+    check_settings(p, &cx, &mut r);
     for kind in &kinds {
         let defs = r.guard("fields()", || p.fields(kind)).unwrap_or_default();
         r.unique(&format!("fields({kind})"), defs.into_iter().map(|d| d.name));
     }
     r.0
+}
+
+/// Checks the settings a provider declares in code. Compare against the manifest with [`check_manifest_settings`].
+pub fn check_settings_declared(p: &dyn Provider) -> Vec<String> {
+    let host = KitHost { cancelled: false };
+    let cx = Call {
+        deadline: None,
+        host: &host,
+    };
+    let mut r = Report(Vec::new());
+    check_settings(p, &cx, &mut r);
+    r.0
+}
+
+/// Checks that the provider's own settings match the manifest's copy, key for key.
+pub fn check_manifest_settings(p: &dyn Provider, declared: &[SettingDef]) -> Vec<String> {
+    settings_mismatches(&p.settings(), declared)
+}
+
+fn check_settings(p: &dyn Provider, cx: &Call<'_>, r: &mut Report) {
+    let defs = r.guard("settings()", || p.settings()).unwrap_or_default();
+    let mut keys = Vec::new();
+    for def in &defs {
+        if let Err(error) = def.check() {
+            r.fail(format!("settings(): {error}"));
+        }
+        keys.push(def.key.clone());
+    }
+    r.unique("settings()", keys);
+    r.guard("settings_changed(unknown key)", || {
+        p.settings_changed(cx, &["conformance-no-such-setting".to_string()]);
+    });
+    r.guard("settings_changed(empty)", || p.settings_changed(cx, &[]));
 }
 
 fn check_kinds(p: &dyn Provider, r: &mut Report) -> Vec<KindId> {

@@ -12,6 +12,7 @@ use clouddeck_extension_api::abi::{Buffer, HostTable, INIT_OK, Slice};
 use clouddeck_provider_api::{ErrorKind, ProviderError};
 
 use super::manifest::Capability;
+use super::provider_settings::ProviderSettings;
 use super::state::StateStore;
 use super::{check_api_version, check_build_info};
 
@@ -45,6 +46,7 @@ pub struct HostContext {
     data_dir: PathBuf,
     declared: Vec<Capability>,
     state: Arc<StateStore>,
+    settings: Arc<ProviderSettings>,
     bundled: bool,
 }
 
@@ -54,6 +56,7 @@ impl HostContext {
         data_dir: PathBuf,
         declared: Vec<Capability>,
         state: Arc<StateStore>,
+        settings: Arc<ProviderSettings>,
         bundled: bool,
     ) -> Self {
         Self {
@@ -61,6 +64,7 @@ impl HostContext {
             data_dir,
             declared,
             state,
+            settings,
             bundled,
         }
     }
@@ -326,7 +330,7 @@ extern "C" fn data_dir(ctx: *mut c_void) -> Buffer {
 extern "C" fn setting(ctx: *mut c_void, key: Slice, out: *mut Buffer) -> bool {
     let host = unsafe { context(ctx) };
     let key = unsafe { text(key) };
-    write_out(out, host.state.read(|s| s.settings.get(&key).cloned()))
+    write_out(out, host.settings.host_text(&host.id, &key))
 }
 
 /// No secret store is wired yet, so no secret is ever returned.
@@ -425,6 +429,7 @@ mod tests {
             dir.path().join("data"),
             vec![Capability::Secrets],
             Arc::clone(&state),
+            Arc::new(ProviderSettings::new(dir.path().join("settings.json"))),
             false,
         );
         assert!(!host.allows(&Capability::Secrets));
@@ -437,6 +442,7 @@ mod tests {
             dir.path().join("data"),
             Vec::new(),
             state,
+            Arc::new(ProviderSettings::new(dir.path().join("settings.json"))),
             false,
         );
         assert!(!undeclared.allows(&Capability::Secrets));
@@ -451,6 +457,7 @@ mod tests {
             dir.path().join("data"),
             vec![Capability::Secrets],
             state,
+            Arc::new(ProviderSettings::new(dir.path().join("settings.json"))),
             true,
         );
         assert!(host.allows(&Capability::Secrets));
@@ -647,6 +654,7 @@ mod tests {
             build.path().join("data"),
             Vec::new(),
             state,
+            Arc::new(ProviderSettings::new(build.path().join("settings.json"))),
             false,
         ));
         let error = Library::open(&library, build.path(), host)

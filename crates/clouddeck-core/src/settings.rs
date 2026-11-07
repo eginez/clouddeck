@@ -1,9 +1,14 @@
 use crate::{FLEET_REGIONS, context_path};
+use clouddeck_provider_api::SettingValue;
 pub use clouddeck_provider_kit::fleet_region_timeout;
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::BTreeMap,
     path::{Path, PathBuf},
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        Mutex, MutexGuard,
+        atomic::{AtomicU64, Ordering},
+    },
     time::Duration,
 };
 
@@ -112,6 +117,9 @@ pub struct Settings {
     pub demo_mode: bool,
     /// Whether CloudDeck checks for new releases automatically.
     pub check_for_updates: bool,
+    /// Provider setting values by extension id and key. Owned by the provider settings store;
+    /// [`Settings::save`] keeps the copy already on disk.
+    pub providers: BTreeMap<String, BTreeMap<String, SettingValue>>,
 }
 
 impl Default for Settings {
@@ -139,6 +147,7 @@ impl Default for Settings {
             request_timeout_seconds: 30,
             demo_mode: false,
             check_for_updates: true,
+            providers: BTreeMap::new(),
         }
     }
 }
@@ -186,34 +195,78 @@ impl Settings {
 
     /// Loads settings from `path`, falling back to defaults when missing or invalid.
     pub fn load(path: &Path) -> Self {
-        std::fs::read(path)
-            .ok()
-            .and_then(|bytes| serde_json::from_slice::<Self>(&bytes).ok())
-            .unwrap_or_default()
-            .normalized()
+        Self::read_file(path).normalized()
     }
 
-    /// Atomically writes settings to `path`, creating parent directories as needed.
+    /// Atomically writes settings to `path`, creating parent directories as needed. Provider values
+    /// are written only by [`Settings::update_providers`], so this keeps the ones already on disk.
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
-        let file_name = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("settings.json");
-        let temp = path.with_file_name(format!(
-            ".{file_name}.{}.{}.tmp",
-            std::process::id(),
-            NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed)
-        ));
-        let mut file = std::fs::File::create(&temp)?;
-        use std::io::Write;
-        file.write_all(&serde_json::to_vec(self).map_err(std::io::Error::other)?)?;
-        file.sync_all()?;
-        std::fs::rename(temp, path)
+        let _writing = lock_file();
+        let providers = Self::read_file(path).providers;
+        write_file(
+            path,
+            &Self {
+                providers,
+                ..self.clone()
+            },
+        )
     }
+
+    /// Applies `change` to the provider values on disk and writes the file back.
+    pub(crate) fn update_providers(
+        path: &Path,
+        change: impl FnOnce(&mut BTreeMap<String, BTreeMap<String, SettingValue>>),
+    ) -> std::io::Result<()> {
+        let _writing = lock_file();
+        let mut settings = Self::read_strict(path)?;
+        change(&mut settings.providers);
+        write_file(path, &settings)
+    }
+
+    fn read_strict(path: &Path) -> std::io::Result<Self> {
+        match std::fs::read(path) {
+            Ok(bytes) => serde_json::from_slice(&bytes).map_err(|error| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("{} is not valid settings JSON: {error}", path.display()),
+                )
+            }),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
+            Err(error) => Err(error),
+        }
+    }
+
+    fn read_file(path: &Path) -> Self {
+        Self::read_strict(path).unwrap_or_default()
+    }
+}
+
+fn lock_file() -> MutexGuard<'static, ()> {
+    static FILE_LOCK: Mutex<()> = Mutex::new(());
+    FILE_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+fn write_file(path: &Path, settings: &Settings) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("settings.json");
+    let temp = path.with_file_name(format!(
+        ".{file_name}.{}.{}.tmp",
+        std::process::id(),
+        NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed)
+    ));
+    let mut file = std::fs::File::create(&temp)?;
+    use std::io::Write;
+    file.write_all(&serde_json::to_vec(settings).map_err(std::io::Error::other)?)?;
+    file.sync_all()?;
+    std::fs::rename(temp, path)
 }
 
 /// Location of `settings.json`, next to `context.json`.
@@ -644,11 +697,48 @@ mod tests {
             ..Settings::default()
         };
         settings.save(&path).unwrap();
-        assert_eq!(Settings::load(&path).active_provider, Some("gcp".to_owned()));
+        assert_eq!(
+            Settings::load(&path).active_provider,
+            Some("gcp".to_owned())
+        );
         std::fs::write(&path, br#"{"theme":"dark"}"#).unwrap();
         let old = Settings::load(&path);
         assert_eq!(old.theme, Theme::Dark);
         assert_eq!(old.active_provider, None);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn save_keeps_provider_values_written_by_the_store() {
+        let path = temp_file("keeps-providers");
+        Settings::update_providers(&path, |providers| {
+            providers.entry("toy".to_owned()).or_default().insert(
+                "display_name".to_owned(),
+                SettingValue::Text("Hi".to_owned()),
+            );
+        })
+        .unwrap();
+        Settings {
+            theme: Theme::Dark,
+            ..Settings::default()
+        }
+        .save(&path)
+        .unwrap();
+        let loaded = Settings::load(&path);
+        assert_eq!(loaded.theme, Theme::Dark);
+        assert_eq!(
+            loaded.providers["toy"]["display_name"],
+            SettingValue::Text("Hi".to_owned())
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn provider_write_refuses_an_unreadable_settings_file() {
+        let path = temp_file("unreadable");
+        std::fs::write(&path, b"{not json").unwrap();
+        assert!(Settings::update_providers(&path, |_| {}).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"{not json");
         let _ = std::fs::remove_file(path);
     }
 
@@ -903,6 +993,7 @@ mod tests {
             request_timeout_seconds: 60,
             demo_mode: true,
             check_for_updates: false,
+            providers: BTreeMap::new(),
         };
         for id in SettingId::ALL {
             assert!(id.is_changed(&changed), "{id:?} starts unchanged");

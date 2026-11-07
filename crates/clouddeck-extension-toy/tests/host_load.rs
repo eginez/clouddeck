@@ -2,6 +2,7 @@ mod common;
 
 use clouddeck_core::extension_host::{ProviderRegistry, StateStore, state_path};
 use clouddeck_core::{Call, ConnectionId};
+use clouddeck_extension_api::SettingValue;
 use common::{NoHost, install};
 
 // One test: the extension's host table is process-wide, so the library can be initialised once.
@@ -16,10 +17,15 @@ fn installed_extension_loads_on_first_use_and_serves_calls() {
         .update(|state| state.enabled = true)
         .unwrap();
 
-    let mut registry = ProviderRegistry::default().with_external(true);
+    let mut registry = ProviderRegistry::default()
+        .with_external(true)
+        .with_settings_file(state_root.path().join("settings.json"));
     registry.discover(root.path(), state_root.path()).unwrap();
     assert!(registry.refusals().is_empty(), "{:?}", registry.refusals());
     let provider = &registry.providers()[0];
+    registry
+        .set_setting("toy", "display_name", SettingValue::Text("Hello".into()))
+        .unwrap();
 
     let store = StateStore::open(&state_file).unwrap();
     assert!(
@@ -34,6 +40,7 @@ fn installed_extension_loads_on_first_use_and_serves_calls() {
     };
     let connections = provider.connections(&cx).unwrap();
     assert_eq!(connections[0].id, ConnectionId::from("default"));
+    assert_eq!(connections[0].display_name, "Hello");
     assert_eq!(provider.info().id, "toy");
 
     let store = StateStore::open(&state_file).unwrap();

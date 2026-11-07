@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use clouddeck_extension_api::API_VERSION;
-use clouddeck_provider_api::Provider;
+use clouddeck_provider_api::{Provider, SettingError, SettingValue};
 
 use crate::builtin_providers;
 use crate::context::config_home;
@@ -14,8 +14,10 @@ use crate::extension_manager::install::EXTERNAL_EXTENSIONS_ALLOWED;
 
 use super::library::Trust;
 use super::manifest::{MANIFEST_FILE, Manifest};
+use super::provider_settings::ProviderSettings;
 use super::remote::{NOT_RESPONDING, Plugin, RemoteProvider};
 use super::state::{CRASH_LIMIT, State, StateStore, state_path};
+use crate::settings::settings_path;
 
 const CLOUDDECK_VERSION: &str = env!("CARGO_PKG_VERSION");
 const BUNDLED_DIR: &str = "extensions-bundled";
@@ -27,16 +29,61 @@ pub struct Refusal {
     pub message: String,
 }
 
-#[derive(Default)]
 pub struct ProviderRegistry {
     providers: Vec<Arc<dyn Provider>>,
     plugins: Vec<Arc<Plugin>>,
     provider_ids: BTreeSet<String>,
     refusals: Vec<Refusal>,
     allow_external: bool,
+    settings: Arc<ProviderSettings>,
+}
+
+impl Default for ProviderRegistry {
+    fn default() -> Self {
+        Self {
+            providers: Vec::new(),
+            plugins: Vec::new(),
+            provider_ids: BTreeSet::new(),
+            refusals: Vec::new(),
+            allow_external: false,
+            settings: Arc::new(ProviderSettings::new(settings_path())),
+        }
+    }
 }
 
 impl ProviderRegistry {
+    pub fn with_settings_file(mut self, path: PathBuf) -> Self {
+        self.settings = Arc::new(ProviderSettings::new(path));
+        self
+    }
+
+    /// Stores a value of an extension's setting and tells its loaded providers which one changed.
+    pub fn set_setting(
+        &self,
+        extension: &str,
+        key: &str,
+        value: SettingValue,
+    ) -> Result<(), SettingError> {
+        self.settings.set(extension, key, value)?;
+        self.notify_changed(extension, key);
+        Ok(())
+    }
+
+    pub fn reset_setting(&self, extension: &str, key: &str) -> Result<(), SettingError> {
+        self.settings.reset(extension, key)?;
+        self.notify_changed(extension, key);
+        Ok(())
+    }
+
+    fn notify_changed(&self, extension: &str, key: &str) {
+        let Some(plugin) = self.plugins.iter().find(|plugin| plugin.id() == extension) else {
+            return;
+        };
+        for provider in plugin.provider_ids() {
+            plugin.notify_settings_changed(provider, &[key.to_string()]);
+        }
+    }
+
     pub fn with_builtins(demo: bool) -> Self {
         let mut registry = Self::default().with_external(EXTERNAL_EXTENSIONS_ALLOWED);
         for provider in builtin_providers(demo) {
@@ -218,11 +265,14 @@ impl ProviderRegistry {
             .iter()
             .map(|(id, decl)| (id.clone(), decl.name.clone()))
             .collect();
+        self.settings
+            .declare(&manifest.id, manifest.settings.clone());
         let plugin = Arc::new(Plugin::new(
             root.to_path_buf(),
             dir.to_path_buf(),
             manifest,
             state,
+            Arc::clone(&self.settings),
             trust,
         ));
         self.plugins.push(Arc::clone(&plugin));

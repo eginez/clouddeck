@@ -184,6 +184,41 @@ not granted). An extension
 must still behave correctly in that case: treat a missing token as signed out, and ask the user to
 sign in again when a token cannot be stored.
 
+## Settings
+
+A provider declares the settings it reads in two places that must match: the `settings` method of
+the `Provider` trait (the source of truth) and `[[settings]]` tables in `extension.toml`:
+
+```toml
+[[settings]]
+key = "display_name"
+label = "Display name"
+kind = "text"
+default = "Default"
+
+[[settings]]
+key = "timeout_secs"
+label = "Request timeout"
+kind = "duration_secs"
+default = 30
+min = 5
+max = 120
+```
+
+Kinds are `text`, `path`, `bool`, `number` (with optional `min`/`max`), `duration_secs` (whole
+seconds, optional `min`/`max`), `choice` (with `options = [{ value = "...", label = "..." }]`), and
+`secret`. A `secret` is declared only so the host can refuse it: it has no default, and this build
+has no secret store to save it in.
+
+Keys use lowercase letters, digits, `_`, `.` and `-`; the `clouddeck.` prefix is reserved for the host.
+Each extension sees only its own declared keys through `Host::setting(key)`;
+a key it did not declare, or another extension's key, returns `None`. Values are stored in the host
+settings file under `providers.<extension id>.<key>`, and a missing value falls back to the default.
+
+The host checks the manifest against `settings()` when the library loads. On a mismatch it logs the
+difference and uses the manifest's copy. When the user changes a setting, the host calls
+`settings_changed` with the changed keys, so the provider can drop caches built from them.
+
 ## Deadlines
 
 Each provider call runs on its own thread. When the deadline passes the call returns a timeout
