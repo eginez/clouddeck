@@ -69,6 +69,7 @@ pub enum MainWindowEvent {
     PickProfile(String),
     PickProvider(String),
     ConnectToAws,
+    SignIn(String),
     RegionsChanged(Vec<String>),
     Retry(Option<String>),
     OpenSettings,

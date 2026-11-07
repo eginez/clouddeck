@@ -7,7 +7,7 @@ pub use clouddeck_provider_kit::{
     Address, AddressKind, ExtrasSection, Instance, Label, State, StateKind, native_id,
 };
 pub use clouddeck_provider_api::{
-    AuthAnswer, AuthInput, AuthStep, Call, CellFailure, Connection, ConnectionId, CoreField,
+    AuthAnswer, AuthInput, AuthMethod, AuthStep, Call, CellFailure, Connection, ConnectionId, CoreField,
     DimValue, Dimension, DimensionId, ErrorKind, FieldDef, FieldKind, FieldSource, FlowId, Host,
     InspectorRowDef, InspectorSectionDef, InspectorValue, KindId, KindInfo, ListResult, LogLevel,
     MatchMode, Provider, ProviderError, ProviderInfo, ResourceId, Selection, ValueId,
@@ -63,6 +63,8 @@ mod status_text;
 pub use status_text::*;
 mod context_model;
 pub use context_model::*;
+mod provider_sign_in;
+pub use provider_sign_in::*;
 mod failure_advice;
 pub use failure_advice::*;
 mod commands;

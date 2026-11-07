@@ -334,14 +334,14 @@ fn is_current_attempt(wizard: &Entity<AccountWindowView>, attempt: u64, cx: &mut
 /// Runs blocking provider work off the UI thread. Provider calls can block on
 /// the SSO poll pacing, and the core's sync-over-async bridge must not run on
 /// the gpui foreground executor.
-async fn off_thread<T: Send + 'static>(
+pub(crate) async fn off_thread<T: Send + 'static>(
     cx: &AsyncApp,
     work: impl FnOnce() -> T + Send + 'static,
 ) -> T {
     cx.background_executor().spawn(async move { work() }).await
 }
 
-fn with_call<T>(work: impl FnOnce(&Call<'_>) -> T) -> T {
+pub(crate) fn with_call<T>(work: impl FnOnce(&Call<'_>) -> T) -> T {
     let host = AppHost;
     work(&Call {
         deadline: None,
