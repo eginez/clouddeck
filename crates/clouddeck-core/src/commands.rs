@@ -25,11 +25,12 @@ pub enum CommandId {
     ConnectToAws,
     OpenSettings,
     About,
+    Plugins,
 }
 
 impl CommandId {
     /// Every command in palette order.
-    pub const ALL: [CommandId; 17] = [
+    pub const ALL: [CommandId; 18] = [
         CommandId::SwitchProfile,
         CommandId::SwitchRegion,
         CommandId::Refresh,
@@ -47,6 +48,7 @@ impl CommandId {
         CommandId::ConnectToAws,
         CommandId::OpenSettings,
         CommandId::About,
+        CommandId::Plugins,
     ];
 
     /// Palette label for the command.
@@ -69,6 +71,7 @@ impl CommandId {
             CommandId::ConnectToAws => "Account: Connect to AWS…",
             CommandId::OpenSettings => "Preferences: Open Settings…",
             CommandId::About => "About CloudDeck",
+            CommandId::Plugins => "Plugins: Open",
         }
     }
 
@@ -91,7 +94,8 @@ impl CommandId {
             | CommandId::CopyPublicIp
             | CommandId::RetryFailedRegion
             | CommandId::ConnectToAws
-            | CommandId::About => None,
+            | CommandId::About
+            | CommandId::Plugins => None,
         }
     }
 
@@ -113,7 +117,8 @@ impl CommandId {
             | CommandId::FilterPending
             | CommandId::ConnectToAws
             | CommandId::OpenSettings
-            | CommandId::About => true,
+            | CommandId::About
+            | CommandId::Plugins => true,
         }
     }
 
@@ -231,8 +236,8 @@ mod tests {
     }
 
     #[test]
-    fn all_lists_seventeen_titles_in_palette_order() {
-        assert_eq!(CommandId::ALL.len(), 17);
+    fn all_lists_eighteen_titles_in_palette_order() {
+        assert_eq!(CommandId::ALL.len(), 18);
         let titles: Vec<&str> = CommandId::ALL
             .iter()
             .map(|command| command.title())
@@ -257,6 +262,7 @@ mod tests {
                 "Account: Connect to AWS…",
                 "Preferences: Open Settings…",
                 "About CloudDeck",
+                "Plugins: Open",
             ]
         );
     }
@@ -302,6 +308,7 @@ mod tests {
             ConnectToAws,
             OpenSettings,
             About,
+            Plugins,
         ]
         .into_iter()
         .collect();

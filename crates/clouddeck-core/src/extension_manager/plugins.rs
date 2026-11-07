@@ -318,16 +318,9 @@ impl PluginsViewModel {
         }
     }
 
-    /// Replaces the inputs after an action, so rows reflect what is on disk now.
-    pub fn set_inputs(
-        &mut self,
-        entries: Vec<PluginEntry>,
-        available: Vec<IndexEntry>,
-        updates: BTreeMap<String, String>,
-    ) {
+    /// Replaces the installed entries after an action, so rows reflect what is on disk now.
+    pub fn set_entries(&mut self, entries: Vec<PluginEntry>) {
         self.entries = entries;
-        self.available = available;
-        self.updates = updates;
         self.rebuild_rows();
         self.detail = self.selected.clone().and_then(|id| self.detail_for(&id));
     }
@@ -340,6 +333,23 @@ impl PluginsViewModel {
     /// Ids whose changes take effect only after CloudDeck restarts.
     pub fn restart_required(&self) -> Vec<String> {
         self.restart_required.iter().cloned().collect()
+    }
+
+    /// Display names of the plugins in `restart_required`, falling back to the id.
+    pub fn restart_required_names(&self) -> Vec<String> {
+        self.restart_required
+            .iter()
+            .map(|id| {
+                self.entries
+                    .iter()
+                    .find(|entry| &entry.id == id)
+                    .map_or_else(|| id.clone(), |entry| entry.name.clone())
+            })
+            .collect()
+    }
+
+    pub fn installed_count(&self) -> usize {
+        self.entries.len()
     }
 
     pub fn empty_state(&self) -> Option<&'static str> {

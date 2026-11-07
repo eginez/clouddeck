@@ -28,7 +28,7 @@ use crate::tokens::{Palette, palette};
 
 const SAVE_DEBOUNCE: Duration = Duration::from_millis(300);
 const NOTE_DURATION: Duration = Duration::from_secs(2);
-const CATEGORY_ICONS: [AppIcon; 8] = [
+const CATEGORY_ICONS: [AppIcon; 9] = [
     AppIcon::PanelLeft,
     AppIcon::Server,
     AppIcon::Filter,
@@ -36,6 +36,7 @@ const CATEGORY_ICONS: [AppIcon; 8] = [
     AppIcon::Key,
     AppIcon::Cloud,
     AppIcon::Ellipsis,
+    AppIcon::Plug,
     AppIcon::CircleAlert,
 ];
 
@@ -942,6 +943,28 @@ impl SettingsWindow {
         sections
     }
 
+    fn plugins_section(&self, palette: &Palette, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        vec![
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(8.))
+                .child(
+                    div()
+                        .text_color(palette.dim)
+                        .child("Install, enable and remove bundled, installed and dev plugins."),
+                )
+                .child(
+                    button("plugins.open", "Open Plugins…", palette)
+                        .debug_selector(|| "plugins.open".into())
+                        .on_click(cx.listener(|_, _: &ClickEvent, _, cx| {
+                            cx.dispatch_action(&app_menus::OpenPlugins);
+                        })),
+                )
+                .into_any_element(),
+        ]
+    }
+
     fn about_section(&self, palette: &Palette, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let platform = if cfg!(target_os = "macos") {
             "macOS · gpui"
@@ -1090,6 +1113,7 @@ impl Render for SettingsWindow {
             match self.category {
                 "Keymap" => self.keymap_section(&palette),
                 "About" => self.about_section(&palette, cx),
+                "Plugins" => self.plugins_section(&palette, cx),
                 category => {
                     let mut sections: Vec<AnyElement> = groups_for(category)
                         .into_iter()
@@ -1325,6 +1349,7 @@ mod tests {
             "settings.cat.5",
             "settings.cat.6",
             "settings.cat.7",
+            "settings.cat.8",
         ] {
             assert!(cx.debug_bounds(selector).is_some(), "{selector}");
         }
@@ -1550,7 +1575,7 @@ mod tests {
     fn about_pane_shows_version_and_update_button(cx: &mut TestAppContext) {
         let (_view, cx) = rooted(cx, Settings::default());
 
-        click(cx, "settings.cat.7");
+        click(cx, "settings.cat.8");
 
         assert!(cx.debug_bounds("about.version").is_some());
         assert!(cx.debug_bounds("about.check-updates").is_some());
@@ -1562,10 +1587,22 @@ mod tests {
     fn about_pane_opens_the_about_window(cx: &mut TestAppContext) {
         let (_view, cx) = rooted(cx, Settings::default());
         cx.update(|_, app| app_menus::install(app));
-        click(cx, "settings.cat.7");
+        click(cx, "settings.cat.8");
         let before = cx.update(|_, app| app.windows().len());
 
         click(cx, "about.open");
+
+        assert_eq!(cx.update(|_, app| app.windows().len()), before + 1);
+    }
+
+    #[gpui::test]
+    fn plugins_pane_opens_the_plugins_window(cx: &mut TestAppContext) {
+        let (_view, cx) = rooted(cx, Settings::default());
+        cx.update(|_, app| app_menus::install(app));
+        click(cx, "settings.cat.7");
+        let before = cx.update(|_, app| app.windows().len());
+
+        click(cx, "plugins.open");
 
         assert_eq!(cx.update(|_, app| app.windows().len()), before + 1);
     }

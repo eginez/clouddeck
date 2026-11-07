@@ -23,6 +23,7 @@ mod instance_table;
 mod layout_check;
 mod linux_titlebar;
 mod main_window;
+mod plugins_window;
 mod profile_picker_view;
 mod region_picker_view;
 mod render_state;
@@ -74,6 +75,11 @@ fn main() {
                     cx.set_global(tokens::ActivePalette(tokens::Palette::for_dark(true)));
                 }
                 about_window::open(cx).expect("about window opens");
+            } else if let Some(state) = options.state.filter(|state| state.is_plugins()) {
+                if state == render_state::State::PluginsDark {
+                    cx.set_global(tokens::ActivePalette(tokens::Palette::for_dark(true)));
+                }
+                plugins_window::open(cx).expect("plugins window opens");
             } else if options.state == Some(render_state::State::Welcome) {
                 welcome_window::open_welcome_window_sized(cx, options.size)
                     .expect("welcome window opens");

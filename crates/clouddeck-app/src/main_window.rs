@@ -643,6 +643,9 @@ impl MainWindow {
             CommandId::About => {
                 crate::about_window::open(cx);
             }
+            CommandId::Plugins => {
+                crate::plugins_window::open(cx);
+            }
         }
     }
 
@@ -1582,6 +1585,20 @@ mod tests {
         cx.run_until_parked();
         let palette = overlay_view::<CommandPalette>(&main, cx);
         palette.update(cx, |_, cx| cx.emit(PaletteEvent::Run(CommandId::About)));
+        cx.run_until_parked();
+
+        assert_eq!(cx.update(|_, app| app.windows().len()), before + 1);
+    }
+
+    #[gpui::test]
+    fn plugins_palette_command_opens_the_plugins_window(cx: &mut TestAppContext) {
+        let (_fleet, main, cx) = rooted_main_window(cx, three_instances(), 1280.0, 760.0);
+        let before = cx.update(|_, app| app.windows().len());
+
+        cx.dispatch_action(app_menus::OpenCommandPalette);
+        cx.run_until_parked();
+        let palette = overlay_view::<CommandPalette>(&main, cx);
+        palette.update(cx, |_, cx| cx.emit(PaletteEvent::Run(CommandId::Plugins)));
         cx.run_until_parked();
 
         assert_eq!(cx.update(|_, app| app.windows().len()), before + 1);

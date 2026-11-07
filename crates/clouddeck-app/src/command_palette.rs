@@ -294,8 +294,8 @@ mod tests {
         let (palette, _, cx) = open_palette(cx, "");
 
         assert!(cx.debug_bounds("palette.input").is_some());
-        assert!(cx.debug_bounds("palette.row.16").is_some());
-        assert!(cx.debug_bounds("palette.row.17").is_none());
+        assert!(cx.debug_bounds("palette.row.17").is_some());
+        assert!(cx.debug_bounds("palette.row.18").is_none());
         assert_eq!(
             palette.read_with(cx, |palette, cx| palette.visible(cx).len()),
             CommandId::ALL.len()

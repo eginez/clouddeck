@@ -1,12 +1,13 @@
 //! Actions, key bindings and the native menu bar.
 
-use crate::{Quit, about_window, update_window};
+use crate::{Quit, about_window, plugins_window, update_window};
 use gpui::{App, KeyBinding, Menu, MenuItem, actions};
 
 actions!(
     clouddeck,
     [
         About,
+        OpenPlugins,
         SwitchProfile,
         SwitchRegion,
         RefreshFleet,
@@ -82,6 +83,9 @@ pub fn install(cx: &mut App) {
     cx.on_action(|_: &CheckForUpdates, cx| update_window::check_for_updates(cx));
     cx.on_action(|_: &About, cx| {
         about_window::open(cx);
+    });
+    cx.on_action(|_: &OpenPlugins, cx| {
+        plugins_window::open(cx);
     });
 }
 

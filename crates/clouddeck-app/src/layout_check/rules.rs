@@ -9,6 +9,7 @@ use super::rules_about;
 use super::rules_bar;
 use super::rules_main;
 use super::rules_overlays;
+use super::rules_plugins;
 use super::rules_search;
 use super::rules_style;
 use super::rules_table;
@@ -177,6 +178,7 @@ pub(crate) fn all_rules() -> Vec<Rule> {
         rules_overlays::rules(),
         rules_welcome::rules(),
         rules_about::rules(),
+        rules_plugins::rules(),
         rules_style::rules(),
     ]
     .into_iter()

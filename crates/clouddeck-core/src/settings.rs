@@ -14,7 +14,7 @@ pub const RECENT_SEARCH_LIMITS: [u32; 4] = [0, 5, 10, 20];
 /// Allowed request timeouts in seconds.
 pub const REQUEST_TIMEOUTS: [u32; 3] = [15, 30, 60];
 /// Settings categories in sidebar order.
-pub const SETTINGS_CATEGORIES: [&str; 8] = [
+pub const SETTINGS_CATEGORIES: [&str; 9] = [
     "Appearance",
     "Fleet",
     "Table",
@@ -22,6 +22,7 @@ pub const SETTINGS_CATEGORIES: [&str; 8] = [
     "Keymap",
     "AWS & Privacy",
     "Advanced",
+    "Plugins",
     "About",
 ];
 

@@ -50,10 +50,26 @@ pub(crate) enum State {
     AboutRefusedPlugin,
     /// About window with enough plugins that the list scrolls.
     AboutLongPluginList,
+    /// Plugins window in the light palette with bundled aws, gcp and demo plugins installed.
+    PluginsLight,
+    /// Plugins window in the dark palette with the same plugins as `PluginsLight`.
+    PluginsDark,
+    /// Plugins window on the Installed tab with a detail panel open.
+    PluginsInstalled,
+    /// Plugins window with one plugin refused by the registry, selected.
+    PluginsRefused,
+    /// Plugins window with a search that matches nothing.
+    PluginsEmptySearch,
+    /// Plugins window on the Available tab, which has no index yet.
+    PluginsAvailableEmpty,
+    /// Plugins window showing the restart banner after a plugin changed.
+    PluginsRestart,
+    /// Plugins window at the narrowest supported width.
+    PluginsNarrow,
 }
 
 impl State {
-    pub(crate) const ALL: [State; 19] = [
+    pub(crate) const ALL: [State; 27] = [
         State::MainIdle,
         State::MainRowSelected,
         State::MainEmpty,
@@ -73,6 +89,14 @@ impl State {
         State::AboutDark,
         State::AboutRefusedPlugin,
         State::AboutLongPluginList,
+        State::PluginsLight,
+        State::PluginsDark,
+        State::PluginsInstalled,
+        State::PluginsRefused,
+        State::PluginsEmptySearch,
+        State::PluginsAvailableEmpty,
+        State::PluginsRestart,
+        State::PluginsNarrow,
     ];
 
     /// The variant name, as accepted by `--render-state`.
@@ -97,7 +121,30 @@ impl State {
             State::AboutDark => "AboutDark",
             State::AboutRefusedPlugin => "AboutRefusedPlugin",
             State::AboutLongPluginList => "AboutLongPluginList",
+            State::PluginsLight => "PluginsLight",
+            State::PluginsDark => "PluginsDark",
+            State::PluginsInstalled => "PluginsInstalled",
+            State::PluginsRefused => "PluginsRefused",
+            State::PluginsEmptySearch => "PluginsEmptySearch",
+            State::PluginsAvailableEmpty => "PluginsAvailableEmpty",
+            State::PluginsRestart => "PluginsRestart",
+            State::PluginsNarrow => "PluginsNarrow",
         }
+    }
+
+    /// Whether the state is the Plugins window rather than a main-window state.
+    pub(crate) fn is_plugins(self) -> bool {
+        matches!(
+            self,
+            State::PluginsLight
+                | State::PluginsDark
+                | State::PluginsInstalled
+                | State::PluginsRefused
+                | State::PluginsEmptySearch
+                | State::PluginsAvailableEmpty
+                | State::PluginsRestart
+                | State::PluginsNarrow
+        )
     }
 
     /// Whether the state is the About window rather than a main-window state.
@@ -201,7 +248,15 @@ pub(crate) fn apply_render_state(
         | State::AboutLight
         | State::AboutDark
         | State::AboutRefusedPlugin
-        | State::AboutLongPluginList => {}
+        | State::AboutLongPluginList
+        | State::PluginsLight
+        | State::PluginsDark
+        | State::PluginsInstalled
+        | State::PluginsRefused
+        | State::PluginsEmptySearch
+        | State::PluginsAvailableEmpty
+        | State::PluginsRestart
+        | State::PluginsNarrow => {}
     }
     // Focus and overlays settle on the next frame; make sure one is drawn.
     window.refresh();

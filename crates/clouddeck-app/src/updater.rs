@@ -314,7 +314,7 @@ fn install_into_place(tar_gz: &[u8], exe: &Path) -> Result<(), String> {
 }
 
 #[cfg(target_os = "macos")]
-fn spawn_relaunch(exe: &Path) -> Result<(), String> {
+pub(crate) fn spawn_relaunch(exe: &Path) -> Result<(), String> {
     let bundle = bundle_root_from_exe(exe).ok_or("not running from an app bundle")?;
     std::process::Command::new("open")
         .arg("-n")
@@ -325,7 +325,7 @@ fn spawn_relaunch(exe: &Path) -> Result<(), String> {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn spawn_relaunch(exe: &Path) -> Result<(), String> {
+pub(crate) fn spawn_relaunch(exe: &Path) -> Result<(), String> {
     std::process::Command::new(exe)
         .args(std::env::args_os().skip(1))
         .spawn()

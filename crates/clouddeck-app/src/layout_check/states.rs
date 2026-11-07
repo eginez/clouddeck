@@ -9,9 +9,15 @@ use clouddeck_core::about::{AboutInfo, PluginOrigin, PluginRow, PluginStatus};
 use clouddeck_core::{ProfileInput, Provider, RegionScope, TestScenarioKind, fixture_fleet};
 use gpui::{AppContext, Bounds, Entity, TestAppContext, VisualTestContext, point, px, size};
 
+use clouddeck_core::extension_manager::plugins::{Action, PluginsViewModel, Tab};
+
 use crate::about_window;
 use crate::fleet_state::FleetState;
 use crate::main_window::{MainWindow, window_options};
+use crate::plugins_window;
+use crate::plugins_window::fixtures::{
+    ToggleOnlyActions, bundled_set, inert_manager, inert_roots, refused_set, with_installed_set,
+};
 use crate::render_state::{DEFAULT_ROW_MENU_ANCHOR, apply_render_state};
 use crate::tokens::{ActivePalette, Palette};
 use crate::view_models::InstanceListViewModel;
@@ -56,7 +62,15 @@ fn service_for(state: State) -> (Arc<dyn Provider>, Vec<String>) {
         | State::AboutLight
         | State::AboutDark
         | State::AboutRefusedPlugin
-        | State::AboutLongPluginList => {
+        | State::AboutLongPluginList
+        | State::PluginsLight
+        | State::PluginsDark
+        | State::PluginsInstalled
+        | State::PluginsRefused
+        | State::PluginsEmptySearch
+        | State::PluginsAvailableEmpty
+        | State::PluginsRestart
+        | State::PluginsNarrow => {
             unreachable!("only main window states have a fleet service")
         }
     }
@@ -187,7 +201,56 @@ fn open_about(state: State, cx: &mut TestAppContext) -> &mut VisualTestContext {
     cx
 }
 
-/// Builds `state` in a fresh window; the welcome and About states return no fleet or main window.
+/// The Plugins window's model for `state`, with the selection, query, tab or restart it shows.
+fn plugins_model(state: State) -> PluginsViewModel {
+    let entries = match state {
+        State::PluginsRefused => refused_set(),
+        State::PluginsRestart => with_installed_set(),
+        _ => bundled_set(),
+    };
+    let mut model = plugins_window::model_for(entries);
+    match state {
+        State::PluginsInstalled | State::PluginsNarrow => model.select(Some("demo")),
+        State::PluginsRefused => model.select(Some("old")),
+        State::PluginsEmptySearch => model.set_query("zzz-no-match"),
+        State::PluginsAvailableEmpty => model.set_tab(Tab::Available),
+        State::PluginsRestart => {
+            model
+                .act(&ToggleOnlyActions, "toy", Action::Disable)
+                .expect("disabling toy succeeds");
+            model.select(Some("demo"));
+        }
+        _ => {}
+    }
+    model
+}
+
+/// Opens a fresh Plugins window for `state`; the window is not the app's single Plugins window.
+fn open_plugins(
+    state: State,
+    width: f32,
+    height: f32,
+    cx: &mut TestAppContext,
+) -> &mut VisualTestContext {
+    let dark = state == State::PluginsDark;
+    cx.update(|app| app.set_global(ActivePalette(Palette::for_dark(dark))));
+    let window = cx.update(|app| {
+        gpui_component::init(app);
+        plugins_window::open_window_for(
+            app,
+            plugins_model(state),
+            inert_manager(),
+            inert_roots(),
+            (width, height),
+        )
+        .expect("plugins window opens")
+    });
+    let cx = VisualTestContext::from_window(window.into(), cx).into_mut();
+    cx.run_until_parked();
+    cx
+}
+
+/// Builds `state` in a fresh window; the welcome, About and Plugins states return no fleet or main window.
 pub(crate) fn build(
     state: State,
     width: f32,
@@ -203,6 +266,9 @@ pub(crate) fn build(
     }
     if state.is_about() {
         return (None, None, open_about(state, cx));
+    }
+    if state.is_plugins() {
+        return (None, None, open_plugins(state, width, height, cx));
     }
 
     let (service, regions) = service_for(state);
@@ -320,7 +386,7 @@ mod tests {
     /// One key element per state that `apply_render_state` must produce.
     #[gpui::test]
     fn every_state_shows_its_key_element(cx: &mut TestAppContext) {
-        let key_elements: [(State, &str); 18] = [
+        let key_elements: [(State, &str); 26] = [
             (State::MainIdle, "main.root"),
             (State::MainRowSelected, "main.inspector"),
             (State::MainEmpty, "main.center-state"),
@@ -339,6 +405,14 @@ mod tests {
             (State::AboutDark, "about.title"),
             (State::AboutRefusedPlugin, "about.title"),
             (State::AboutLongPluginList, "about.title"),
+            (State::PluginsLight, "plugins.list"),
+            (State::PluginsDark, "plugins.list"),
+            (State::PluginsInstalled, "plugins.detail"),
+            (State::PluginsRefused, "plugins.detail"),
+            (State::PluginsEmptySearch, "plugins.empty"),
+            (State::PluginsAvailableEmpty, "plugins.empty"),
+            (State::PluginsRestart, "plugins.restart"),
+            (State::PluginsNarrow, "plugins.list"),
         ];
         assert_eq!(
             key_elements.len() + 1,
