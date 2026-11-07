@@ -10,6 +10,7 @@ pub enum AppIcon {
     Search,
     ChevronDown,
     ChevronUp,
+    ChevronRight,
     Copy,
     ExternalLink,
     Close,
@@ -28,7 +29,7 @@ pub enum AppIcon {
 
 impl AppIcon {
     #[cfg(test)]
-    pub const ALL: [AppIcon; 21] = [
+    pub const ALL: [AppIcon; 22] = [
         AppIcon::PanelLeft,
         AppIcon::PanelRight,
         AppIcon::User,
@@ -36,6 +37,7 @@ impl AppIcon {
         AppIcon::Search,
         AppIcon::ChevronDown,
         AppIcon::ChevronUp,
+        AppIcon::ChevronRight,
         AppIcon::Copy,
         AppIcon::ExternalLink,
         AppIcon::Close,
@@ -61,6 +63,7 @@ impl AppIcon {
             Self::Search => "icons/search.svg",
             Self::ChevronDown => "icons/chevron-down.svg",
             Self::ChevronUp => "icons/chevron-up.svg",
+            Self::ChevronRight => "icons/chevron-right.svg",
             Self::Copy => "icons/copy.svg",
             Self::ExternalLink => "icons/external-link.svg",
             Self::Close => "icons/close.svg",
@@ -106,15 +109,15 @@ mod tests {
     use gpui_component::IconNamed;
 
     #[test]
-    fn all_lists_21_distinct_icons_with_known_paths() {
-        assert_eq!(AppIcon::ALL.len(), 21);
+    fn all_lists_22_distinct_icons_with_known_paths() {
+        assert_eq!(AppIcon::ALL.len(), 22);
         let mut paths: Vec<&str> = AppIcon::ALL.iter().map(|icon| icon.path()).collect();
         for path in &paths {
             assert!(ICON_PATHS.contains(path), "{path} is not bundled");
         }
         paths.sort();
         paths.dedup();
-        assert_eq!(paths.len(), 21);
+        assert_eq!(paths.len(), 22);
     }
 
     #[test]

@@ -8,7 +8,7 @@ use gpui::{App, Entity, Pixels, Point, Window, point, px};
 
 use crate::fleet_state::FleetState;
 use crate::main_window::{MainWindow, Overlay};
-use clouddeck_core::DemoFleet;
+use clouddeck_core::{DemoFleet, GroupBy};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum State {
@@ -24,6 +24,14 @@ pub(crate) enum State {
     MainPartial,
     /// A fleet of 120 instances.
     MainLarge,
+    /// Table grouped by state with every group expanded, in the light palette.
+    MainStateGrouped,
+    /// Table grouped by state with every group expanded, in the dark palette.
+    MainStateGroupedDark,
+    /// Table grouped by state with the Running group collapsed, in the light palette.
+    MainStateGroupedCollapsed,
+    /// Table grouped by state with the Running group collapsed, in the dark palette.
+    MainStateGroupedCollapsedDark,
     /// Search field focused and empty, with recent searches listed.
     SearchFocusedEmpty,
     /// Search field focused with "st" typed, showing field suggestions.
@@ -79,13 +87,17 @@ pub(crate) enum State {
 }
 
 impl State {
-    pub(crate) const ALL: [State; 32] = [
+    pub(crate) const ALL: [State; 36] = [
         State::MainIdle,
         State::MainRowSelected,
         State::MainEmpty,
         State::MainFailure,
         State::MainPartial,
         State::MainLarge,
+        State::MainStateGrouped,
+        State::MainStateGroupedDark,
+        State::MainStateGroupedCollapsed,
+        State::MainStateGroupedCollapsedDark,
         State::SearchFocusedEmpty,
         State::SearchTypingSt,
         State::SearchError,
@@ -123,6 +135,10 @@ impl State {
             State::MainFailure => "MainFailure",
             State::MainPartial => "MainPartial",
             State::MainLarge => "MainLarge",
+            State::MainStateGrouped => "MainStateGrouped",
+            State::MainStateGroupedDark => "MainStateGroupedDark",
+            State::MainStateGroupedCollapsed => "MainStateGroupedCollapsed",
+            State::MainStateGroupedCollapsedDark => "MainStateGroupedCollapsedDark",
             State::SearchFocusedEmpty => "SearchFocusedEmpty",
             State::SearchTypingSt => "SearchTypingSt",
             State::SearchError => "SearchError",
@@ -150,6 +166,27 @@ impl State {
             State::SettingsNarrow => "SettingsNarrow",
             State::SettingsNarrowDark => "SettingsNarrowDark",
         }
+    }
+
+    /// Whether the state groups the table by state, with or without a collapsed group.
+    #[cfg(test)]
+    pub(crate) fn is_grouped(self) -> bool {
+        matches!(
+            self,
+            State::MainStateGrouped
+                | State::MainStateGroupedDark
+                | State::MainStateGroupedCollapsed
+                | State::MainStateGroupedCollapsedDark
+        )
+    }
+
+    /// Whether the state renders the main window in the dark palette.
+    #[cfg(test)]
+    pub(crate) fn is_dark_main(self) -> bool {
+        matches!(
+            self,
+            State::MainStateGroupedDark | State::MainStateGroupedCollapsedDark
+        )
     }
 
     /// Whether the state is the Plugins window rather than a main-window state.
@@ -251,6 +288,15 @@ pub(crate) fn apply_render_state(
         State::MainRowSelected => {
             let key = first_row_key(cx);
             fleet.update(cx, |fleet, cx| fleet.select(Some(key), cx));
+        }
+        State::MainStateGrouped | State::MainStateGroupedDark => {
+            fleet.update(cx, |fleet, cx| fleet.set_group_by(GroupBy::State, cx));
+        }
+        State::MainStateGroupedCollapsed | State::MainStateGroupedCollapsedDark => {
+            fleet.update(cx, |fleet, cx| {
+                fleet.set_group_by(GroupBy::State, cx);
+                fleet.toggle_group("Running", cx);
+            });
         }
         State::SearchFocusedEmpty => {
             fleet.update(cx, |fleet, cx| {
