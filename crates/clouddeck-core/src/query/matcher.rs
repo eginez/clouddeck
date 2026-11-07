@@ -90,8 +90,20 @@ impl CompiledQuery {
 
     /// Like [`matches`](Self::matches), with `search_text` standing in for the instance's haystack.
     pub fn matches_indexed(&self, instance: &Instance, search_text: &str) -> bool {
+        self.matches_in(None, instance, search_text)
+    }
+
+    /// Like [`matches_indexed`](Self::matches_indexed) for rows of `provider_id`; `provider:` terms are ignored without one.
+    pub fn matches_in(
+        &self,
+        provider_id: Option<&str>,
+        instance: &Instance,
+        search_text: &str,
+    ) -> bool {
         self.terms.iter().zip(&self.ignored).all(|(term, ignored)| {
-            *ignored || self.term_matches(term, instance, search_text) != term.negated
+            *ignored
+                || (provider_id.is_none() && is_provider_term(term))
+                || self.term_matches(term, provider_id, instance, search_text) != term.negated
         })
     }
 
@@ -104,7 +116,13 @@ impl CompiledQuery {
             .collect()
     }
 
-    fn term_matches(&self, term: &Term, instance: &Instance, search_text: &str) -> bool {
+    fn term_matches(
+        &self,
+        term: &Term,
+        provider_id: Option<&str>,
+        instance: &Instance,
+        search_text: &str,
+    ) -> bool {
         match &term.kind {
             TermKind::Word { text } | TermKind::Unknown { text, .. } => {
                 search_text.contains(&text.to_lowercase())
@@ -116,6 +134,14 @@ impl CompiledQuery {
             } => field_values(value)
                 .first()
                 .is_none_or(|age| age_matches(instance, age, self.now)),
+            TermKind::Field {
+                field: QueryField::ProviderFacet,
+                value,
+                ..
+            } => provider_id.is_some_and(|id| {
+                let id = id.to_lowercase();
+                field_values(value).iter().any(|v| id.starts_with(v))
+            }),
             TermKind::Field { field, value, .. } => field_values(value)
                 .iter()
                 .any(|v| field_matches(*field, instance, v)),
@@ -252,7 +278,18 @@ fn field_matches(field: QueryField, instance: &Instance, value: &str) -> bool {
         QueryField::Tag => tag_field_matches(instance, value),
         QueryField::Has => has_matches(instance, value),
         QueryField::Age => unreachable!("age terms are matched in term_matches"),
+        QueryField::ProviderFacet => unreachable!("provider terms are matched in term_matches"),
     }
+}
+
+fn is_provider_term(term: &Term) -> bool {
+    matches!(
+        &term.kind,
+        TermKind::Field {
+            field: QueryField::ProviderFacet,
+            ..
+        }
+    )
 }
 
 fn mode_matches(mode: MatchMode, text: &str, value: &str) -> bool {
@@ -315,13 +352,14 @@ impl SearchIndex {
     /// The instances matching `query`, in input order. `instances` must be the slice this index was built from.
     pub fn matching<'a>(
         &self,
+        provider_id: Option<&str>,
         query: &CompiledQuery,
         instances: &'a [Instance],
     ) -> Vec<&'a Instance> {
         instances
             .iter()
             .zip(&self.texts)
-            .filter(|(instance, text)| query.matches_indexed(instance, text))
+            .filter(|(instance, text)| query.matches_in(provider_id, instance, text))
             .map(|(instance, _)| instance)
             .collect()
     }
@@ -721,5 +759,23 @@ mod tests {
         assert_eq!(team_hits("tag:team=\"data plat\""), data);
         assert_eq!(team_hits("tag:\"Team\"=platform"), both);
         assert_eq!(team_hits("tag:team=platform"), both);
+    }
+
+    #[test]
+    fn provider_term_matches_rows_by_prefix_and_negation() {
+        let row = Instance::default();
+        let aws = compile("provider:aws", &[], now());
+        assert!(aws.matches_in(Some("aws"), &row, ""));
+        assert!(compile("provider:AW", &[], now()).matches_in(Some("aws"), &row, ""));
+        assert!(!compile("provider:gcp", &[], now()).matches_in(Some("aws"), &row, ""));
+        assert!(!compile("-provider:aws", &[], now()).matches_in(Some("aws"), &row, ""));
+        assert!(compile("-provider:gcp", &[], now()).matches_in(Some("aws"), &row, ""));
+    }
+
+    #[test]
+    fn provider_term_is_ignored_without_a_provider_id() {
+        let row = Instance::default();
+        assert!(compile("provider:gcp", &[], now()).matches(&row));
+        assert!(compile("-provider:aws", &[], now()).matches(&row));
     }
 }
