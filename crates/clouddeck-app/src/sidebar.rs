@@ -48,7 +48,7 @@ impl Sidebar {
         cx: &mut Context<Self>,
     ) {
         self.state.update(cx, |state, cx| {
-            let known = known_tag_keys(state.view_model.instances());
+            let known = known_tag_keys(&state.view_model.instances());
             let query = if active {
                 remove_field_value(state.query(), field, value, &known)
             } else {
@@ -77,14 +77,14 @@ impl Render for Sidebar {
         let state = self.state.read(cx);
         let instances = state.view_model.instances();
         let query = state.query().to_string();
-        let selection = facet_selection(&query, state.view_model.known_tag_keys());
+        let selection = facet_selection(&query, &state.view_model.known_tag_keys());
         let (states, type_counts) = state.facet_counts(SystemTime::now());
         let type_total = type_counts.len();
         let state_value = selection.state.as_deref();
         let type_value = selection.instance_type.as_deref();
         let types = visible_types(&type_counts, self.show_all_types, type_value);
         let pins = state.pinned_searches.clone();
-        let recent: Vec<Instance> = resolve_recent_instances(&state.recent_instances, instances)
+        let recent: Vec<Instance> = resolve_recent_instances(&state.recent_instances, &instances)
             .into_iter()
             .take(RECENT_INSTANCES_SHOWN)
             .cloned()
@@ -448,7 +448,7 @@ mod tests {
                 .unwrap();
             let mut vm = InstanceListViewModel::new(fleet::static_provider(fleet::huge_fleet()));
             rt.block_on(vm.load_instances());
-            state.view_model = vm;
+            state.view_model = vm.into();
         });
         cx.run_until_parked();
         let before = state.read_with(cx, |state, _| state.facet_computations());

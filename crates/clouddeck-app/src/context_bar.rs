@@ -32,6 +32,8 @@ pub enum ContextBarEvent {
     SignIn,
 }
 
+const PICK_PROVIDER_TOOLTIP: &str = "Pick a provider to change this";
+
 /// Callers that change the public fields must `cx.notify()` the bar themselves.
 pub struct ContextBar {
     state: Entity<FleetState>,
@@ -85,6 +87,7 @@ impl Render for ContextBar {
         let demo = state.demo;
         let inspector_open = state.inspector_open;
         let sidebar_open = state.sidebar_open;
+        let all_providers = state.view_model.is_all();
 
         record(
             cx,
@@ -113,8 +116,13 @@ impl Render for ContextBar {
                     "bar.profile",
                     AppIcon::User,
                     profile,
-                    connection_tooltip(&self.connection_label, "⌘P"),
+                    if all_providers {
+                        PICK_PROVIDER_TOOLTIP.to_string()
+                    } else {
+                        connection_tooltip(&self.connection_label, "⌘P")
+                    },
                     ContextBarEvent::OpenProfilePicker,
+                    !all_providers,
                     &palette,
                     cx,
                 ))
@@ -122,8 +130,13 @@ impl Render for ContextBar {
                     "bar.region",
                     AppIcon::Globe,
                     self.region_label.clone(),
-                    "Switch region  ⌘⇧R".to_string(),
+                    if all_providers {
+                        PICK_PROVIDER_TOOLTIP.to_string()
+                    } else {
+                        "Switch region  ⌘⇧R".to_string()
+                    },
                     ContextBarEvent::OpenRegionPicker,
+                    !all_providers,
                     &palette,
                     cx,
                 ));
@@ -279,9 +292,11 @@ fn picker_button(
     label: String,
     tooltip: String,
     event: ContextBarEvent,
+    enabled: bool,
     palette: &Palette,
     cx: &Context<ContextBar>,
 ) -> impl IntoElement {
+    let text = if enabled { palette.text } else { palette.faint };
     div()
         .id(id)
         .debug_selector(move || id.into())
@@ -291,10 +306,14 @@ fn picker_button(
         .px(px(6.0))
         .h(px(CONTROL_HEIGHT))
         .rounded(px(CONTROL_RADIUS))
-        .text_color(palette.text)
-        .hover(|button| button.bg(palette.hover))
+        .text_color(text)
+        .when(enabled, |button| {
+            button.hover(|button| button.bg(palette.hover))
+        })
         .tooltip(move |_, cx| AnyView::from(cx.new(|_| Tooltip::new(tooltip.clone()))))
-        .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.emit(event)))
+        .when(enabled, |button| {
+            button.on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.emit(event)))
+        })
         .child(icon.icon().xsmall().text_color(palette.dim))
         .child(label)
         .child(

@@ -220,25 +220,27 @@ impl SortState {
 
 /// Sorts instances by the sort column; instances missing that value always go last.
 pub fn sort_instances(instances: &mut [Instance], sort: SortState) {
-    instances.sort_by(|left, right| {
-        match (
-            has_sort_key(left, sort.column),
-            has_sort_key(right, sort.column),
-        ) {
-            (true, true) => {
-                let ordering = compare_present(left, right, sort.column);
-                let ordering = if sort.ascending {
-                    ordering
-                } else {
-                    ordering.reverse()
-                };
-                ordering.then_with(|| native_id(left).cmp(native_id(right)))
-            }
-            (true, false) => Ordering::Less,
-            (false, true) => Ordering::Greater,
-            (false, false) => native_id(left).cmp(native_id(right)),
+    instances.sort_by(|left, right| compare_instances(left, right, sort));
+}
+
+pub fn compare_instances(left: &Instance, right: &Instance, sort: SortState) -> Ordering {
+    match (
+        has_sort_key(left, sort.column),
+        has_sort_key(right, sort.column),
+    ) {
+        (true, true) => {
+            let ordering = compare_present(left, right, sort.column);
+            let ordering = if sort.ascending {
+                ordering
+            } else {
+                ordering.reverse()
+            };
+            ordering.then_with(|| native_id(left).cmp(native_id(right)))
         }
-    });
+        (true, false) => Ordering::Less,
+        (false, true) => Ordering::Greater,
+        (false, false) => native_id(left).cmp(native_id(right)),
+    }
 }
 
 fn has_sort_key(instance: &Instance, column: Column) -> bool {

@@ -366,7 +366,7 @@ pub fn search_key_bindings() -> Vec<KeyBinding> {
 
 fn suggestions_for(state: &FleetState) -> Suggestions {
     let instances = state.view_model.instances();
-    suggest(state.query(), instances, &known_tag_keys(instances))
+    suggest(state.query(), &instances, &known_tag_keys(&instances))
 }
 
 struct FocusSearchTarget {
@@ -553,7 +553,7 @@ impl Render for SearchField {
         let typed = input.value().to_string();
         let cursor = input.cursor();
         let state = self.state.read(cx);
-        let tag_keys = known_tag_keys(state.view_model.instances());
+        let tag_keys = known_tag_keys(&state.view_model.instances());
         let error = state
             .view_model
             .query_errors()

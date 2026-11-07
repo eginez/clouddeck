@@ -410,6 +410,11 @@ impl MainWindow {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if matches!(overlay, Overlay::Profile | Overlay::Region)
+            && self.fleet.read(cx).view_model.is_all()
+        {
+            return;
+        }
         let (view, subscription): (AnyView, Subscription) = match &overlay {
             Overlay::Profile => {
                 let profiles = self.profiles.clone();
@@ -598,7 +603,7 @@ impl MainWindow {
         } else {
             region_model(
                 &self.available_regions,
-                self.fleet.read(cx).view_model.instances(),
+                &self.fleet.read(cx).view_model.instances(),
             )
         };
         let selected: Vec<ValueId> = self
@@ -619,7 +624,7 @@ impl MainWindow {
                 region: failure.region.clone(),
                 message: failure.message.clone(),
                 error: failure.error.clone(),
-                stale_instances: stale_count(instances, &failure.region),
+                stale_instances: stale_count(&instances, &failure.region),
                 retry_in_seconds: None,
             })
             .collect()
@@ -674,7 +679,7 @@ impl MainWindow {
             | CommandId::FilterPending
             | CommandId::ClearFilters => {
                 let fleet = self.fleet.read(cx);
-                let known = known_tag_keys(fleet.view_model.instances());
+                let known = known_tag_keys(&fleet.view_model.instances());
                 if let Some(query) = filter_command_query(id, fleet.query(), &known) {
                     self.fleet
                         .update(cx, |fleet, cx| fleet.set_query(&query, cx));
@@ -2030,7 +2035,11 @@ mod tests {
         cx.run_until_parked();
 
         fleet.update(cx, |fleet, cx| {
-            fleet.view_model.finish_load(failed_load("Rate exceeded"));
+            fleet
+                .view_model
+                .single_mut()
+                .expect("single provider")
+                .finish_load(failed_load("Rate exceeded"));
             cx.notify();
         });
         cx.run_until_parked();
@@ -2051,13 +2060,21 @@ mod tests {
         cx.run_until_parked();
 
         fleet.update(cx, |fleet, cx| {
-            fleet.view_model.finish_load(failed_load("Rate exceeded"));
+            fleet
+                .view_model
+                .single_mut()
+                .expect("single provider")
+                .finish_load(failed_load("Rate exceeded"));
             cx.notify();
         });
         cx.run_until_parked();
 
         fleet.update(cx, |fleet, cx| {
-            let _ = fleet.view_model.begin_load();
+            let _ = fleet
+                .view_model
+                .single_mut()
+                .expect("single provider")
+                .begin_load();
             cx.notify();
         });
         cx.run_until_parked();
@@ -2067,10 +2084,14 @@ mod tests {
         assert_eq!(during_load.as_deref(), Some("Refresh failed: Throttled"));
 
         fleet.update(cx, |fleet, cx| {
-            fleet.view_model.finish_load(ListResult {
-                resources: three_instances(),
-                failures: vec![],
-            });
+            fleet
+                .view_model
+                .single_mut()
+                .expect("single provider")
+                .finish_load(ListResult {
+                    resources: three_instances(),
+                    failures: vec![],
+                });
             cx.notify();
         });
         cx.run_until_parked();

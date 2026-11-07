@@ -3,19 +3,17 @@
 #[cfg(test)]
 use std::cell::OnceCell;
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 #[cfg(test)]
 use std::time::Instant;
 use std::time::{Duration, SystemTime};
 
 use clouddeck_core::{
-    CloudDeckError, Column, DisplayRow, GroupBy, Instance, RECENT_INSTANCE_LIMIT, SortState,
-    StateFacetCounts, build_display_rows, join_failure, navigable_indices, push_recent,
-    sort_instances, throttle_retry_delay,
+    CloudDeckError, Column, DisplayRow, GroupBy, Instance, ListView, ProviderRow,
+    RECENT_INSTANCE_LIMIT, SortState, StateFacetCounts, build_display_rows, compare_instances,
+    join_failure, navigable_indices, push_recent, throttle_retry_delay,
 };
 use gpui::{App, Context};
-
-use crate::view_models::InstanceListViewModel;
 
 const FLASH_DURATION: Duration = Duration::from_millis(1_800);
 
@@ -28,8 +26,8 @@ struct FacetCache {
 
 /// Fleet data and UI state shared by every main-window view.
 pub struct FleetState {
-    /// Instance list; its search text is the query.
-    pub view_model: InstanceListViewModel,
+    /// Instance list for the active provider, or for all of them; its search text is the query.
+    pub view_model: ListView,
     /// Column sort applied to the visible rows.
     pub sort: SortState,
     /// `Instance::id` of the selected row.
@@ -62,9 +60,9 @@ pub struct FleetState {
 
 impl FleetState {
     /// Creates the state with the default sort and both panes open.
-    pub fn new(view_model: InstanceListViewModel, profile: String, demo: bool) -> Self {
+    pub fn new(view_model: impl Into<ListView>, profile: String, demo: bool) -> Self {
         Self {
-            view_model,
+            view_model: view_model.into(),
             sort: SortState::default(),
             selected: None,
             sidebar_open: true,
@@ -153,30 +151,29 @@ impl FleetState {
 
     /// Instances passing the query and filters, in the current sort order.
     pub fn visible_rows(&self) -> Vec<Instance> {
-        let mut rows = self.view_model.filtered_instances();
-        sort_instances(&mut rows, self.sort);
+        self.visible_provider_rows()
+            .into_iter()
+            .map(|(_, instance)| instance)
+            .collect()
+    }
+
+    fn visible_provider_rows(&self) -> Vec<ProviderRow> {
+        let mut rows = self.view_model.rows();
+        let sort = self.sort;
+        rows.sort_by(|(_, left), (_, right)| compare_instances(left, right, sort));
         rows
     }
 
     /// The table rows for the current grouping, with the instances they refer to by index.
     pub fn display_rows(&self) -> (Vec<Instance>, Vec<DisplayRow>) {
-        let rows = self.visible_rows();
-        let provider_id = self.view_model.row_provider_id();
-        let failed = if self.view_model.error().is_some() {
-            vec![provider_id.clone()]
-        } else {
-            Vec::new()
-        };
-        let names: BTreeMap<String, String> = self
+        let paired = self.visible_provider_rows();
+        let failed: Vec<String> = self
             .view_model
-            .provider_facet()
+            .provider_failures()
             .into_iter()
-            .map(|facet| (facet.id, facet.name))
+            .map(|failure| failure.provider_id)
             .collect();
-        let paired: Vec<(String, Instance)> = rows
-            .iter()
-            .map(|instance| (provider_id.clone(), instance.clone()))
-            .collect();
+        let names = self.view_model.provider_names();
         let display = build_display_rows(
             &paired,
             self.group_by,
@@ -184,6 +181,7 @@ impl FleetState {
             &failed,
             &names,
         );
+        let rows = paired.into_iter().map(|(_, instance)| instance).collect();
         (rows, display)
     }
 
@@ -273,27 +271,30 @@ impl FleetState {
 
     /// Reloads instances from the compute service in the background.
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
-        let Some(request) = self.view_model.begin_load() else {
+        let requests = self.view_model.begin_loads();
+        if requests.is_empty() {
             return;
-        };
+        }
         self.retry_generation += 1;
         self.retry_in_seconds = None;
         cx.notify();
-        let selection = request.selection().clone();
-        let task = crate::runtime::runtime().spawn_blocking(move || request.run());
-        cx.spawn(async move |this, cx| {
-            let result = task
-                .await
-                .unwrap_or_else(|error| join_failure(&selection, &error));
-            let _ = this.update(cx, |this, cx| {
-                let now = this.now(cx);
-                this.view_model.finish_load_at(result, now);
-                this.reconcile_selection();
-                this.after_load(cx);
-                cx.notify();
-            });
-        })
-        .detach();
+        for (provider_id, request) in requests {
+            let selection = request.selection().clone();
+            let task = crate::runtime::runtime().spawn_blocking(move || request.run());
+            cx.spawn(async move |this, cx| {
+                let result = task
+                    .await
+                    .unwrap_or_else(|error| join_failure(&selection, &error));
+                let _ = this.update(cx, |this, cx| {
+                    let now = this.now(cx);
+                    this.view_model.finish_load_for(&provider_id, result, now);
+                    this.reconcile_selection();
+                    this.after_load(cx);
+                    cx.notify();
+                });
+            })
+            .detach();
+        }
     }
 
     fn after_load(&mut self, cx: &mut Context<Self>) {
@@ -353,7 +354,9 @@ impl FleetState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clouddeck_core::{fixture_fleet as fleet, native_id};
+    use clouddeck_core::{
+        InstanceListViewModel, fixture_fleet as fleet, native_id, sort_instances,
+    };
     use gpui::{AppContext, Entity, TestAppContext};
 
     fn new_state(cx: &mut TestAppContext) -> Entity<FleetState> {
@@ -443,7 +446,14 @@ mod tests {
 
         state.update(cx, |state, cx| state.toggle_sort(Column::Name, cx));
 
-        let mut expected = state.read_with(cx, |state, _| state.view_model.filtered_instances());
+        let mut expected: Vec<Instance> = state.read_with(cx, |state, _| {
+            state
+                .view_model
+                .rows()
+                .into_iter()
+                .map(|(_, instance)| instance)
+                .collect()
+        });
         sort_instances(
             &mut expected,
             SortState {

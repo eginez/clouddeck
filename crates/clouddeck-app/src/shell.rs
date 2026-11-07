@@ -7,10 +7,10 @@ use crate::{
     theme::SurgicalTheme,
 };
 use clouddeck_core::{
-    Call, ContextModel, DemoFleet, FLEET_REGIONS, InstanceListViewModel, LoadHost, ProfileInput,
-    Provider, ProviderEntry, REGION, RegionScope, Settings, UiState, ValueId, WindowFrame,
-    WorkspaceContext, demo_profiles, demo_region_names, settings_path, short_name,
-    switch_active_provider, workspace_provider_for,
+    ALL_PROVIDERS, Call, ContextModel, DemoFleet, FLEET_REGIONS, InstanceListViewModel, ListView,
+    LoadHost, ProfileInput, Provider, ProviderEntry, REGION, RegionScope, Settings, UiState,
+    ValueId, WindowFrame, WorkspaceContext, all_providers_view, demo_profiles, demo_region_names,
+    settings_path, short_name, switch_active_provider, workspace_provider_for,
 };
 use gpui::{
     AnyWindowHandle, App, Bounds, Context, Entity, IntoElement, KeyBinding, ParentElement, Render,
@@ -512,10 +512,14 @@ impl AppShell {
     }
 
     fn sync_provider_view(main_window: &Entity<MainWindow>, model: &ContextModel, cx: &mut App) {
-        let provider_short_name = model
-            .active_info()
-            .map(short_name)
-            .unwrap_or_else(|| "AWS".to_string());
+        let provider_short_name = if model.shows_all_providers() {
+            "All".to_string()
+        } else {
+            model
+                .active_info()
+                .map(short_name)
+                .unwrap_or_else(|| "AWS".to_string())
+        };
         let connection_label = model.connection_label().unwrap_or("Profile").to_string();
         let sign_in = model.needs_sign_in();
         let provider_menu = model.provider_menu();
@@ -625,16 +629,21 @@ impl AppShell {
         Self::sync_region_selection(&mut context_model, &scope, &available);
         let fleet_regions =
             Self::fleet_regions_from_selection(&context_model, &scope, &available, demo);
-        let view_model = InstanceListViewModel::new(Self::provider_for_id(
-            context_model.active_provider(),
-            &providers,
-            &context,
-            demo,
-            demo_scenario,
-            &fleet_regions,
-            request_timeout,
-        ));
-        let mut fleet_state = FleetState::new(view_model, context.profile.clone(), demo);
+        let view: ListView = if context_model.shows_all_providers() {
+            all_providers_view(&providers, demo.then_some(demo_scenario), request_timeout)
+        } else {
+            InstanceListViewModel::new(Self::provider_for_id(
+                context_model.active_provider(),
+                &providers,
+                &context,
+                demo,
+                demo_scenario,
+                &fleet_regions,
+                request_timeout,
+            ))
+            .into()
+        };
+        let mut fleet_state = FleetState::new(view, context.profile.clone(), demo);
         fleet_state.pinned_searches = ui_state.pinned_searches.clone();
         fleet_state.recent_searches = ui_state.recent_searches.clone();
         fleet_state.recent_instances = ui_state.recent_instances.clone();
@@ -902,7 +911,7 @@ impl AppShell {
         cx: &mut Context<Self>,
     ) {
         let providers = app_providers::providers(cx);
-        if !providers.iter().any(|provider| provider.info().id == id) {
+        if id != ALL_PROVIDERS && !providers.iter().any(|provider| provider.info().id == id) {
             return;
         }
         let mut settings = Settings::load(settings_file);
@@ -918,6 +927,11 @@ impl AppShell {
         let scope = self.main_window.read(cx).scope.clone();
         let available = Self::available_regions(self.demo, self.demo_scenario);
         Self::sync_region_selection(&mut self.context_model, &scope, &available);
+        if self.context_model.shows_all_providers() {
+            let context = self.context.clone();
+            self.apply_context(context, window, cx);
+            return;
+        }
         let profile = self
             .context_model
             .connections()
@@ -968,9 +982,27 @@ impl AppShell {
             .then(|| self.remembered_scope = Self::remembered_regions(&scope, &available));
         self.applied_scope = scope.clone();
         let providers = app_providers::providers(cx);
-        #[cfg(test)]
-        let provider = self.test_service_override.clone().unwrap_or_else(|| {
-            Self::provider_for_id(
+        let view: ListView = if self.context_model.shows_all_providers() {
+            all_providers_view(
+                &providers,
+                self.demo.then_some(self.demo_scenario),
+                self.request_timeout,
+            )
+        } else {
+            #[cfg(test)]
+            let provider = self.test_service_override.clone().unwrap_or_else(|| {
+                Self::provider_for_id(
+                    self.context_model.active_provider(),
+                    &providers,
+                    &self.context,
+                    self.demo,
+                    self.demo_scenario,
+                    &fleet_regions,
+                    self.request_timeout,
+                )
+            });
+            #[cfg(not(test))]
+            let provider = Self::provider_for_id(
                 self.context_model.active_provider(),
                 &providers,
                 &self.context,
@@ -978,19 +1010,9 @@ impl AppShell {
                 self.demo_scenario,
                 &fleet_regions,
                 self.request_timeout,
-            )
-        });
-        #[cfg(not(test))]
-        let provider = Self::provider_for_id(
-            self.context_model.active_provider(),
-            &providers,
-            &self.context,
-            self.demo,
-            self.demo_scenario,
-            &fleet_regions,
-            self.request_timeout,
-        );
-        let vm = InstanceListViewModel::new(provider);
+            );
+            InstanceListViewModel::new(provider).into()
+        };
         let profile = self.context.profile.clone();
         let demo = self.demo;
         let previous = self.fleet.read(cx);
@@ -1005,7 +1027,7 @@ impl AppShell {
         // holds only a weak handle to the old fleet, so it cannot write into
         // the new context once that entity is dropped.
         let fleet = cx.new(|_| {
-            let mut fleet = FleetState::new(vm, profile, demo);
+            let mut fleet = FleetState::new(view, profile, demo);
             fleet.pinned_searches = pinned;
             fleet.recent_searches = recent_searches;
             fleet.recent_instances = recent_instances;
@@ -1511,7 +1533,14 @@ mod provider_switch_tests {
 
     fn scoped_provider_id(shell: &Entity<AppShell>, cx: &mut VisualTestContext) -> String {
         shell.read_with(cx, |shell, cx| {
-            shell.fleet.read(cx).view_model.row_provider_id()
+            shell
+                .fleet
+                .read(cx)
+                .view_model
+                .provider_names()
+                .into_keys()
+                .next()
+                .expect("one provider is listed")
         })
     }
 
@@ -1599,6 +1628,271 @@ mod provider_switch_tests {
             assert_eq!(shell.context_model.active_provider(), "gcp");
         });
         assert_eq!(scoped_provider_id(&shell, cx), "gcp");
+    }
+
+    struct Unauthenticated(std::sync::Arc<dyn Provider>);
+
+    impl Provider for Unauthenticated {
+        fn info(&self) -> clouddeck_core::ProviderInfo {
+            self.0.info()
+        }
+
+        fn connections(
+            &self,
+            _cx: &clouddeck_core::Call<'_>,
+        ) -> Result<Vec<clouddeck_core::Connection>, clouddeck_core::ProviderError> {
+            Err(clouddeck_core::ProviderError::of(
+                clouddeck_core::ErrorKind::Auth,
+            ))
+        }
+
+        fn dimensions(
+            &self,
+            cx: &clouddeck_core::Call<'_>,
+            connection: &clouddeck_core::ConnectionId,
+        ) -> Result<Vec<clouddeck_core::Dimension>, clouddeck_core::ProviderError> {
+            self.0.dimensions(cx, connection)
+        }
+
+        fn kinds(&self) -> Vec<clouddeck_core::KindInfo> {
+            self.0.kinds()
+        }
+
+        fn list(
+            &self,
+            _cx: &clouddeck_core::Call<'_>,
+            _connection: &clouddeck_core::ConnectionId,
+            _kind: &clouddeck_core::KindId,
+            _selection: &clouddeck_core::Selection,
+        ) -> clouddeck_core::ListResult {
+            clouddeck_core::ListResult {
+                resources: Vec::new(),
+                failures: vec![clouddeck_core::CellFailure {
+                    cell: clouddeck_core::Selection::new(),
+                    error: clouddeck_core::ProviderError::of(clouddeck_core::ErrorKind::Auth),
+                }],
+            }
+        }
+
+        fn console_url(
+            &self,
+            connection: &clouddeck_core::ConnectionId,
+            kind: &clouddeck_core::KindId,
+            resource: &clouddeck_core::Instance,
+        ) -> Option<String> {
+            self.0.console_url(connection, kind, resource)
+        }
+
+        fn fields(&self, kind: &clouddeck_core::KindId) -> Vec<clouddeck_core::FieldDef> {
+            self.0.fields(kind)
+        }
+    }
+
+    fn compute_with_instances(
+        id: &str,
+        instances: Vec<clouddeck_core::EC2Instance>,
+    ) -> std::sync::Arc<dyn Provider> {
+        std::sync::Arc::new(clouddeck_core::ComputeServiceProvider::new(
+            id,
+            vec![clouddeck_core::Connection {
+                id: "default".into(),
+                display_name: "default".to_string(),
+            }],
+            vec!["us-east-1".to_string()],
+            move |_, _| {
+                Box::new(clouddeck_core::MockComputeService::new(
+                    instances.clone(),
+                    None,
+                ))
+            },
+        ))
+    }
+
+    fn failing_compute_provider(id: &str) -> std::sync::Arc<dyn Provider> {
+        std::sync::Arc::new(clouddeck_core::ComputeServiceProvider::new(
+            id,
+            vec![clouddeck_core::Connection {
+                id: "default".into(),
+                display_name: "default".to_string(),
+            }],
+            vec!["us-east-1".to_string()],
+            |_, _| {
+                Box::new(clouddeck_core::MockComputeService::new(
+                    Vec::new(),
+                    Some("upstream unavailable".into()),
+                ))
+            },
+        ))
+    }
+
+    fn build_shell(
+        cx: &mut TestAppContext,
+        settings: Settings,
+    ) -> (Entity<AppShell>, &mut VisualTestContext) {
+        add_rooted_shell(cx, move |window, cx| {
+            AppShell::build_with_profiles(
+                window,
+                false,
+                DemoFleet::Happy,
+                Ok(Vec::new()),
+                None,
+                settings,
+                cx,
+            )
+        })
+    }
+
+    fn wait_until_loaded(cx: &mut VisualTestContext, shell: &Entity<AppShell>) {
+        for _ in 0..200 {
+            cx.run_until_parked();
+            let loading =
+                shell.read_with(cx, |shell, cx| shell.fleet.read(cx).view_model.is_loading());
+            if !loading {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        panic!("providers did not finish loading within the timeout");
+    }
+
+    fn all_providers_fleet(
+        shell: &Entity<AppShell>,
+        cx: &mut VisualTestContext,
+    ) -> Entity<crate::fleet_state::FleetState> {
+        shell.read_with(cx, |shell, _| shell.fleet.clone())
+    }
+
+    #[gpui::test]
+    fn persisted_all_providers_loads_every_signed_in_provider(cx: &mut TestAppContext) {
+        install_providers(
+            cx,
+            vec![
+                compute_with_instances("aws", vec![bare_ec2("us-east-1", "i-1")]),
+                compute_with_instances("gcp", vec![bare_ec2("us-east-1", "i-2")]),
+            ],
+        );
+        let settings = Settings {
+            active_provider: Some(ALL_PROVIDERS.to_string()),
+            ..Settings::default()
+        };
+        let (shell, cx) = build_shell(cx, settings);
+        wait_until_loaded(cx, &shell);
+
+        shell.read_with(cx, |shell, _| {
+            assert!(shell.context_model.shows_all_providers());
+        });
+        let fleet = all_providers_fleet(&shell, cx);
+        fleet.read_with(cx, |fleet, _| {
+            assert!(fleet.view_model.is_all());
+            let names: Vec<String> = fleet.view_model.provider_names().into_keys().collect();
+            assert_eq!(names, ["aws", "gcp"]);
+            assert!(fleet.view_model.provider_failures().is_empty());
+            let rows: Vec<String> = fleet
+                .view_model
+                .rows()
+                .into_iter()
+                .map(|(provider, _)| provider)
+                .collect();
+            assert_eq!(rows, ["aws", "gcp"]);
+        });
+    }
+
+    #[gpui::test]
+    fn failing_provider_is_a_failed_group_and_the_others_still_show(cx: &mut TestAppContext) {
+        install_providers(
+            cx,
+            vec![
+                compute_with_instances("aws", vec![bare_ec2("us-east-1", "i-1")]),
+                failing_compute_provider("gcp"),
+            ],
+        );
+        let settings = Settings {
+            active_provider: Some(ALL_PROVIDERS.to_string()),
+            ..Settings::default()
+        };
+        let (shell, cx) = build_shell(cx, settings);
+        wait_until_loaded(cx, &shell);
+
+        let fleet = all_providers_fleet(&shell, cx);
+        fleet.read_with(cx, |fleet, _| {
+            let failures = fleet.view_model.provider_failures();
+            assert_eq!(failures.len(), 1);
+            assert_eq!(failures[0].provider_id, "gcp");
+            assert!(!failures[0].needs_sign_in);
+            let rows: Vec<String> = fleet
+                .view_model
+                .rows()
+                .into_iter()
+                .map(|(provider, _)| provider)
+                .collect();
+            assert_eq!(rows, ["aws"]);
+        });
+    }
+
+    #[gpui::test]
+    fn signed_out_provider_is_listed_as_needing_sign_in(cx: &mut TestAppContext) {
+        install_providers(
+            cx,
+            vec![
+                compute_provider("aws"),
+                std::sync::Arc::new(Unauthenticated(compute_provider("gcp"))),
+            ],
+        );
+        let settings = Settings {
+            active_provider: Some(ALL_PROVIDERS.to_string()),
+            ..Settings::default()
+        };
+        let (shell, cx) = build_shell(cx, settings);
+        wait_until_loaded(cx, &shell);
+
+        let fleet = all_providers_fleet(&shell, cx);
+        fleet.read_with(cx, |fleet, _| {
+            let failures = fleet.view_model.provider_failures();
+            let gcp = failures
+                .iter()
+                .find(|failure| failure.provider_id == "gcp")
+                .expect("gcp is listed");
+            assert!(gcp.needs_sign_in);
+            assert!(failures.iter().all(|failure| failure.provider_id != "aws"));
+        });
+    }
+
+    #[gpui::test]
+    fn switching_all_then_aws_then_all_keeps_the_choice(cx: &mut TestAppContext) {
+        install_registry(cx, compute_provider("gcp"));
+        let (shell, cx) = add_rooted_shell(cx, AppShell::new_demo);
+        let settings_file =
+            std::env::temp_dir().join(format!("clouddeck-all-{}.json", std::process::id()));
+        let _ = std::fs::remove_file(&settings_file);
+
+        shell.update_in(cx, |shell, window, cx| {
+            shell.switch_provider_to(ALL_PROVIDERS, &settings_file, window, cx)
+        });
+        cx.run_until_parked();
+        let fleet = all_providers_fleet(&shell, cx);
+        assert!(fleet.read_with(cx, |fleet, _| fleet.view_model.is_all()));
+
+        shell.update_in(cx, |shell, window, cx| {
+            shell.switch_provider_to("aws", &settings_file, window, cx)
+        });
+        cx.run_until_parked();
+        shell.read_with(cx, |shell, _| {
+            assert_eq!(shell.context_model.active_provider(), "aws");
+        });
+        let fleet = all_providers_fleet(&shell, cx);
+        assert!(!fleet.read_with(cx, |fleet, _| fleet.view_model.is_all()));
+
+        shell.update_in(cx, |shell, window, cx| {
+            shell.switch_provider_to(ALL_PROVIDERS, &settings_file, window, cx)
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            Settings::load(&settings_file).active_provider.as_deref(),
+            Some(ALL_PROVIDERS)
+        );
+        let fleet = all_providers_fleet(&shell, cx);
+        assert!(fleet.read_with(cx, |fleet, _| fleet.view_model.is_all()));
+        let _ = std::fs::remove_file(&settings_file);
     }
 
     #[gpui::test]

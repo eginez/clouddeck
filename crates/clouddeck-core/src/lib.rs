@@ -42,6 +42,8 @@ pub use instance_detail_view_model::InstanceDetailViewModel;
 pub use instance_list_view_model::{InstanceListViewModel, LoadRequest};
 mod merged_list_view_model;
 pub use merged_list_view_model::{MergedListViewModel, ProviderFailure, ProviderRow};
+mod list_view;
+pub use list_view::{ListView, all_providers_view};
 mod workspace_provider;
 pub use workspace_provider::{
     DemoFleet, demo_profiles, demo_region_names, workspace_provider, workspace_provider_for,

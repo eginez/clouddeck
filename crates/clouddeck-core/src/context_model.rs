@@ -42,6 +42,16 @@ pub struct DimensionRow {
     pub failed: bool,
 }
 
+pub const ALL_PROVIDERS: &str = "all";
+
+pub fn default_selection(dimensions: &[Dimension]) -> Selection {
+    let mut selection = Selection::new();
+    for dim in dimensions {
+        selection.0.insert(dim.id.clone(), default_values(dim));
+    }
+    selection
+}
+
 pub fn short_name(info: &ProviderInfo) -> String {
     if info.name.chars().count() <= 4 {
         info.name.clone()
@@ -80,7 +90,7 @@ impl ContextModel {
     pub fn new(providers: Vec<ProviderEntry>, persisted: Option<&str>, fallback: &str) -> Self {
         let registered = |id: &str| providers.iter().any(|p| p.info.id == id);
         let active = match persisted {
-            Some(id) if registered(id) => id.to_string(),
+            Some(id) if id == ALL_PROVIDERS || registered(id) => id.to_string(),
             _ => providers
                 .iter()
                 .find(|p| p.bundled && p.signed_in)
@@ -123,16 +133,26 @@ impl ContextModel {
             .map(|info| info.connection_label.as_str())
     }
 
+    pub fn shows_all_providers(&self) -> bool {
+        self.active == ALL_PROVIDERS
+    }
+
     pub fn provider_menu(&self) -> Vec<ProviderMenuRow> {
-        self.providers
-            .iter()
-            .map(|p| ProviderMenuRow {
+        let all = ProviderMenuRow {
+            id: ALL_PROVIDERS.to_string(),
+            name: "All providers".to_string(),
+            short_name: "All".to_string(),
+            signed_in: true,
+            active: self.shows_all_providers(),
+        };
+        std::iter::once(all)
+            .chain(self.providers.iter().map(|p| ProviderMenuRow {
                 id: p.info.id.clone(),
                 name: p.info.name.clone(),
                 short_name: short_name(&p.info),
                 signed_in: p.signed_in,
                 active: p.info.id == self.active,
-            })
+            }))
             .collect()
     }
 
@@ -147,7 +167,8 @@ impl ContextModel {
     }
 
     pub fn switch_provider(&mut self, id: &str) -> bool {
-        if id == self.active || !self.providers.iter().any(|p| p.info.id == id) {
+        let selectable = id == ALL_PROVIDERS || self.providers.iter().any(|p| p.info.id == id);
+        if id == self.active || !selectable {
             return false;
         }
         self.active = id.to_string();
@@ -737,9 +758,9 @@ mod tests {
             menu.iter()
                 .map(|r| r.short_name.as_str())
                 .collect::<Vec<_>>(),
-            ["AWS", "GCP", "Demo"]
+            ["All", "AWS", "GCP", "Demo"]
         );
-        assert!(menu[1].active && !menu[0].active);
+        assert!(menu[2].active && !menu[0].active && !menu[1].active);
 
         let aws = ContextModel::new(
             vec![entry("aws", "AWS", "Profile", true, true)],
