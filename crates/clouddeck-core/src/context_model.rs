@@ -5,6 +5,8 @@ use clouddeck_provider_api::{
     ListResult, ProviderError, ProviderInfo, Selection, ValueId,
 };
 
+use crate::Settings;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProviderEntry {
     pub info: ProviderInfo,
@@ -46,6 +48,18 @@ pub fn short_name(info: &ProviderInfo) -> String {
     } else {
         info.id.to_uppercase()
     }
+}
+
+pub fn switch_active_provider(model: &mut ContextModel, settings: &mut Settings, id: &str) -> bool {
+    if !model.switch_provider(id) {
+        return false;
+    }
+    settings.active_provider = Some(id.to_string());
+    true
+}
+
+pub fn connection_tooltip(connection_label: &str, shortcut: &str) -> String {
+    format!("Switch {}  {shortcut}", connection_label.to_lowercase())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -952,5 +966,54 @@ mod tests {
         let lower = production.to_lowercase();
         assert!(!lower.contains("aws"), "production code names a provider");
         assert!(!lower.contains("region"), "production code names a region");
+    }
+}
+
+#[cfg(test)]
+mod provider_switch_tests {
+    use super::*;
+
+    fn entry(id: &str) -> ProviderEntry {
+        ProviderEntry {
+            info: ProviderInfo {
+                id: id.to_string(),
+                name: id.to_string(),
+                version: "1.0.0".to_string(),
+                connection_label: "Project".to_string(),
+            },
+            signed_in: true,
+            bundled: true,
+        }
+    }
+
+    #[test]
+    fn switching_to_another_registered_provider_persists_it() {
+        let mut model = ContextModel::new(vec![entry("aws"), entry("gcp")], None, "aws");
+        let mut settings = Settings::default();
+
+        assert!(switch_active_provider(&mut model, &mut settings, "gcp"));
+        assert_eq!(model.active_provider(), "gcp");
+        assert_eq!(settings.active_provider.as_deref(), Some("gcp"));
+    }
+
+    #[test]
+    fn same_or_unknown_provider_leaves_settings_untouched() {
+        let mut model = ContextModel::new(vec![entry("aws"), entry("gcp")], None, "aws");
+        let mut settings = Settings::default();
+
+        assert!(!switch_active_provider(&mut model, &mut settings, "aws"));
+        assert!(!switch_active_provider(
+            &mut model,
+            &mut settings,
+            "missing"
+        ));
+        assert_eq!(model.active_provider(), "aws");
+        assert_eq!(settings.active_provider, None);
+    }
+
+    #[test]
+    fn connection_tooltip_names_the_connection_label_and_shortcut() {
+        assert_eq!(connection_tooltip("Profile", "⌘P"), "Switch profile  ⌘P");
+        assert_eq!(connection_tooltip("Project", "⌘P"), "Switch project  ⌘P");
     }
 }

@@ -12,7 +12,7 @@ use clouddeck_core::{
     ui_state_path,
 };
 use gpui::{
-    AnyElement, App, Bounds, ClickEvent, Context, Div, Entity, EventEmitter, Global,
+    AnyElement, AnyView, App, Bounds, ClickEvent, Context, Div, Entity, EventEmitter, Global,
     HighlightStyle, IntoElement, ParentElement, Render, SharedString, Stateful, Styled, StyledText,
     Subscription, TitlebarOptions, Window, WindowBounds, WindowHandle, WindowOptions, div, img,
     point, prelude::*, px, size, white,
@@ -20,6 +20,7 @@ use gpui::{
 use gpui_component::checkbox::Checkbox;
 use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::select::{Select, SelectEvent, SelectItem, SelectState};
+use gpui_component::tooltip::Tooltip;
 use gpui_component::{IndexPath, Root, Sizable};
 
 use crate::app_menus;
@@ -28,6 +29,11 @@ use crate::tokens::{Palette, palette};
 
 const SAVE_DEBOUNCE: Duration = Duration::from_millis(300);
 const NOTE_DURATION: Duration = Duration::from_secs(2);
+pub(crate) const WINDOW_SIZE: (f32, f32) = (820.0, 560.0);
+
+const FOOTER_HINT: &str =
+    "Changes apply immediately. A blue bar marks values that differ from the default.";
+
 const CATEGORY_ICONS: [AppIcon; 9] = [
     AppIcon::PanelLeft,
     AppIcon::Server,
@@ -133,6 +139,7 @@ fn choice(title: impl Into<SharedString>, pick: Pick) -> Choice {
 fn button(id: &'static str, label: &'static str, palette: &Palette) -> Stateful<Div> {
     div()
         .id(id)
+        .flex_none()
         .px(px(12.))
         .py(px(4.))
         .rounded(px(6.))
@@ -655,8 +662,17 @@ impl SettingsWindow {
             .text_size(px(12.))
             .when(selected, |row| row.bg(palette.sel).text_color(palette.text))
             .when(!selected, |row| row.text_color(palette.dim))
-            .child(CATEGORY_ICONS[index].icon().xsmall())
-            .child(name)
+            .child(
+                div()
+                    .flex_none()
+                    .debug_selector(move || format!("settings.cat-icon.{index}"))
+                    .child(CATEGORY_ICONS[index].icon().xsmall()),
+            )
+            .child(
+                div()
+                    .debug_selector(move || format!("settings.cat-label.{index}"))
+                    .child(name),
+            )
             .when(changed, |row| {
                 row.child(
                     div()
@@ -1160,18 +1176,32 @@ impl Render for SettingsWindow {
             .children(body);
 
         let footer = div()
+            .debug_selector(|| "settings.footer".into())
             .flex()
             .items_center()
             .justify_between()
+            .gap(px(12.))
             .h(px(44.))
             .px(px(20.))
             .border_t_1()
             .border_color(palette.line)
-            .child(div().text_size(px(11.)).text_color(palette.dim).child(
-                "Changes apply immediately. A blue bar marks values that differ from the default.",
-            ))
             .child(
                 div()
+                    .id("settings-hint")
+                    .debug_selector(|| "settings.hint".into())
+                    .flex_1()
+                    .min_w(px(0.))
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .text_size(px(11.))
+                    .text_color(palette.dim)
+                    .tooltip(move |_, cx| AnyView::from(cx.new(|_| Tooltip::new(FOOTER_HINT))))
+                    .child(FOOTER_HINT),
+            )
+            .child(
+                div()
+                    .flex_none()
                     .flex()
                     .items_center()
                     .gap(px(10.))
@@ -1238,32 +1268,40 @@ pub fn open_settings_window(cx: &mut App, settings: Settings) -> Option<WindowHa
     {
         return Some(handle);
     }
-    let bounds = Bounds::centered(None, size(px(820.0), px(560.0)), cx);
-    let handle = cx
-        .open_window(
-            WindowOptions {
-                titlebar: Some(TitlebarOptions {
-                    title: Some(SharedString::from("Settings")),
-                    appears_transparent: true,
-                    traffic_light_position: Some(point(px(14.0), px(15.0))),
-                }),
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                app_id: Some(crate::main_window::APP_ID.to_string()),
-                ..Default::default()
-            },
-            move |window, cx| {
-                let view = cx.new(|cx| SettingsWindow::new(settings, window, cx));
-                let weak = view.downgrade();
-                window.on_window_should_close(cx, move |_, cx| {
-                    let _ = weak.update(cx, |this, _| this.flush_pending_save());
-                    true
-                });
-                cx.new(|cx| Root::new(view, window, cx))
-            },
-        )
-        .ok()?;
+    let handle = open_window_for(cx, settings, WINDOW_SIZE)?;
     cx.set_global(OpenSettingsWindow(handle));
     Some(handle)
+}
+
+/// Always opens a new window, bypassing the single-instance check.
+pub(crate) fn open_window_for(
+    cx: &mut App,
+    settings: Settings,
+    window_size: (f32, f32),
+) -> Option<WindowHandle<Root>> {
+    let bounds = Bounds::centered(None, size(px(window_size.0), px(window_size.1)), cx);
+    cx.open_window(
+        WindowOptions {
+            titlebar: Some(TitlebarOptions {
+                title: Some(SharedString::from("Settings")),
+                appears_transparent: true,
+                traffic_light_position: Some(point(px(14.0), px(15.0))),
+            }),
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            app_id: Some(crate::main_window::APP_ID.to_string()),
+            ..Default::default()
+        },
+        move |window, cx| {
+            let view = cx.new(|cx| SettingsWindow::new(settings, window, cx));
+            let weak = view.downgrade();
+            window.on_window_should_close(cx, move |_, cx| {
+                let _ = weak.update(cx, |this, _| this.flush_pending_save());
+                true
+            });
+            cx.new(|cx| Root::new(view, window, cx))
+        },
+    )
+    .ok()
 }
 
 fn edit_ui_state_file(path: &Path, edit: impl FnOnce(&mut UiState)) -> std::io::Result<()> {
@@ -1332,6 +1370,28 @@ mod tests {
             .detach();
         });
         events
+    }
+
+    #[gpui::test]
+    fn every_category_row_has_the_same_icon_gap(cx: &mut TestAppContext) {
+        let (_view, cx) = rooted(cx, Settings::default());
+        let pairs = [
+            ("settings.cat-icon.0", "settings.cat-label.0"),
+            ("settings.cat-icon.1", "settings.cat-label.1"),
+            ("settings.cat-icon.2", "settings.cat-label.2"),
+            ("settings.cat-icon.3", "settings.cat-label.3"),
+            ("settings.cat-icon.4", "settings.cat-label.4"),
+            ("settings.cat-icon.5", "settings.cat-label.5"),
+            ("settings.cat-icon.6", "settings.cat-label.6"),
+            ("settings.cat-icon.7", "settings.cat-label.7"),
+            ("settings.cat-icon.8", "settings.cat-label.8"),
+        ];
+        for (icon_selector, label_selector) in pairs {
+            let icon = cx.debug_bounds(icon_selector).expect("icon rendered");
+            let label = cx.debug_bounds(label_selector).expect("label rendered");
+            let gap = f32::from(label.origin.x - (icon.origin.x + icon.size.width));
+            assert!((gap - 8.0).abs() < 0.5, "{label_selector}: gap {gap}px");
+        }
     }
 
     #[gpui::test]

@@ -68,10 +68,18 @@ pub(crate) enum State {
     PluginsRestart,
     /// Plugins window at the narrowest supported width.
     PluginsNarrow,
+    /// Settings window at its default size in the light palette.
+    SettingsLight,
+    /// Settings window at its default size in the dark palette.
+    SettingsDark,
+    /// Settings window at a width where the footer text has to be truncated.
+    SettingsNarrow,
+    /// Settings window at the narrow width in the dark palette.
+    SettingsNarrowDark,
 }
 
 impl State {
-    pub(crate) const ALL: [State; 28] = [
+    pub(crate) const ALL: [State; 32] = [
         State::MainIdle,
         State::MainRowSelected,
         State::MainEmpty,
@@ -100,6 +108,10 @@ impl State {
         State::PluginsAvailableEmpty,
         State::PluginsRestart,
         State::PluginsNarrow,
+        State::SettingsLight,
+        State::SettingsDark,
+        State::SettingsNarrow,
+        State::SettingsNarrowDark,
     ];
 
     /// The variant name, as accepted by `--render-state`.
@@ -133,6 +145,10 @@ impl State {
             State::PluginsAvailableEmpty => "PluginsAvailableEmpty",
             State::PluginsRestart => "PluginsRestart",
             State::PluginsNarrow => "PluginsNarrow",
+            State::SettingsLight => "SettingsLight",
+            State::SettingsDark => "SettingsDark",
+            State::SettingsNarrow => "SettingsNarrow",
+            State::SettingsNarrowDark => "SettingsNarrowDark",
         }
     }
 
@@ -148,6 +164,17 @@ impl State {
                 | State::PluginsAvailableEmpty
                 | State::PluginsRestart
                 | State::PluginsNarrow
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn is_settings(self) -> bool {
+        matches!(
+            self,
+            State::SettingsLight
+                | State::SettingsDark
+                | State::SettingsNarrow
+                | State::SettingsNarrowDark
         )
     }
 
@@ -262,7 +289,11 @@ pub(crate) fn apply_render_state(
         | State::PluginsEmptySearch
         | State::PluginsAvailableEmpty
         | State::PluginsRestart
-        | State::PluginsNarrow => {}
+        | State::PluginsNarrow
+        | State::SettingsLight
+        | State::SettingsDark
+        | State::SettingsNarrow
+        | State::SettingsNarrowDark => {}
     }
     // Focus and overlays settle on the next frame; make sure one is drawn.
     window.refresh();

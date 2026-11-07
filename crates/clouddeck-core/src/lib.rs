@@ -40,7 +40,9 @@ mod instance_list_view_model;
 pub use instance_detail_view_model::InstanceDetailViewModel;
 pub use instance_list_view_model::{InstanceListViewModel, LoadRequest};
 mod workspace_provider;
-pub use workspace_provider::{DemoFleet, demo_profiles, demo_region_names, workspace_provider};
+pub use workspace_provider::{
+    DemoFleet, demo_profiles, demo_region_names, workspace_provider, workspace_provider_for,
+};
 pub mod fixture_fleet;
 #[cfg(feature = "test-support")]
 pub use extension_host::load_extension;
