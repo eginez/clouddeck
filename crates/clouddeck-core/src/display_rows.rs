@@ -200,7 +200,10 @@ mod tests {
     }
 
     fn names() -> BTreeMap<String, String> {
-        BTreeMap::from([("aws".to_string(), "AWS".to_string())])
+        BTreeMap::from([
+            ("aws".to_string(), "AWS".to_string()),
+            ("gcp".to_string(), "GCP".to_string()),
+        ])
     }
 
     #[test]
@@ -372,6 +375,34 @@ mod tests {
         let display = build_display_rows(&rows, GroupBy::State, &no_collapse(), &[], &names());
 
         assert_eq!(headers(&display), vec![("Running", 1, false)]);
+    }
+
+    #[test]
+    fn grouping_by_provider_gives_one_header_per_provider_with_counts() {
+        let mut rows = rows_of(&[
+            ("i-1", "a", "running", "t3.medium"),
+            ("i-2", "b", "stopped", "t3.medium"),
+            ("i-3", "c", "running", "t3.medium"),
+        ]);
+        rows[1].0 = String::from("gcp");
+
+        let display = build_display_rows(&rows, GroupBy::Provider, &no_collapse(), &[], &names());
+        assert_eq!(
+            headers(&display),
+            vec![("AWS", 2, false), ("GCP", 1, false)]
+        );
+
+        let unnamed = build_display_rows(
+            &rows,
+            GroupBy::Provider,
+            &no_collapse(),
+            &[],
+            &BTreeMap::new(),
+        );
+        assert_eq!(
+            headers(&unnamed),
+            vec![("aws", 2, false), ("gcp", 1, false)]
+        );
     }
 
     #[test]
