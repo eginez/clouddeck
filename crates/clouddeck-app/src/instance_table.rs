@@ -1,8 +1,8 @@
 //! Dense sortable instance table (design/images/01).
 
 use clouddeck_core::{
-    CellText, Column, Instance, SortState, cell_text, is_stale_instance, layout_rules,
-    visible_columns_fit,
+    CellText, Column, DisplayRow, GroupBy, GroupHeader, Instance, SortState, cell_text,
+    display_index_of, is_stale_instance, layout_rules, visible_columns_fit,
 };
 use gpui::{
     ClickEvent, Context, Div, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Hsla,
@@ -60,10 +60,11 @@ impl InstanceTable {
             .update(cx, |state, cx| state.move_selection(down, cx));
         let state = self.state.read(cx);
         let selected = state.selected.as_deref();
-        if let Some(ix) = state
-            .visible_rows()
+        let (rows, display) = state.display_rows();
+        if let Some(instance_index) = rows
             .iter()
             .position(|instance| Some(instance.id.as_str()) == selected)
+            && let Some(ix) = display_index_of(&display, instance_index)
         {
             self.scroll.scroll_to_item(ix, ScrollStrategy::Center);
         }
@@ -106,8 +107,9 @@ impl Render for InstanceTable {
         let sort = state.sort;
         let selected = state.selected.clone();
         let stale = state.view_model.stale_regions().to_vec();
-        let rows = state.visible_rows();
-        let row_count = rows.len();
+        let (rows, display) = state.display_rows();
+        let row_count = display.len();
+        let group_by = state.group_by;
 
         for (ix, column) in columns.iter().enumerate() {
             record(
@@ -137,27 +139,33 @@ impl Render for InstanceTable {
                     .map(|(ix, column)| header_cell(ix, *column, sort, palette, entity.clone())),
             );
 
+        let toolbar = group_by_toolbar(group_by, palette, entity.clone());
         let row_entity = entity.clone();
         let table = cx.entity();
         let body = uniform_list("table.rows", row_count, move |range, _window, cx| {
             range
-                .map(|ix| {
-                    let instance = &rows[ix];
-                    let is_selected = selected.as_deref() == Some(instance.id.as_str());
-                    let is_stale = is_stale_instance(instance, &stale);
-                    let (element, records) = row(
-                        instance,
-                        &columns,
-                        is_selected,
-                        is_stale,
-                        palette,
-                        row_entity.clone(),
-                        table.clone(),
-                    );
-                    for (selector, rec) in records {
-                        record(cx, selector, rec);
+                .map(|ix| match &display[ix] {
+                    DisplayRow::Header(group) => {
+                        group_header(group, palette, row_entity.clone()).into_any_element()
                     }
-                    element
+                    DisplayRow::Instance(index) => {
+                        let instance = &rows[*index];
+                        let is_selected = selected.as_deref() == Some(instance.id.as_str());
+                        let is_stale = is_stale_instance(instance, &stale);
+                        let (element, records) = row(
+                            instance,
+                            &columns,
+                            is_selected,
+                            is_stale,
+                            palette,
+                            row_entity.clone(),
+                            table.clone(),
+                        );
+                        for (selector, rec) in records {
+                            record(cx, selector, rec);
+                        }
+                        element.into_any_element()
+                    }
                 })
                 .collect()
         })
@@ -176,9 +184,91 @@ impl Render for InstanceTable {
             .bg(palette.surf)
             .text_size(px(FONT_SIZE))
             .text_color(palette.text)
+            .child(toolbar)
             .child(header)
             .child(body)
     }
+}
+
+fn group_by_toolbar(group_by: GroupBy, palette: Palette, state: Entity<FleetState>) -> Div {
+    let button = div()
+        .id("table.groupby.button")
+        .debug_selector(|| "table.groupby.button".into())
+        .cursor_pointer()
+        .text_color(palette.dim)
+        .child(format!("Group by: {}", group_by.label()))
+        .on_click(move |_: &ClickEvent, _, cx| {
+            state.update(cx, |state, cx| state.set_group_by(group_by.next(), cx));
+        });
+    div()
+        .debug_selector(|| "table.groupby".into())
+        .flex()
+        .items_center()
+        .w_full()
+        .h(px(ROW_HEIGHT))
+        .px(px(8.))
+        .bg(palette.chrome)
+        .border_b_1()
+        .border_color(palette.line)
+        .child(button)
+}
+
+fn group_header(
+    header: &GroupHeader,
+    palette: Palette,
+    state: Entity<FleetState>,
+) -> Stateful<Div> {
+    let row_key = format!("table.group.{}", header.key);
+    let label_key = format!("{row_key}.label");
+    let key = header.key.clone();
+    let chevron = if header.collapsed {
+        AppIcon::ChevronRight
+    } else {
+        AppIcon::ChevronDown
+    };
+    let label = div()
+        .min_w(px(0.))
+        .overflow_hidden()
+        .text_ellipsis()
+        .whitespace_nowrap()
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_color(palette.text)
+        .child(header.label.clone())
+        .debug_selector(move || label_key.clone());
+    let mut row = div()
+        .id(SharedString::from(row_key.clone()))
+        .debug_selector(|| row_key.clone())
+        .on_click(move |_: &ClickEvent, _, cx| {
+            let key = key.clone();
+            state.update(cx, |state, cx| state.toggle_group(&key, cx));
+        })
+        .flex()
+        .items_center()
+        .gap(px(6.))
+        .px(px(8.))
+        .w_full()
+        .h(px(ROW_HEIGHT))
+        .bg(palette.chrome)
+        .border_b_1()
+        .border_color(palette.line2)
+        .child(chevron.icon().text_color(palette.dim))
+        .child(label)
+        .child(
+            div()
+                .flex_shrink_0()
+                .text_color(palette.faint)
+                .child(header.count.to_string()),
+        );
+    if header.failed {
+        row = row.child(
+            div()
+                .flex_shrink_0()
+                .ml(px(8.))
+                .text_color(palette.warntext)
+                .child("could not load"),
+        );
+    }
+    row
 }
 
 fn cell_frame(column: Column) -> Div {
