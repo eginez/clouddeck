@@ -128,6 +128,7 @@ impl Provider for Fake {
         Ok(vec![Dimension {
             id: "region".into(),
             label: "Region".into(),
+            plural_label: None,
             multi: true,
             optional: true,
             values: tree,

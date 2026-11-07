@@ -127,6 +127,7 @@ impl Provider for ComputeServiceProvider {
         Ok(vec![Dimension {
             id: DimensionId::from(REGION),
             label: "Region".to_string(),
+            plural_label: None,
             multi: true,
             optional: false,
             values: self
