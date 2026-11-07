@@ -63,6 +63,7 @@ fn service_for(state: State) -> (Arc<dyn Provider>, Vec<String>) {
         | State::AboutDark
         | State::AboutRefusedPlugin
         | State::AboutLongPluginList
+        | State::AboutLongPluginName
         | State::PluginsLight
         | State::PluginsDark
         | State::PluginsInstalled
@@ -126,6 +127,7 @@ fn about_fixture(state: State) -> (AboutInfo, bool) {
         State::AboutDark => (three_plugins(), true),
         State::AboutRefusedPlugin => (refused_plugin(), false),
         State::AboutLongPluginList => (long_plugin_list(), false),
+        State::AboutLongPluginName => (long_plugin_name(), false),
         _ => unreachable!("{state:?} is not an About state"),
     };
     let commit = "0123456789abcdef0123456789abcdef01234567";
@@ -133,6 +135,7 @@ fn about_fixture(state: State) -> (AboutInfo, bool) {
         name: "CloudDeck".into(),
         version: "0.2.1".into(),
         commit: commit.into(),
+        version_short: "0.2.1+stable.01234567".into(),
         version_full: format!("0.2.1+stable.{commit}"),
         plugins,
     };
@@ -157,7 +160,12 @@ fn demo_plugin() -> PluginRow {
 fn three_plugins() -> Vec<PluginRow> {
     vec![
         demo_plugin(),
-        plugin("AWS", "0.2.1", PluginOrigin::Bundled, PluginStatus::Ok),
+        plugin(
+            "Amazon Web Services",
+            "0.2.1",
+            PluginOrigin::Bundled,
+            PluginStatus::Ok,
+        ),
         plugin("Toy", "0.1.0", PluginOrigin::Installed, PluginStatus::Ok),
     ]
 }
@@ -186,6 +194,18 @@ fn long_plugin_list() -> Vec<PluginRow> {
         )
     }));
     plugins
+}
+
+fn long_plugin_name() -> Vec<PluginRow> {
+    vec![
+        demo_plugin(),
+        plugin(
+            "Amazon Web Services Enterprise Compliance and Governance Toolkit",
+            "0.2.1",
+            PluginOrigin::Bundled,
+            PluginStatus::Ok,
+        ),
+    ]
 }
 
 /// Opens a fresh About window for `state`; the window is not the app's single About window.
@@ -386,7 +406,7 @@ mod tests {
     /// One key element per state that `apply_render_state` must produce.
     #[gpui::test]
     fn every_state_shows_its_key_element(cx: &mut TestAppContext) {
-        let key_elements: [(State, &str); 26] = [
+        let key_elements: [(State, &str); 27] = [
             (State::MainIdle, "main.root"),
             (State::MainRowSelected, "main.inspector"),
             (State::MainEmpty, "main.center-state"),
@@ -405,6 +425,7 @@ mod tests {
             (State::AboutDark, "about.title"),
             (State::AboutRefusedPlugin, "about.title"),
             (State::AboutLongPluginList, "about.title"),
+            (State::AboutLongPluginName, "about.title"),
             (State::PluginsLight, "plugins.list"),
             (State::PluginsDark, "plugins.list"),
             (State::PluginsInstalled, "plugins.detail"),

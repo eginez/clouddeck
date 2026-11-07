@@ -10,6 +10,7 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 const COMMIT: &str = env!("CLOUDDECK_GIT_COMMIT");
 const CHANNEL: &str = env!("CLOUDDECK_CHANNEL");
 const UNKNOWN: &str = "unknown";
+const SHORT_COMMIT_LEN: usize = 8;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PluginOrigin {
@@ -60,16 +61,19 @@ pub struct AboutInfo {
     pub name: String,
     pub version: String,
     pub commit: String,
+    pub version_short: String,
     pub version_full: String,
     pub plugins: Vec<PluginRow>,
 }
 
 impl AboutInfo {
     fn with_build(version: &str, commit: &str, channel: &str, plugins: Vec<PluginRow>) -> Self {
+        let short_commit = commit.get(..SHORT_COMMIT_LEN).unwrap_or(commit);
         Self {
             name: NAME.to_string(),
             version: version.to_string(),
             commit: commit.to_string(),
+            version_short: format!("{version}+{channel}.{short_commit}"),
             version_full: format!("{version}+{channel}.{commit}"),
             plugins,
         }
@@ -347,6 +351,18 @@ mod tests {
         );
         assert_eq!(
             AboutInfo::with_build("0.2.1", UNKNOWN, "dev", vec![]).version_full,
+            "0.2.1+dev.unknown"
+        );
+    }
+
+    #[test]
+    fn version_short_keeps_eight_commit_chars() {
+        assert_eq!(
+            AboutInfo::with_build("0.2.1", HASH, "dev", vec![]).version_short,
+            "0.2.1+dev.01234567"
+        );
+        assert_eq!(
+            AboutInfo::with_build("0.2.1", UNKNOWN, "dev", vec![]).version_short,
             "0.2.1+dev.unknown"
         );
     }

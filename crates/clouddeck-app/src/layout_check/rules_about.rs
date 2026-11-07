@@ -49,7 +49,7 @@ macro_rules! about_rules {
                 window: WINDOW,
                 check: Check::Above {
                     upper: "about.commit",
-                    lower: "about.version-full",
+                    lower: "about.version-short",
                 },
                 why: "version row sits under the commit",
                 known_bug: None,
@@ -59,7 +59,7 @@ macro_rules! about_rules {
                 state: $state,
                 window: WINDOW,
                 check: Check::Above {
-                    upper: "about.version-full",
+                    upper: "about.version-short",
                     lower: "about.plugins",
                 },
                 why: "plugin list sits under the version",
@@ -143,6 +143,18 @@ pub(crate) fn rules() -> Vec<Rule> {
     rules.extend(about_rules!(State::AboutDark, "about-dark"));
     rules.extend(about_rules!(State::AboutRefusedPlugin, "about-refused"));
     rules.extend(about_rules!(State::AboutLongPluginList, "about-long"));
+    rules.extend(about_rules!(State::AboutLongPluginName, "about-longname"));
+    rules.push(Rule {
+        id: "about-longname-name-in-row",
+        state: State::AboutLongPluginName,
+        window: WINDOW,
+        check: Check::Inside {
+            inner: "about.plugin.1.name",
+            outer: "about.plugin.1",
+        },
+        why: "a long plugin name is clipped inside its row instead of pushing the other columns",
+        known_bug: None,
+    });
     rules.push(Rule {
         id: "about-refused-row",
         state: State::AboutRefusedPlugin,

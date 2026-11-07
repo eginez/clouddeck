@@ -98,7 +98,7 @@ fn layout_rules_hold(cx: &mut TestAppContext) {
 /// Every named state has at least one layout rule.
 #[gpui::test]
 fn layout_rules_cover_states(_cx: &mut TestAppContext) {
-    const ALL: [State; 27] = [
+    const ALL: [State; 28] = [
         State::MainIdle,
         State::MainRowSelected,
         State::MainEmpty,
@@ -118,6 +118,7 @@ fn layout_rules_cover_states(_cx: &mut TestAppContext) {
         State::AboutDark,
         State::AboutRefusedPlugin,
         State::AboutLongPluginList,
+        State::AboutLongPluginName,
         State::PluginsLight,
         State::PluginsDark,
         State::PluginsInstalled,

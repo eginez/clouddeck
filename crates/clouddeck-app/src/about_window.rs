@@ -156,8 +156,8 @@ impl Render for AboutWindowView {
             ))
             .child(field(
                 "Version",
-                self.info.version_full.clone(),
-                "about.version-full",
+                self.info.version_short.clone(),
+                "about.version-short",
                 &palette,
             ))
             .child(
@@ -251,6 +251,7 @@ fn plugin_row(ix: usize, row: &PluginRow, palette: &Palette) -> impl IntoElement
         .border_color(palette.line2)
         .child(
             div()
+                .debug_selector(move || format!("about.plugin.{ix}.name"))
                 .flex_1()
                 .min_w(px(0.))
                 .overflow_hidden()
@@ -259,20 +260,20 @@ fn plugin_row(ix: usize, row: &PluginRow, palette: &Palette) -> impl IntoElement
         )
         .child(
             div()
-                .w(px(64.))
+                .w(px(48.))
                 .overflow_hidden()
                 .text_ellipsis()
                 .child(row.version.clone()),
         )
         .child(
             div()
-                .w(px(72.))
+                .w(px(60.))
                 .text_color(palette.dim)
                 .child(row.origin.label()),
         )
         .child(
             div()
-                .w(px(120.))
+                .w(px(96.))
                 .min_w(px(0.))
                 .overflow_hidden()
                 .text_ellipsis()
@@ -309,6 +310,7 @@ mod tests {
             name: "CloudDeck".into(),
             version: "0.2.1".into(),
             commit: HASH.into(),
+            version_short: "0.2.1+stable.01234567".into(),
             version_full: format!("0.2.1+stable.{HASH}"),
             plugins: vec![PluginRow {
                 id: "demo".into(),
@@ -361,7 +363,7 @@ mod tests {
 
         assert!(window.debug_bounds("about.title").is_some());
         assert!(window.debug_bounds("about.commit").is_some());
-        assert!(window.debug_bounds("about.version-full").is_some());
+        assert!(window.debug_bounds("about.version-short").is_some());
         assert!(window.debug_bounds("about.plugins").is_some());
         assert!(window.debug_bounds("about.plugin.0").is_some());
         assert!(window.debug_bounds("about.plugin.1").is_none());

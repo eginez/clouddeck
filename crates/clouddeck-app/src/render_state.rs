@@ -50,6 +50,8 @@ pub(crate) enum State {
     AboutRefusedPlugin,
     /// About window with enough plugins that the list scrolls.
     AboutLongPluginList,
+    /// About window with one plugin whose name is too long for its column.
+    AboutLongPluginName,
     /// Plugins window in the light palette with bundled aws, gcp and demo plugins installed.
     PluginsLight,
     /// Plugins window in the dark palette with the same plugins as `PluginsLight`.
@@ -69,7 +71,7 @@ pub(crate) enum State {
 }
 
 impl State {
-    pub(crate) const ALL: [State; 27] = [
+    pub(crate) const ALL: [State; 28] = [
         State::MainIdle,
         State::MainRowSelected,
         State::MainEmpty,
@@ -89,6 +91,7 @@ impl State {
         State::AboutDark,
         State::AboutRefusedPlugin,
         State::AboutLongPluginList,
+        State::AboutLongPluginName,
         State::PluginsLight,
         State::PluginsDark,
         State::PluginsInstalled,
@@ -121,6 +124,7 @@ impl State {
             State::AboutDark => "AboutDark",
             State::AboutRefusedPlugin => "AboutRefusedPlugin",
             State::AboutLongPluginList => "AboutLongPluginList",
+            State::AboutLongPluginName => "AboutLongPluginName",
             State::PluginsLight => "PluginsLight",
             State::PluginsDark => "PluginsDark",
             State::PluginsInstalled => "PluginsInstalled",
@@ -155,6 +159,7 @@ impl State {
                 | State::AboutDark
                 | State::AboutRefusedPlugin
                 | State::AboutLongPluginList
+                | State::AboutLongPluginName
         )
     }
 
@@ -249,6 +254,7 @@ pub(crate) fn apply_render_state(
         | State::AboutDark
         | State::AboutRefusedPlugin
         | State::AboutLongPluginList
+        | State::AboutLongPluginName
         | State::PluginsLight
         | State::PluginsDark
         | State::PluginsInstalled
