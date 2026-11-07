@@ -57,7 +57,9 @@ pub fn search_provider_settings(
 pub struct ProviderSettings {
     path: PathBuf,
     declared: Mutex<BTreeMap<String, Vec<SettingDef>>>,
-    writes: Mutex<()>,
+    /// Read from disk on first use and dropped after each write. Held across writes so a
+    /// reader cannot cache the file contents from before a write.
+    values: Mutex<Option<BTreeMap<String, BTreeMap<String, SettingValue>>>>,
 }
 
 impl ProviderSettings {
@@ -65,7 +67,7 @@ impl ProviderSettings {
         Self {
             path,
             declared: Mutex::new(BTreeMap::new()),
-            writes: Mutex::new(()),
+            values: Mutex::new(None),
         }
     }
 
@@ -144,8 +146,9 @@ impl ProviderSettings {
     }
 
     fn stored(&self, extension: &str, def: &SettingDef) -> Option<SettingValue> {
-        Settings::load(&self.path)
-            .providers
+        let mut cache = lock(&self.values);
+        let values = cache.get_or_insert_with(|| Settings::load(&self.path).providers);
+        values
             .get(extension)?
             .get(&def.key)
             .filter(|value| def.validate(value).is_ok())
@@ -157,15 +160,16 @@ impl ProviderSettings {
         extension: &str,
         change: impl FnOnce(&mut BTreeMap<String, SettingValue>),
     ) -> Result<(), SettingError> {
-        let _writing = lock(&self.writes);
-        Settings::update_providers(&self.path, |providers| {
+        let mut cache = lock(&self.values);
+        let result = Settings::update_providers(&self.path, |providers| {
             let values = providers.entry(extension.to_string()).or_default();
             change(values);
             if values.is_empty() {
                 providers.remove(extension);
             }
-        })
-        .map_err(|error| SettingError(format!("cannot save settings: {error}")))
+        });
+        *cache = None;
+        result.map_err(|error| SettingError(format!("cannot save settings: {error}")))
     }
 }
 
@@ -390,5 +394,33 @@ mod tests {
         settings.reset_all("a").unwrap();
         assert_eq!(settings.host_text("a", "region"), None);
         assert_eq!(settings.host_text("b", "region").as_deref(), Some("y"));
+    }
+
+    #[test]
+    fn reads_are_served_from_memory_until_the_next_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let settings = ProviderSettings::new(path.clone());
+        settings.declare("toy", vec![text("display_name", Some("Default"))]);
+        settings
+            .set("toy", "display_name", text_value("Hi"))
+            .unwrap();
+        assert_eq!(
+            settings.host_text("toy", "display_name").as_deref(),
+            Some("Hi")
+        );
+
+        fs::remove_file(&path).unwrap();
+        assert_eq!(
+            settings.host_text("toy", "display_name").as_deref(),
+            Some("Hi")
+        );
+        assert!(settings.is_changed("toy", "display_name"));
+
+        settings.reset("toy", "display_name").unwrap();
+        assert_eq!(
+            settings.host_text("toy", "display_name").as_deref(),
+            Some("Default")
+        );
     }
 }

@@ -4,6 +4,8 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::mpsc::{self, Sender};
+use std::thread;
 
 use clouddeck_extension_api::API_VERSION;
 use clouddeck_provider_api::{Provider, SettingError, SettingValue};
@@ -36,10 +38,22 @@ pub struct ProviderRegistry {
     refusals: Vec<Refusal>,
     allow_external: bool,
     settings: Arc<ProviderSettings>,
+    notifier: Sender<(Arc<Plugin>, Vec<String>)>,
 }
 
 impl Default for ProviderRegistry {
     fn default() -> Self {
+        let (notifier, changes) = mpsc::channel::<(Arc<Plugin>, Vec<String>)>();
+        thread::Builder::new()
+            .name("settings-notifier".into())
+            .spawn(move || {
+                for (plugin, keys) in changes {
+                    for provider in plugin.provider_ids() {
+                        plugin.notify_settings_changed(provider, &keys);
+                    }
+                }
+            })
+            .expect("settings notifier thread starts");
         Self {
             providers: Vec::new(),
             plugins: Vec::new(),
@@ -47,6 +61,7 @@ impl Default for ProviderRegistry {
             refusals: Vec::new(),
             allow_external: false,
             settings: Arc::new(ProviderSettings::new(settings_path())),
+            notifier,
         }
     }
 }
@@ -112,9 +127,7 @@ impl ProviderRegistry {
         let Some(plugin) = self.plugins.iter().find(|plugin| plugin.id() == extension) else {
             return;
         };
-        for provider in plugin.provider_ids() {
-            plugin.notify_settings_changed(provider, keys);
-        }
+        let _ = self.notifier.send((Arc::clone(plugin), keys.to_vec()));
     }
 
     pub fn with_builtins(demo: bool) -> Self {
