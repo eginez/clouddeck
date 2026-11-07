@@ -7,7 +7,7 @@ mod state;
 
 pub(crate) use manifest::is_valid_id;
 pub use manifest::{Capability, MANIFEST_FILE, Manifest, SCHEMA_VERSION};
-pub use provider_settings::ProviderSettings;
+pub use provider_settings::{ProviderSettings, SettingsCategory, search_provider_settings};
 pub use registry::{
     ProviderRegistry, Refusal, app_registry, bundled_extensions_root, extension_state_root,
     extensions_root,

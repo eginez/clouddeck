@@ -10,7 +10,7 @@ use clouddeck_core::extension_host::{
 use gpui::{App, Global};
 
 pub struct AppProviders {
-    registry: ProviderRegistry,
+    registry: Arc<ProviderRegistry>,
     #[cfg(test)]
     shutdowns: AtomicUsize,
 }
@@ -18,7 +18,7 @@ pub struct AppProviders {
 impl AppProviders {
     pub(crate) fn new(registry: ProviderRegistry) -> Self {
         Self {
-            registry,
+            registry: Arc::new(registry),
             #[cfg(test)]
             shutdowns: AtomicUsize::new(0),
         }
@@ -67,6 +67,10 @@ pub(crate) fn refusals(cx: &App) -> Vec<Refusal> {
     cx.try_global::<AppProviders>()
         .map(|providers| providers.registry.refusals())
         .unwrap_or_default()
+}
+
+pub(crate) fn registry(cx: &mut App) -> Arc<ProviderRegistry> {
+    cx.default_global::<AppProviders>().registry.clone()
 }
 
 pub fn providers(cx: &mut App) -> Vec<Arc<dyn Provider>> {

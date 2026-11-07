@@ -14,7 +14,7 @@ use crate::extension_manager::install::EXTERNAL_EXTENSIONS_ALLOWED;
 
 use super::library::Trust;
 use super::manifest::{MANIFEST_FILE, Manifest};
-use super::provider_settings::ProviderSettings;
+use super::provider_settings::{ProviderSettings, SettingsCategory};
 use super::remote::{NOT_RESPONDING, Plugin, RemoteProvider};
 use super::state::{CRASH_LIMIT, State, StateStore, state_path};
 use crate::settings::settings_path;
@@ -65,22 +65,55 @@ impl ProviderRegistry {
         value: SettingValue,
     ) -> Result<(), SettingError> {
         self.settings.set(extension, key, value)?;
-        self.notify_changed(extension, key);
+        self.notify_changed(extension, &[key.to_string()]);
         Ok(())
     }
 
     pub fn reset_setting(&self, extension: &str, key: &str) -> Result<(), SettingError> {
         self.settings.reset(extension, key)?;
-        self.notify_changed(extension, key);
+        self.notify_changed(extension, &[key.to_string()]);
         Ok(())
     }
 
-    fn notify_changed(&self, extension: &str, key: &str) {
+    pub fn reset_extension_settings(&self, extension: &str) -> Result<(), SettingError> {
+        let keys: Vec<String> = self
+            .settings
+            .declared(extension)
+            .into_iter()
+            .map(|def| def.key)
+            .collect();
+        self.settings.reset_all(extension)?;
+        self.notify_changed(extension, &keys);
+        Ok(())
+    }
+
+    pub fn setting_value(&self, extension: &str, key: &str) -> Option<SettingValue> {
+        self.settings.get(extension, key)
+    }
+
+    pub fn setting_changed(&self, extension: &str, key: &str) -> bool {
+        self.settings.is_changed(extension, key)
+    }
+
+    /// Extensions whose manifest declares settings, in discovery order.
+    pub fn settings_categories(&self) -> Vec<SettingsCategory> {
+        self.plugins
+            .iter()
+            .filter(|plugin| !plugin.declared_settings().is_empty())
+            .map(|plugin| SettingsCategory {
+                extension: plugin.id().to_owned(),
+                name: plugin.name().to_owned(),
+                settings: plugin.declared_settings().to_vec(),
+            })
+            .collect()
+    }
+
+    fn notify_changed(&self, extension: &str, keys: &[String]) {
         let Some(plugin) = self.plugins.iter().find(|plugin| plugin.id() == extension) else {
             return;
         };
         for provider in plugin.provider_ids() {
-            plugin.notify_settings_changed(provider, &[key.to_string()]);
+            plugin.notify_settings_changed(provider, keys);
         }
     }
 
@@ -347,6 +380,7 @@ pub fn extension_state_root() -> PathBuf {
 mod tests {
     use super::*;
     use crate::{ComputeServiceProvider, MockComputeService};
+    use clouddeck_provider_api::{SettingDef, SettingKind, SettingValue};
 
     fn manifest_text(id: &str, api_version: u32) -> String {
         format!(
@@ -366,6 +400,66 @@ mod tests {
             .unwrap()
             .update(change)
             .unwrap();
+    }
+
+    #[test]
+    fn settings_categories_lists_only_extensions_that_declare_settings() {
+        let root = tempfile::tempdir().unwrap();
+        let state_root = tempfile::tempdir().unwrap();
+        install(root.path(), "plain", &manifest_text("plain", API_VERSION));
+        let tuned = format!(
+            "{}\n[[settings]]\nkey = \"region\"\nlabel = \"Region\"\nkind = \"text\"\ndefault = \"us\"\n",
+            manifest_text("tuned", API_VERSION)
+        );
+        install(root.path(), "tuned", &tuned);
+        enable(state_root.path(), "plain", |s| s.enabled = true);
+        enable(state_root.path(), "tuned", |s| s.enabled = true);
+        let mut registry = ProviderRegistry::default()
+            .with_external(true)
+            .with_settings_file(state_root.path().join("settings.json"));
+        registry.discover(root.path(), state_root.path()).unwrap();
+
+        let categories = registry.settings_categories();
+
+        assert_eq!(categories.len(), 1);
+        assert_eq!(categories[0].extension, "tuned");
+        assert_eq!(categories[0].settings[0].key, "region");
+    }
+
+    #[test]
+    fn reset_extension_settings_resets_only_that_extension() {
+        let dir = tempfile::tempdir().unwrap();
+        let registry =
+            ProviderRegistry::default().with_settings_file(dir.path().join("settings.json"));
+        let region = || SettingDef {
+            key: "region".into(),
+            label: "Region".into(),
+            description: None,
+            group: None,
+            kind: SettingKind::Text,
+            default: Some(SettingValue::Text("us".into())),
+            secret: false,
+        };
+        registry.settings.declare("a", vec![region()]);
+        registry.settings.declare("b", vec![region()]);
+        registry
+            .set_setting("a", "region", SettingValue::Text("eu".into()))
+            .unwrap();
+        registry
+            .set_setting("b", "region", SettingValue::Text("ap".into()))
+            .unwrap();
+
+        registry.reset_extension_settings("a").unwrap();
+
+        assert_eq!(
+            registry.setting_value("a", "region"),
+            Some(SettingValue::Text("us".into()))
+        );
+        assert!(!registry.setting_changed("a", "region"));
+        assert_eq!(
+            registry.setting_value("b", "region"),
+            Some(SettingValue::Text("ap".into()))
+        );
     }
 
     #[test]

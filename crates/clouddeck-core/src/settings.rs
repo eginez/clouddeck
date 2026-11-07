@@ -607,12 +607,7 @@ impl SettingsSearchResults {
 
     /// Result count heading such as "1 result" or "3 results".
     pub fn title(&self) -> String {
-        let count = self.count();
-        if count == 1 {
-            "1 result".to_owned()
-        } else {
-            format!("{count} results")
-        }
+        settings_results_title(self.count())
     }
 
     /// Categories with results, in catalog order, including Keymap.
@@ -625,6 +620,15 @@ impl SettingsSearchResults {
                     || (*category == "Keymap" && !self.keymap_rows.is_empty())
             })
             .collect()
+    }
+}
+
+/// Result count heading such as "1 result" or "3 results".
+pub fn settings_results_title(count: usize) -> String {
+    if count == 1 {
+        "1 result".to_owned()
+    } else {
+        format!("{count} results")
     }
 }
 

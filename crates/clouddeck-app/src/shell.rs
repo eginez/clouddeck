@@ -853,7 +853,9 @@ impl AppShell {
     }
 
     fn open_settings(&mut self, cx: &mut Context<Self>) {
-        let Some(handle) = open_settings_window(cx, Settings::load(&settings_path())) else {
+        let providers = crate::app_providers::registry(cx);
+        let Some(handle) = open_settings_window(cx, Settings::load(&settings_path()), providers)
+        else {
             return;
         };
         let Ok(Some(view)) = handle.update(cx, |root, _, _| {

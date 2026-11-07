@@ -313,6 +313,10 @@ impl Plugin {
     pub fn id(&self) -> &str {
         &self.manifest.id
     }
+
+    pub fn name(&self) -> &str {
+        &self.manifest.name
+    }
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {

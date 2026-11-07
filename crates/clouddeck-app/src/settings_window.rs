@@ -1,15 +1,20 @@
 //! Settings window (design/images/50-59).
 
+use std::collections::BTreeMap;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
+use clouddeck_core::extension_host::{
+    ProviderRegistry, SettingsCategory, search_provider_settings,
+};
 use clouddeck_core::{
     DefaultSort, Density, FLEET_REGIONS, KEYMAP, LaunchBehavior, Platform, RECENT_SEARCH_LIMITS,
-    REFRESH_INTERVALS, REQUEST_TIMEOUTS, SETTINGS_CATEGORIES, SettingId, Settings,
-    SettingsSearchResults, Theme, UiState, changed_categories, context_path, search_settings,
-    settings_no_match_text, settings_path, settings_search_breadcrumb, shortcut_label,
-    ui_state_path,
+    REFRESH_INTERVALS, REQUEST_TIMEOUTS, SETTINGS_CATEGORIES, SettingDef, SettingId, SettingKind,
+    SettingValue, Settings, SettingsSearchResults, Theme, UiState, changed_categories,
+    context_path, search_settings, settings_no_match_text, settings_path, settings_results_title,
+    settings_search_breadcrumb, shortcut_label, ui_state_path,
 };
 use gpui::{
     AnyElement, AnyView, App, Bounds, ClickEvent, Context, Div, Entity, EventEmitter, Global,
@@ -45,6 +50,16 @@ const CATEGORY_ICONS: [AppIcon; 9] = [
     AppIcon::Plug,
     AppIcon::CircleAlert,
 ];
+const PROVIDER_CATEGORY_ICON: AppIcon = AppIcon::Plug;
+
+fn category_icon(index: usize) -> AppIcon {
+    CATEGORY_ICONS
+        .get(index)
+        .copied()
+        .unwrap_or(PROVIDER_CATEGORY_ICON)
+}
+
+type FieldKey = (String, String);
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SettingsEvent {
@@ -56,6 +71,12 @@ pub enum SettingsEvent {
 pub struct SettingsWindow {
     pub settings: Settings,
     pub category: &'static str,
+    providers: Arc<ProviderRegistry>,
+    provider_categories: Vec<SettingsCategory>,
+    provider: Option<String>,
+    provider_inputs: Vec<(FieldKey, Entity<InputState>)>,
+    provider_selects: Vec<(FieldKey, Entity<SelectState<Vec<ProviderChoice>>>)>,
+    setting_errors: BTreeMap<FieldKey, String>,
     search: Entity<InputState>,
     config_input: Entity<InputState>,
     selects: Vec<(SettingId, Entity<SelectState<Vec<Choice>>>)>,
@@ -133,6 +154,43 @@ fn choice(title: impl Into<SharedString>, pick: Pick) -> Choice {
     Choice {
         title: title.into(),
         pick,
+    }
+}
+
+#[derive(Clone)]
+struct ProviderChoice {
+    title: SharedString,
+    value: String,
+}
+
+impl SelectItem for ProviderChoice {
+    type Value = String;
+
+    fn title(&self) -> SharedString {
+        self.title.clone()
+    }
+
+    fn value(&self) -> &String {
+        &self.value
+    }
+}
+
+fn provider_match_count(hits: &[SettingsCategory]) -> usize {
+    hits.iter().map(|category| category.settings.len()).sum()
+}
+
+fn field_key(extension: &str, key: &str) -> FieldKey {
+    (extension.to_owned(), key.to_owned())
+}
+
+fn display_text(value: Option<SettingValue>) -> String {
+    value.map(|value| value.host_text()).unwrap_or_default()
+}
+
+fn unit_suffix(kind: &SettingKind) -> Option<&'static str> {
+    match kind {
+        SettingKind::DurationSecs { .. } => Some("seconds"),
+        _ => None,
     }
 }
 
@@ -328,6 +386,36 @@ fn highlighted(text: &str, query: &str, palette: &Palette) -> StyledText {
     ))
 }
 
+fn provider_groups(defs: &[SettingDef]) -> Vec<(Option<&str>, Vec<&SettingDef>)> {
+    let mut groups: Vec<(Option<&str>, Vec<&SettingDef>)> = Vec::new();
+    for def in defs {
+        let group = def.group.as_deref();
+        match groups.iter_mut().find(|(name, _)| *name == group) {
+            Some((_, defs)) => defs.push(def),
+            None => groups.push((group, vec![def])),
+        }
+    }
+    groups
+}
+
+fn section(heading: Option<&str>, rows: Vec<AnyElement>, palette: &Palette) -> AnyElement {
+    div()
+        .flex()
+        .flex_col()
+        .mb(px(18.))
+        .when_some(heading, |column, heading| {
+            column.child(
+                div()
+                    .text_size(px(11.))
+                    .text_color(palette.faint)
+                    .mb(px(4.))
+                    .child(heading.to_uppercase()),
+            )
+        })
+        .children(rows)
+        .into_any_element()
+}
+
 fn host_platform() -> Platform {
     if cfg!(target_os = "macos") {
         Platform::Mac
@@ -406,7 +494,12 @@ fn keymap_results(
 }
 
 impl SettingsWindow {
-    pub fn new(settings: Settings, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        settings: Settings,
+        providers: Arc<ProviderRegistry>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let search = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder("Search settings")
@@ -450,9 +543,79 @@ impl SettingsWindow {
             ));
             selects.push((id, state));
         }
+        let provider_categories = providers.settings_categories();
+        let mut provider_inputs = Vec::new();
+        let mut provider_selects = Vec::new();
+        for category in &provider_categories {
+            for def in &category.settings {
+                let key = field_key(&category.extension, &def.key);
+                match &def.kind {
+                    SettingKind::Choice(options) => {
+                        let items: Vec<ProviderChoice> = options
+                            .iter()
+                            .map(|option| ProviderChoice {
+                                title: option.label.clone().into(),
+                                value: option.value.clone(),
+                            })
+                            .collect();
+                        let selected = display_text(providers.setting_value(&key.0, &key.1));
+                        let selected = items
+                            .iter()
+                            .position(|item| item.value == selected)
+                            .map(IndexPath::new);
+                        let state = cx.new(|cx| SelectState::new(items, selected, window, cx));
+                        let extension = category.extension.clone();
+                        let def = def.clone();
+                        subscriptions.push(cx.subscribe_in(
+                            &state,
+                            window,
+                            move |this: &mut Self,
+                                  _,
+                                  event: &SelectEvent<Vec<ProviderChoice>>,
+                                  _,
+                                  cx| {
+                                if let SelectEvent::Confirm(Some(value)) = event {
+                                    this.edit_provider_choice(&extension, &def, value, cx);
+                                }
+                            },
+                        ));
+                        provider_selects.push((key, state));
+                    }
+                    SettingKind::Bool => {}
+                    _ => {
+                        let text = display_text(providers.setting_value(&key.0, &key.1));
+                        let masked = def.secret;
+                        let state = cx.new(|cx| {
+                            InputState::new(window, cx)
+                                .default_value(text)
+                                .masked(masked)
+                        });
+                        let extension = category.extension.clone();
+                        let def = def.clone();
+                        subscriptions.push(cx.subscribe_in(
+                            &state,
+                            window,
+                            move |this: &mut Self, state, event: &InputEvent, _, cx| {
+                                if matches!(event, InputEvent::Change) {
+                                    let text = state.read(cx).value().to_string();
+                                    this.edit_provider_text(&extension, &def, &text, cx);
+                                }
+                            },
+                        ));
+                        provider_inputs.push((key, state));
+                    }
+                }
+            }
+        }
         Self {
             settings,
             category: SETTINGS_CATEGORIES[0],
+            providers,
+            provider_categories,
+            provider: None,
+            provider_inputs,
+            provider_selects,
+            setting_errors: BTreeMap::new(),
             search,
             config_input,
             selects,
@@ -479,8 +642,215 @@ impl SettingsWindow {
         self.search.read(cx).value().to_string()
     }
 
+    fn provider_changed(&self, category: &SettingsCategory) -> bool {
+        category.settings.iter().any(|def| {
+            self.providers
+                .setting_changed(&category.extension, &def.key)
+        })
+    }
+
+    fn edit_provider_text(
+        &mut self,
+        extension: &str,
+        def: &SettingDef,
+        text: &str,
+        cx: &mut Context<Self>,
+    ) {
+        match def.parse(text) {
+            Ok(value) => self.store_provider_value(extension, &def.key, value, cx),
+            Err(error) => self.reject_provider_value(extension, &def.key, error.0, cx),
+        }
+    }
+
+    fn edit_provider_choice(
+        &mut self,
+        extension: &str,
+        def: &SettingDef,
+        value: &str,
+        cx: &mut Context<Self>,
+    ) {
+        self.edit_provider_text(extension, def, value, cx);
+    }
+
+    fn toggle_provider_flag(&mut self, extension: &str, key: &str, cx: &mut Context<Self>) {
+        let on = matches!(
+            self.providers.setting_value(extension, key),
+            Some(SettingValue::Bool(true))
+        );
+        self.store_provider_value(extension, key, SettingValue::Bool(!on), cx);
+    }
+
+    fn store_provider_value(
+        &mut self,
+        extension: &str,
+        key: &str,
+        value: SettingValue,
+        cx: &mut Context<Self>,
+    ) {
+        let field = field_key(extension, key);
+        if self.providers.setting_value(extension, key).as_ref() == Some(&value) {
+            self.setting_errors.remove(&field);
+        } else {
+            match self.providers.set_setting(extension, key, value) {
+                Ok(()) => {
+                    self.setting_errors.remove(&field);
+                }
+                Err(error) => {
+                    self.setting_errors.insert(field, error.0);
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    fn reject_provider_value(
+        &mut self,
+        extension: &str,
+        key: &str,
+        message: String,
+        cx: &mut Context<Self>,
+    ) {
+        self.setting_errors
+            .insert(field_key(extension, key), message);
+        cx.notify();
+    }
+
+    fn reset_provider_setting(
+        &mut self,
+        extension: &str,
+        key: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match self.providers.reset_setting(extension, key) {
+            Ok(()) => {
+                self.setting_errors.remove(&field_key(extension, key));
+            }
+            Err(error) => {
+                self.setting_errors
+                    .insert(field_key(extension, key), error.0);
+            }
+        }
+        self.sync_provider_controls(extension, Some(key), window, cx);
+        cx.notify();
+    }
+
+    fn restore_provider_defaults(
+        &mut self,
+        extension: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match self.providers.reset_extension_settings(extension) {
+            Ok(()) => self
+                .setting_errors
+                .retain(|(owner, _), _| owner.as_str() != extension),
+            Err(error) => {
+                self.show_note(format!("Could not restore: {}", error.0), None, cx);
+                return;
+            }
+        }
+        self.sync_provider_controls(extension, None, window, cx);
+        self.show_note_for("Defaults restored", Some(AppIcon::Check), cx);
+    }
+
+    /// Re-reads the controls of one extension, or of one of its keys, after a reset.
+    /// Secrets are skipped: they have no stored value to show.
+    fn sync_provider_controls(
+        &mut self,
+        extension: &str,
+        key: Option<&str>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let in_scope =
+            |owner: &str, field: &str| owner == extension && key.is_none_or(|key| key == field);
+        let secret = |field: &str| {
+            self.provider_categories
+                .iter()
+                .find(|category| category.extension == extension)
+                .and_then(|category| category.settings.iter().find(|def| def.key == field))
+                .is_some_and(|def| def.secret)
+        };
+        for ((owner, field), state) in &self.provider_inputs {
+            if !in_scope(owner, field) || secret(field) {
+                continue;
+            }
+            let text = display_text(self.providers.setting_value(owner, field));
+            state.update(cx, |input, cx| {
+                if input.value() != text {
+                    input.set_value(text, window, cx);
+                }
+            });
+        }
+        for ((owner, field), state) in &self.provider_selects {
+            if !in_scope(owner, field) {
+                continue;
+            }
+            let value = display_text(self.providers.setting_value(owner, field));
+            state.update(cx, |state, cx| state.set_selected_value(&value, window, cx));
+        }
+    }
+
+    /// Layout-check entry point: shows a provider's category as a sidebar click would.
+    #[cfg(test)]
+    pub(crate) fn show_provider(
+        &mut self,
+        extension: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(index) = self
+            .provider_categories
+            .iter()
+            .position(|category| category.extension == extension)
+        {
+            self.open_category(SETTINGS_CATEGORIES.len() + index, window, cx);
+        }
+    }
+
+    /// Layout-check entry point: types into a provider's text field.
+    #[cfg(test)]
+    pub(crate) fn type_provider_text(
+        &mut self,
+        extension: &str,
+        key: &str,
+        text: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let field = field_key(extension, key);
+        if let Some((_, input)) = self
+            .provider_inputs
+            .iter()
+            .find(|(owner, _)| *owner == field)
+        {
+            let text = text.to_owned();
+            input.update(cx, |input, cx| input.set_value(text, window, cx));
+        }
+    }
+
+    /// Layout-check entry point: types into the search field.
+    #[cfg(test)]
+    pub(crate) fn type_query(&mut self, query: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let query = query.to_owned();
+        self.search
+            .update(cx, |state, cx| state.set_value(query, window, cx));
+    }
+
     fn open_category(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
-        self.category = SETTINGS_CATEGORIES[index];
+        match SETTINGS_CATEGORIES.get(index) {
+            Some(name) => {
+                self.category = name;
+                self.provider = None;
+            }
+            None => {
+                self.provider = self
+                    .provider_categories
+                    .get(index - SETTINGS_CATEGORIES.len())
+                    .map(|category| category.extension.clone());
+            }
+        }
         self.search
             .update(cx, |state, cx| state.set_value("", window, cx));
         cx.notify();
@@ -541,6 +911,10 @@ impl SettingsWindow {
     }
 
     fn restore_defaults(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(extension) = self.provider.clone() {
+            self.restore_provider_defaults(&extension, window, cx);
+            return;
+        }
         self.change(cx, |settings| *settings = Settings::default());
         self.sync_controls(window, cx);
         self.show_note_for("Defaults restored", Some(AppIcon::Check), cx);
@@ -641,12 +1015,13 @@ impl SettingsWindow {
     fn category_button(
         &self,
         index: usize,
-        name: &'static str,
+        name: &str,
         selected: bool,
         changed: bool,
         palette: &Palette,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let icon = category_icon(index);
         div()
             .id(("settings-cat", index))
             .debug_selector(move || format!("settings.cat.{index}"))
@@ -666,12 +1041,12 @@ impl SettingsWindow {
                 div()
                     .flex_none()
                     .debug_selector(move || format!("settings.cat-icon.{index}"))
-                    .child(CATEGORY_ICONS[index].icon().xsmall()),
+                    .child(icon.icon().xsmall()),
             )
             .child(
                 div()
                     .debug_selector(move || format!("settings.cat-label.{index}"))
-                    .child(name),
+                    .child(name.to_owned()),
             )
             .when(changed, |row| {
                 row.child(
@@ -857,6 +1232,216 @@ impl SettingsWindow {
             .into_any_element()
     }
 
+    fn provider_switch(
+        &self,
+        extension: &str,
+        key: &str,
+        on: bool,
+        palette: &Palette,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let track = div()
+            .w(px(32.))
+            .h(px(18.))
+            .rounded(px(9.))
+            .p(px(2.))
+            .flex()
+            .items_center()
+            .bg(if on { palette.accent } else { palette.line })
+            .when(on, |track| track.justify_end())
+            .child(div().size(px(14.)).rounded(px(7.)).bg(white()));
+        let extension_owned = extension.to_owned();
+        let key_owned = key.to_owned();
+        let selector = format!("settings.provider.control.{extension}.{key}");
+        div()
+            .id(SharedString::from(format!(
+                "settings-switch-{extension}-{key}"
+            )))
+            .debug_selector(move || selector)
+            .cursor_pointer()
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                this.toggle_provider_flag(&extension_owned, &key_owned, cx)
+            }))
+            .child(track)
+            .into_any_element()
+    }
+
+    fn provider_control(
+        &self,
+        extension: &str,
+        def: &SettingDef,
+        palette: &Palette,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let selector = format!("settings.provider.control.{extension}.{}", def.key);
+        let field = field_key(extension, &def.key);
+        match &def.kind {
+            SettingKind::Bool => {
+                let on = matches!(
+                    self.providers.setting_value(extension, &def.key),
+                    Some(SettingValue::Bool(true))
+                );
+                self.provider_switch(extension, &def.key, on, palette, cx)
+            }
+            SettingKind::Choice(_) => {
+                match self.provider_selects.iter().find(|(key, _)| *key == field) {
+                    Some((_, state)) => div()
+                        .debug_selector(move || selector)
+                        .w(px(190.))
+                        .text_color(palette.text)
+                        .child(Select::new(state).menu_width(px(220.)))
+                        .into_any_element(),
+                    None => div().into_any_element(),
+                }
+            }
+            kind => match self.provider_inputs.iter().find(|(key, _)| *key == field) {
+                Some((_, state)) => {
+                    let width = match kind {
+                        SettingKind::Number { .. } | SettingKind::DurationSecs { .. } => 120.,
+                        _ => 260.,
+                    };
+                    let input = div()
+                        .debug_selector(move || selector)
+                        .w(px(width))
+                        .child(Input::new(state).small());
+                    match unit_suffix(kind) {
+                        Some(unit) => div()
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .child(input)
+                            .child(div().text_size(px(11.)).text_color(palette.dim).child(unit))
+                            .into_any_element(),
+                        None => input.into_any_element(),
+                    }
+                }
+                None => div().into_any_element(),
+            },
+        }
+    }
+
+    fn provider_setting_row(
+        &self,
+        extension: &str,
+        def: &SettingDef,
+        query: &str,
+        palette: &Palette,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let row = format!("{extension}.{}", def.key);
+        let changed = self.providers.setting_changed(extension, &def.key);
+        let error = self
+            .setting_errors
+            .get(&field_key(extension, &def.key))
+            .cloned();
+        let extension_owned = extension.to_owned();
+        let key_owned = def.key.clone();
+        div()
+            .debug_selector({
+                let row = row.clone();
+                move || format!("settings.provider.item.{row}")
+            })
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap(px(16.))
+            .py(px(9.))
+            .border_b_1()
+            .border_color(palette.line)
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_w(px(0.))
+                    .gap(px(2.))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .child(div().w(px(2.)).h(px(14.)).rounded(px(1.)).when(
+                                changed,
+                                |bar| {
+                                    let row = row.clone();
+                                    bar.bg(palette.accent).debug_selector(move || {
+                                        format!("settings.provider.changed.{row}")
+                                    })
+                                },
+                            ))
+                            .child(
+                                div()
+                                    .text_size(px(13.))
+                                    .child(highlighted(&def.label, query, palette)),
+                            )
+                            .when(changed, |label| {
+                                let row = row.clone();
+                                label.child(
+                                    div()
+                                        .id(SharedString::from(format!("settings-reset-{row}")))
+                                        .debug_selector(move || {
+                                            format!("settings.provider.reset.{row}")
+                                        })
+                                        .cursor_pointer()
+                                        .text_size(px(11.))
+                                        .text_color(palette.accent)
+                                        .on_click(cx.listener(
+                                            move |this, _: &ClickEvent, window, cx| {
+                                                this.reset_provider_setting(
+                                                    &extension_owned,
+                                                    &key_owned,
+                                                    window,
+                                                    cx,
+                                                )
+                                            },
+                                        ))
+                                        .child("Reset"),
+                                )
+                            }),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(11.))
+                            .text_color(palette.dim)
+                            .child(highlighted(
+                                def.description.as_deref().unwrap_or_default(),
+                                query,
+                                palette,
+                            )),
+                    )
+                    .when_some(error, |column, error| {
+                        let row = row.clone();
+                        column.child(
+                            div()
+                                .debug_selector(move || format!("settings.provider.error.{row}"))
+                                .text_size(px(11.))
+                                .text_color(palette.err)
+                                .child(error),
+                        )
+                    }),
+            )
+            .child(self.provider_control(extension, def, palette, cx))
+            .into_any_element()
+    }
+
+    fn provider_body(
+        &self,
+        category: &SettingsCategory,
+        palette: &Palette,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        provider_groups(&category.settings)
+            .into_iter()
+            .map(|(group, defs)| {
+                let rows = defs
+                    .into_iter()
+                    .map(|def| self.provider_setting_row(&category.extension, def, "", palette, cx))
+                    .collect();
+                section(group, rows, palette)
+            })
+            .collect()
+    }
+
     fn stored_data_section(&self, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
         div()
             .flex()
@@ -935,10 +1520,11 @@ impl SettingsWindow {
         &self,
         query: &str,
         results: &SettingsSearchResults,
+        provider_hits: &[SettingsCategory],
         palette: &Palette,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
-        if results.count() == 0 {
+        if results.count() + provider_match_count(provider_hits) == 0 {
             return vec![
                 div()
                     .debug_selector(|| "settings.no-match".into())
@@ -953,6 +1539,14 @@ impl SettingsWindow {
             .iter()
             .map(|(category, ids)| self.group_section(category, ids, palette, cx))
             .collect();
+        for category in provider_hits {
+            let rows = category
+                .settings
+                .iter()
+                .map(|def| self.provider_setting_row(&category.extension, def, query, palette, cx))
+                .collect();
+            sections.push(section(Some(&category.name), rows, palette));
+        }
         if !results.keymap_rows.is_empty() {
             sections.push(keymap_results(query, &results.keymap_rows, palette));
         }
@@ -1042,7 +1636,25 @@ impl Render for SettingsWindow {
         let query = self.query(cx);
         let searching = !query.trim().is_empty();
         let results = search_settings(&query);
+        let provider_hits = if searching {
+            search_provider_settings(&self.provider_categories, &query)
+        } else {
+            Vec::new()
+        };
         let visible = results.visible_categories();
+        let provider_visible: Vec<&str> = provider_hits
+            .iter()
+            .map(|category| category.extension.as_str())
+            .collect();
+        let selected_provider = if searching {
+            None
+        } else {
+            self.provider.as_deref().and_then(|extension| {
+                self.provider_categories
+                    .iter()
+                    .find(|category| category.extension == extension)
+            })
+        };
         let changed_dots = changed_categories(&self.settings);
         let tree = div()
             .debug_selector(|| "settings.tree".into())
@@ -1086,12 +1698,34 @@ impl Render for SettingsWindow {
                     .enumerate()
                     .filter(|(_, name)| !searching || visible.contains(*name))
                     .map(|(index, name)| {
-                        let selected = !searching && *name == self.category;
+                        let selected =
+                            !searching && self.provider.is_none() && *name == self.category;
                         self.category_button(
                             index,
                             name,
                             selected,
                             changed_dots.contains(name),
+                            &palette,
+                            cx,
+                        )
+                    }),
+            )
+            .children(
+                self.provider_categories
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, category)| {
+                        !searching || provider_visible.contains(&category.extension.as_str())
+                    })
+                    .map(|(offset, category)| {
+                        let index = SETTINGS_CATEGORIES.len() + offset;
+                        let selected = selected_provider
+                            .is_some_and(|selected| selected.extension == category.extension);
+                        self.category_button(
+                            index,
+                            &category.name,
+                            selected,
+                            self.provider_changed(category),
                             &palette,
                             cx,
                         )
@@ -1102,6 +1736,8 @@ impl Render for SettingsWindow {
         {
             let drawn = if searching {
                 results.groups.clone()
+            } else if selected_provider.is_some() {
+                Vec::new()
             } else {
                 groups_for(self.category)
             };
@@ -1124,7 +1760,9 @@ impl Render for SettingsWindow {
                 .collect();
         }
         let body = if searching {
-            self.search_body(&query, &results, &palette, cx)
+            self.search_body(&query, &results, &provider_hits, &palette, cx)
+        } else if let Some(category) = selected_provider {
+            self.provider_body(category, &palette, cx)
         } else {
             match self.category {
                 "Keymap" => self.keymap_section(&palette),
@@ -1143,7 +1781,16 @@ impl Render for SettingsWindow {
             }
         };
         let (breadcrumb, heading) = if searching {
-            (settings_search_breadcrumb(&query), results.title())
+            let count = results.count() + provider_match_count(&provider_hits);
+            (
+                settings_search_breadcrumb(&query),
+                settings_results_title(count),
+            )
+        } else if let Some(category) = selected_provider {
+            (
+                format!("Settings › {}", category.name),
+                category.name.clone(),
+            )
         } else {
             (
                 format!("Settings › {}", self.category),
@@ -1260,7 +1907,11 @@ struct OpenSettingsWindow(WindowHandle<Root>);
 
 impl Global for OpenSettingsWindow {}
 
-pub fn open_settings_window(cx: &mut App, settings: Settings) -> Option<WindowHandle<Root>> {
+pub fn open_settings_window(
+    cx: &mut App,
+    settings: Settings,
+    providers: Arc<ProviderRegistry>,
+) -> Option<WindowHandle<Root>> {
     if let Some(handle) = cx.try_global::<OpenSettingsWindow>().map(|open| open.0)
         && handle
             .update(cx, |_, window, _| window.activate_window())
@@ -1268,7 +1919,7 @@ pub fn open_settings_window(cx: &mut App, settings: Settings) -> Option<WindowHa
     {
         return Some(handle);
     }
-    let handle = open_window_for(cx, settings, WINDOW_SIZE)?;
+    let handle = open_window_for(cx, settings, providers, WINDOW_SIZE)?;
     cx.set_global(OpenSettingsWindow(handle));
     Some(handle)
 }
@@ -1277,6 +1928,7 @@ pub fn open_settings_window(cx: &mut App, settings: Settings) -> Option<WindowHa
 pub(crate) fn open_window_for(
     cx: &mut App,
     settings: Settings,
+    providers: Arc<ProviderRegistry>,
     window_size: (f32, f32),
 ) -> Option<WindowHandle<Root>> {
     let bounds = Bounds::centered(None, size(px(window_size.0), px(window_size.1)), cx);
@@ -1292,7 +1944,7 @@ pub(crate) fn open_window_for(
             ..Default::default()
         },
         move |window, cx| {
-            let view = cx.new(|cx| SettingsWindow::new(settings, window, cx));
+            let view = cx.new(|cx| SettingsWindow::new(settings, providers, window, cx));
             let weak = view.downgrade();
             window.on_window_should_close(cx, move |_, cx| {
                 let _ = weak.update(cx, |this, _| this.flush_pending_save());
@@ -1310,6 +1962,126 @@ fn edit_ui_state_file(path: &Path, edit: impl FnOnce(&mut UiState)) -> std::io::
     state.save(path)
 }
 
+/// The window's root view, for layout checks that drive it without clicks.
+#[cfg(test)]
+pub(crate) fn window_view(
+    window: WindowHandle<Root>,
+    cx: &mut App,
+) -> Option<Entity<SettingsWindow>> {
+    window
+        .update(cx, |root, _, _| {
+            root.view().clone().downcast::<SettingsWindow>().ok()
+        })
+        .ok()
+        .flatten()
+}
+
+/// Two extensions with settings and one without, discovered from `dir` as enabled external extensions.
+#[cfg(test)]
+pub(crate) fn provider_fixture(dir: &Path) -> ProviderRegistry {
+    use std::fs;
+
+    const SAMPLE: &str = r#"id = "sample"
+name = "Sample"
+version = "0.1.0"
+schema_version = 1
+api_version = 4
+
+[providers.sample]
+name = "Sample"
+
+[[settings]]
+key = "region_label"
+label = "Region label"
+description = "Shown beside each region"
+group = "Location"
+kind = "text"
+default = "us-east-1"
+
+[[settings]]
+key = "config_path"
+label = "Config path"
+group = "Location"
+kind = "path"
+default = "~/.config/sample"
+
+[[settings]]
+key = "verbose"
+label = "Verbose logging"
+group = "Logging"
+kind = "bool"
+default = false
+
+[[settings]]
+key = "retries"
+label = "Retries"
+group = "Logging"
+kind = "number"
+default = 3
+min = 0
+max = 10
+
+[[settings]]
+key = "timeout_secs"
+label = "Request timeout"
+group = "Logging"
+kind = "duration_secs"
+default = 30
+min = 5
+max = 120
+
+[[settings]]
+key = "mode"
+label = "Mode"
+kind = "choice"
+default = "fast"
+options = [{ value = "fast", label = "Fast" }, { value = "safe", label = "Safe" }]
+
+[[settings]]
+key = "token"
+label = "API token"
+kind = "secret"
+"#;
+    const TOY: &str = r#"id = "toy"
+name = "Toy"
+version = "0.1.0"
+schema_version = 1
+api_version = 4
+
+[providers.toy]
+name = "Toy"
+
+[[settings]]
+key = "display_name"
+label = "Display name"
+kind = "text"
+default = "Default"
+"#;
+    const PLAIN: &str = r#"id = "plain"
+name = "Plain"
+version = "0.1.0"
+schema_version = 1
+api_version = 4
+
+[providers.plain]
+name = "Plain"
+"#;
+    let root = dir.join("extensions");
+    let state_root = dir.join("extension-state");
+    fs::create_dir_all(&state_root).unwrap();
+    for (id, manifest) in [("sample", SAMPLE), ("toy", TOY), ("plain", PLAIN)] {
+        let folder = root.join(id);
+        fs::create_dir_all(&folder).unwrap();
+        fs::write(folder.join("extension.toml"), manifest).unwrap();
+        fs::write(state_root.join(format!("{id}.json")), r#"{"enabled":true}"#).unwrap();
+    }
+    let mut registry = ProviderRegistry::default()
+        .with_settings_file(dir.join("settings.json"))
+        .with_external(true);
+    registry.discover(&root, &state_root).unwrap();
+    registry
+}
+
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
@@ -1324,11 +2096,27 @@ mod tests {
         cx: &mut TestAppContext,
         settings: Settings,
     ) -> (Entity<SettingsWindow>, &mut VisualTestContext) {
+        rooted_with(cx, settings, ProviderRegistry::default())
+    }
+
+    fn provider_window(
+        cx: &mut TestAppContext,
+    ) -> (Entity<SettingsWindow>, &mut VisualTestContext) {
+        let dir = temp_settings_path().parent().unwrap().to_path_buf();
+        rooted_with(cx, Settings::default(), provider_fixture(&dir))
+    }
+
+    fn rooted_with(
+        cx: &mut TestAppContext,
+        settings: Settings,
+        providers: ProviderRegistry,
+    ) -> (Entity<SettingsWindow>, &mut VisualTestContext) {
         let slot = Rc::new(RefCell::new(None));
         let slot_for_window = slot.clone();
+        let providers = Arc::new(providers);
         let (_root, cx) = cx.add_window_view(move |window, cx| {
             gpui_component::init(cx);
-            let view = cx.new(|cx| SettingsWindow::new(settings, window, cx));
+            let view = cx.new(|cx| SettingsWindow::new(settings, providers, window, cx));
             *slot_for_window.borrow_mut() = Some(view.clone());
             Root::new(view, window, cx)
         });
@@ -1370,6 +2158,173 @@ mod tests {
             .detach();
         });
         events
+    }
+
+    #[gpui::test]
+    fn extensions_with_settings_get_a_category_after_the_builtins(cx: &mut TestAppContext) {
+        let (view, cx) = provider_window(cx);
+
+        let names = view.read_with(cx, |view, _| {
+            view.provider_categories
+                .iter()
+                .map(|category| category.name.clone())
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(names, ["Sample", "Toy"]);
+        assert!(cx.debug_bounds("settings.cat.9").is_some());
+        assert!(cx.debug_bounds("settings.cat.10").is_some());
+        assert_eq!(category_icon(9), AppIcon::Plug);
+    }
+
+    #[gpui::test]
+    fn provider_category_shows_one_row_per_declared_setting(cx: &mut TestAppContext) {
+        let (view, cx) = provider_window(cx);
+        click(cx, "settings.cat.9");
+
+        assert_eq!(
+            view.read_with(cx, |view, _| view.provider.clone())
+                .as_deref(),
+            Some("sample")
+        );
+        for row in [
+            "settings.provider.item.sample.region_label",
+            "settings.provider.item.sample.config_path",
+            "settings.provider.item.sample.verbose",
+            "settings.provider.item.sample.retries",
+            "settings.provider.item.sample.timeout_secs",
+            "settings.provider.item.sample.mode",
+            "settings.provider.item.sample.token",
+        ] {
+            assert!(cx.debug_bounds(row).is_some(), "{row}");
+        }
+        assert!(
+            cx.debug_bounds("settings.provider.control.sample.token")
+                .is_some()
+        );
+    }
+
+    #[gpui::test]
+    fn editing_a_provider_text_setting_stores_it_in_the_registry(cx: &mut TestAppContext) {
+        let (view, cx) = provider_window(cx);
+        view.update_in(cx, |view, window, cx| {
+            view.show_provider("sample", window, cx)
+        });
+        cx.run_until_parked();
+
+        view.update_in(cx, |view, window, cx| {
+            view.type_provider_text("sample", "region_label", "Europe", window, cx)
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            view.read_with(cx, |view, _| view
+                .providers
+                .setting_value("sample", "region_label")),
+            Some(SettingValue::Text("Europe".into()))
+        );
+        assert!(
+            cx.debug_bounds("settings.provider.changed.sample.region_label")
+                .is_some()
+        );
+    }
+
+    #[gpui::test]
+    fn invalid_provider_value_shows_an_error_and_is_not_saved(cx: &mut TestAppContext) {
+        let (view, cx) = provider_window(cx);
+        view.update_in(cx, |view, window, cx| {
+            view.show_provider("sample", window, cx)
+        });
+        cx.run_until_parked();
+
+        view.update_in(cx, |view, window, cx| {
+            view.type_provider_text("sample", "retries", "99", window, cx)
+        });
+        cx.run_until_parked();
+
+        assert!(
+            cx.debug_bounds("settings.provider.error.sample.retries")
+                .is_some()
+        );
+        assert!(!view.read_with(cx, |view, _| {
+            view.providers.setting_changed("sample", "retries")
+        }));
+    }
+
+    #[gpui::test]
+    fn search_finds_provider_settings_and_clicking_the_hit_opens_its_category(
+        cx: &mut TestAppContext,
+    ) {
+        let (view, cx) = provider_window(cx);
+
+        type_query(&view, cx, "timeout");
+
+        assert!(
+            cx.debug_bounds("settings.provider.item.sample.timeout_secs")
+                .is_some()
+        );
+        click(cx, "settings.cat.9");
+        assert_eq!(
+            view.read_with(cx, |view, _| view.provider.clone())
+                .as_deref(),
+            Some("sample")
+        );
+        assert!(
+            cx.debug_bounds("settings.provider.item.sample.region_label")
+                .is_some()
+        );
+    }
+
+    #[gpui::test]
+    fn restore_defaults_resets_only_the_selected_provider(cx: &mut TestAppContext) {
+        let (view, cx) = provider_window(cx);
+        view.update_in(cx, |view, window, cx| view.show_provider("toy", window, cx));
+        cx.run_until_parked();
+        view.update_in(cx, |view, window, cx| {
+            view.type_provider_text("toy", "display_name", "Hi", window, cx)
+        });
+        view.update_in(cx, |view, window, cx| {
+            view.show_provider("sample", window, cx)
+        });
+        cx.run_until_parked();
+        view.update_in(cx, |view, window, cx| {
+            view.type_provider_text("sample", "region_label", "Europe", window, cx)
+        });
+        cx.run_until_parked();
+
+        click(cx, "settings.restore");
+
+        assert!(!view.read_with(cx, |view, _| {
+            view.providers.setting_changed("sample", "region_label")
+        }));
+        assert!(view.read_with(cx, |view, _| {
+            view.providers.setting_changed("toy", "display_name")
+        }));
+    }
+
+    #[gpui::test]
+    fn restore_defaults_with_a_search_active_leaves_built_in_settings_alone(
+        cx: &mut TestAppContext,
+    ) {
+        let (view, cx) = provider_window(cx);
+        view.update_in(cx, |view, window, cx| {
+            view.show_provider("sample", window, cx)
+        });
+        cx.run_until_parked();
+        view.update_in(cx, |view, window, cx| {
+            view.type_provider_text("sample", "region_label", "Europe", window, cx)
+        });
+        view.update(cx, |view, cx| {
+            view.choose(SettingId::Theme, Pick::Theme(Theme::Dark), cx)
+        });
+        type_query(&view, cx, "timeout");
+        let before = view.read_with(cx, |view, _| view.settings.clone());
+
+        click(cx, "settings.restore");
+
+        assert_eq!(view.read_with(cx, |view, _| view.settings.clone()), before);
+        assert!(!view.read_with(cx, |view, _| {
+            view.providers.setting_changed("sample", "region_label")
+        }));
     }
 
     #[gpui::test]
@@ -1561,12 +2516,24 @@ mod tests {
         cx.update(gpui_component::init);
 
         assert!(
-            cx.update(|cx| open_settings_window(cx, Settings::default()))
-                .is_some()
+            cx.update(|cx| {
+                open_settings_window(
+                    cx,
+                    Settings::default(),
+                    Arc::new(ProviderRegistry::default()),
+                )
+            })
+            .is_some()
         );
         assert!(
-            cx.update(|cx| open_settings_window(cx, Settings::default()))
-                .is_some()
+            cx.update(|cx| {
+                open_settings_window(
+                    cx,
+                    Settings::default(),
+                    Arc::new(ProviderRegistry::default()),
+                )
+            })
+            .is_some()
         );
 
         assert_eq!(cx.update(|cx| cx.windows().len()), 1);

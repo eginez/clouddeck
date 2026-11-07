@@ -84,10 +84,20 @@ pub(crate) enum State {
     SettingsNarrow,
     /// Settings window at the narrow width in the dark palette.
     SettingsNarrowDark,
+    /// Settings window on an extension's category with one setting of each kind, in the light palette.
+    ProviderSettingsLight,
+    /// The same extension category as `ProviderSettingsLight`, in the dark palette.
+    ProviderSettingsDark,
+    /// The extension category with a text setting changed, so its marker and Reset show.
+    ProviderSettingsChanged,
+    /// The extension category with a number outside its range, so the row shows an error.
+    ProviderSettingsInvalid,
+    /// Settings window with a search that matches an extension's setting.
+    ProviderSettingsSearch,
 }
 
 impl State {
-    pub(crate) const ALL: [State; 36] = [
+    pub(crate) const ALL: [State; 41] = [
         State::MainIdle,
         State::MainRowSelected,
         State::MainEmpty,
@@ -124,6 +134,11 @@ impl State {
         State::SettingsDark,
         State::SettingsNarrow,
         State::SettingsNarrowDark,
+        State::ProviderSettingsLight,
+        State::ProviderSettingsDark,
+        State::ProviderSettingsChanged,
+        State::ProviderSettingsInvalid,
+        State::ProviderSettingsSearch,
     ];
 
     /// The variant name, as accepted by `--render-state`.
@@ -165,6 +180,11 @@ impl State {
             State::SettingsDark => "SettingsDark",
             State::SettingsNarrow => "SettingsNarrow",
             State::SettingsNarrowDark => "SettingsNarrowDark",
+            State::ProviderSettingsLight => "ProviderSettingsLight",
+            State::ProviderSettingsDark => "ProviderSettingsDark",
+            State::ProviderSettingsChanged => "ProviderSettingsChanged",
+            State::ProviderSettingsInvalid => "ProviderSettingsInvalid",
+            State::ProviderSettingsSearch => "ProviderSettingsSearch",
         }
     }
 
@@ -212,6 +232,11 @@ impl State {
                 | State::SettingsDark
                 | State::SettingsNarrow
                 | State::SettingsNarrowDark
+                | State::ProviderSettingsLight
+                | State::ProviderSettingsDark
+                | State::ProviderSettingsChanged
+                | State::ProviderSettingsInvalid
+                | State::ProviderSettingsSearch
         )
     }
 
@@ -339,7 +364,12 @@ pub(crate) fn apply_render_state(
         | State::SettingsLight
         | State::SettingsDark
         | State::SettingsNarrow
-        | State::SettingsNarrowDark => {}
+        | State::SettingsNarrowDark
+        | State::ProviderSettingsLight
+        | State::ProviderSettingsDark
+        | State::ProviderSettingsChanged
+        | State::ProviderSettingsInvalid
+        | State::ProviderSettingsSearch => {}
     }
     // Focus and overlays settle on the next frame; make sure one is drawn.
     window.refresh();

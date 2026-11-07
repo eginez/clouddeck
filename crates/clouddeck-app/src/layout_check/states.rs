@@ -3,6 +3,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use clouddeck_core::about::{AboutInfo, PluginOrigin, PluginRow, PluginStatus};
@@ -82,7 +83,12 @@ fn service_for(state: State) -> (Arc<dyn Provider>, Vec<String>) {
         | State::SettingsLight
         | State::SettingsDark
         | State::SettingsNarrow
-        | State::SettingsNarrowDark => {
+        | State::SettingsNarrowDark
+        | State::ProviderSettingsLight
+        | State::ProviderSettingsDark
+        | State::ProviderSettingsChanged
+        | State::ProviderSettingsInvalid
+        | State::ProviderSettingsSearch => {
             unreachable!("only main window states have a fleet service")
         }
     }
@@ -288,14 +294,53 @@ fn open_settings(
     height: f32,
     cx: &mut TestAppContext,
 ) -> &mut VisualTestContext {
-    let dark = matches!(state, State::SettingsDark | State::SettingsNarrowDark);
+    static NEXT_DIR: AtomicUsize = AtomicUsize::new(0);
+    let dark = matches!(
+        state,
+        State::SettingsDark | State::SettingsNarrowDark | State::ProviderSettingsDark
+    );
     cx.update(|app| app.set_global(ActivePalette(Palette::for_dark(dark))));
+    let dir = std::env::temp_dir().join(format!(
+        "clouddeck-layout-settings-{}-{}",
+        std::process::id(),
+        NEXT_DIR.fetch_add(1, Ordering::Relaxed)
+    ));
+    let providers = std::sync::Arc::new(settings_window::provider_fixture(&dir));
     let window = cx.update(|app| {
         gpui_component::init(app);
-        settings_window::open_window_for(app, Settings::default(), (width, height))
+        settings_window::open_window_for(app, Settings::default(), providers, (width, height))
             .expect("settings window opens")
     });
+    let view = cx
+        .update(|app| settings_window::window_view(window, app))
+        .expect("settings window has its view");
     let cx = VisualTestContext::from_window(window.into(), cx).into_mut();
+    cx.run_until_parked();
+    match state {
+        State::ProviderSettingsLight | State::ProviderSettingsDark => {
+            view.update_in(cx, |view, window, cx| {
+                view.show_provider("sample", window, cx)
+            });
+        }
+        State::ProviderSettingsChanged => {
+            view.update_in(cx, |view, window, cx| {
+                view.show_provider("sample", window, cx);
+                view.type_provider_text("sample", "region_label", "Europe", window, cx);
+            });
+        }
+        State::ProviderSettingsInvalid => {
+            view.update_in(cx, |view, window, cx| {
+                view.show_provider("sample", window, cx);
+                view.type_provider_text("sample", "retries", "99", window, cx);
+            });
+        }
+        State::ProviderSettingsSearch => {
+            view.update_in(cx, |view, window, cx| {
+                view.type_query("timeout", window, cx)
+            });
+        }
+        _ => {}
+    }
     cx.run_until_parked();
     cx
 }
@@ -442,7 +487,7 @@ mod tests {
     /// One key element per state that `apply_render_state` must produce.
     #[gpui::test]
     fn every_state_shows_its_key_element(cx: &mut TestAppContext) {
-        let key_elements: [(State, &str); 35] = [
+        let key_elements: [(State, &str); 40] = [
             (State::MainIdle, "main.root"),
             (State::MainRowSelected, "main.inspector"),
             (State::MainEmpty, "main.center-state"),
@@ -478,6 +523,26 @@ mod tests {
             (State::SettingsDark, "settings.footer"),
             (State::SettingsNarrow, "settings.footer"),
             (State::SettingsNarrowDark, "settings.footer"),
+            (
+                State::ProviderSettingsLight,
+                "settings.provider.item.sample.verbose",
+            ),
+            (
+                State::ProviderSettingsDark,
+                "settings.provider.item.sample.verbose",
+            ),
+            (
+                State::ProviderSettingsChanged,
+                "settings.provider.reset.sample.region_label",
+            ),
+            (
+                State::ProviderSettingsInvalid,
+                "settings.provider.error.sample.retries",
+            ),
+            (
+                State::ProviderSettingsSearch,
+                "settings.provider.item.sample.timeout_secs",
+            ),
         ];
         assert_eq!(
             key_elements.len() + 1,

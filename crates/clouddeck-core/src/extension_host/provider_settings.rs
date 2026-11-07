@@ -8,6 +8,50 @@ use crate::settings::Settings;
 
 const SECRET_UNAVAILABLE: &str = "secret storage is not available in this build";
 
+/// An extension whose manifest declares settings, shown as one Settings category.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SettingsCategory {
+    pub extension: String,
+    pub name: String,
+    pub settings: Vec<SettingDef>,
+}
+
+/// Categories with at least one setting matching `query`, keeping only the matching settings.
+pub fn search_provider_settings(
+    categories: &[SettingsCategory],
+    query: &str,
+) -> Vec<SettingsCategory> {
+    let query = query.trim().to_lowercase();
+    if query.is_empty() {
+        return Vec::new();
+    }
+    categories
+        .iter()
+        .filter_map(|category| {
+            let settings: Vec<SettingDef> = category
+                .settings
+                .iter()
+                .filter(|def| {
+                    [
+                        Some(category.name.as_str()),
+                        Some(def.label.as_str()),
+                        def.description.as_deref(),
+                        def.group.as_deref(),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .any(|text| text.to_lowercase().contains(&query))
+                })
+                .cloned()
+                .collect();
+            (!settings.is_empty()).then(|| SettingsCategory {
+                settings,
+                ..category.clone()
+            })
+        })
+        .collect()
+}
+
 /// Values of extension-declared settings, kept in the host settings file under `providers.<id>.<key>`.
 /// Each extension sees only its own values, and only for keys it declared.
 pub struct ProviderSettings {
@@ -289,6 +333,49 @@ mod tests {
         );
         assert_eq!(settings.host_text("c", "region"), None);
         assert_eq!(settings.host_text("a", "clouddeck.theme"), None);
+    }
+
+    #[test]
+    fn search_matches_label_description_group_and_category_name() {
+        let categories = vec![SettingsCategory {
+            extension: "toy".into(),
+            name: "Toy".into(),
+            settings: vec![
+                SettingDef {
+                    label: "Display name".into(),
+                    description: Some("Shown in lists".into()),
+                    group: Some("Appearance".into()),
+                    ..text("display_name", None)
+                },
+                SettingDef {
+                    label: "Retries".into(),
+                    ..text("retries", None)
+                },
+            ],
+        }];
+        let keys = |query: &str| -> Vec<String> {
+            search_provider_settings(&categories, query)
+                .into_iter()
+                .flat_map(|category| category.settings)
+                .map(|def| def.key)
+                .collect()
+        };
+
+        assert_eq!(keys("display"), ["display_name"]);
+        assert_eq!(keys("SHOWN IN"), ["display_name"]);
+        assert_eq!(keys("appear"), ["display_name"]);
+        assert_eq!(keys("toy"), ["display_name", "retries"]);
+        assert_eq!(keys("zzz"), Vec::<String>::new());
+    }
+
+    #[test]
+    fn empty_query_matches_nothing() {
+        let categories = vec![SettingsCategory {
+            extension: "toy".into(),
+            name: "Toy".into(),
+            settings: vec![text("display_name", None)],
+        }];
+        assert!(search_provider_settings(&categories, "  ").is_empty());
     }
 
     #[test]

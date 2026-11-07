@@ -10,7 +10,8 @@ pub use clouddeck_provider_api::{
     AuthAnswer, AuthInput, AuthMethod, AuthStep, Call, CellFailure, Connection, ConnectionId, CoreField,
     DimValue, Dimension, DimensionId, ErrorKind, FieldDef, FieldKind, FieldSource, FlowId, Host,
     InspectorRowDef, InspectorSectionDef, InspectorValue, KindId, KindInfo, ListResult, LogLevel,
-    MatchMode, Provider, ProviderError, ProviderInfo, ResourceId, Selection, ValueId,
+    MatchMode, Provider, ProviderError, ProviderInfo, ResourceId, Selection, SettingDef, SettingKind,
+    SettingValue, ValueId,
 };
 pub use clouddeck_provider_kit::ComputeServiceProvider;
 mod query;
