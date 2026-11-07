@@ -98,13 +98,17 @@ fn layout_rules_hold(cx: &mut TestAppContext) {
 /// Every named state has at least one layout rule.
 #[gpui::test]
 fn layout_rules_cover_states(_cx: &mut TestAppContext) {
-    const ALL: [State; 32] = [
+    const ALL: [State; 36] = [
         State::MainIdle,
         State::MainRowSelected,
         State::MainEmpty,
         State::MainFailure,
         State::MainPartial,
         State::MainLarge,
+        State::MainStateGrouped,
+        State::MainStateGroupedDark,
+        State::MainStateGroupedCollapsed,
+        State::MainStateGroupedCollapsedDark,
         State::SearchFocusedEmpty,
         State::SearchTypingSt,
         State::SearchError,
