@@ -19,10 +19,12 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Instant;
 
 use gpui::{App, AsyncApp, Entity};
 
 use crate::account_window::{AccountBrowserLoginPrompt, AccountConnectionError, AccountWindowView};
+use crate::provider_sign_in::{cancel_flow, deadline_passed};
 use clouddeck_core::{
     AuthAnswer, AuthInput, AuthStep, AwsCredentialKind, Call, ConnectionId, FlowId, Host, KindId,
     LogLevel, LoginGuidance, Provider, ProviderError, REGION, Selection, ValueId, login_guidance,
@@ -183,11 +185,12 @@ fn begin_sign_in(wizard: Entity<AccountWindowView>, cx: &mut App) {
         let Some(provider) = aws_provider_or_fail(&wizard, attempt, cx).await else {
             return;
         };
-        let Some(flow) = start_browser_sign_in(&wizard, &provider, &profile, attempt, cx).await
+        let Some((flow, deadline)) =
+            start_browser_sign_in(&wizard, &provider, &profile, attempt, cx).await
         else {
             return;
         };
-        if !await_browser_approval(&wizard, &provider, flow, attempt, cx).await
+        if !await_browser_approval(&wizard, &provider, flow, deadline, attempt, cx).await
             || !is_current_attempt(&wizard, attempt, cx)
         {
             return;
@@ -225,7 +228,7 @@ async fn start_browser_sign_in(
     profile: &str,
     attempt: u64,
     cx: &mut AsyncApp,
-) -> Option<FlowId> {
+) -> Option<(FlowId, Instant)> {
     let step = match off_thread(cx, {
         let provider = provider.clone();
         let profile = profile.to_string();
@@ -272,7 +275,7 @@ async fn start_browser_sign_in(
         cx.notify();
         true
     });
-    matches!(applied, Ok(true)).then_some(flow)
+    matches!(applied, Ok(true)).then_some((flow, Instant::now() + expires_in))
 }
 
 /// Returns `true` once the user approves the code, `false` if the attempt went
@@ -281,11 +284,17 @@ async fn await_browser_approval(
     wizard: &Entity<AccountWindowView>,
     provider: &Arc<dyn Provider>,
     flow: FlowId,
+    deadline: Instant,
     attempt: u64,
     cx: &mut AsyncApp,
 ) -> bool {
     loop {
         if !is_current_attempt(wizard, attempt, cx) {
+            return false;
+        }
+        if deadline_passed(Some(deadline)) {
+            cancel_flow(provider.clone(), flow, cx).await;
+            fail(wizard, attempt, "The browser sign-in code expired.", cx);
             return false;
         }
         let polled = off_thread(cx, {

@@ -6,10 +6,11 @@ use std::cell::RefCell;
 use std::collections::HashSet;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::Instant;
 
 use clouddeck_core::{
-    AuthAnswer, FlowId, Provider, SignInAction, sign_in_action, sign_in_failed_message,
-    sign_in_message, start_sign_in,
+    AuthAnswer, AuthStep, ErrorKind, FlowId, Provider, ProviderError, SignInAction,
+    sign_in_action, sign_in_failed_message, sign_in_message, start_sign_in,
 };
 use gpui::{App, AsyncApp, Entity};
 
@@ -39,6 +40,7 @@ pub fn begin_provider_sign_in(
 async fn drive(provider: Arc<dyn Provider>, fleet: &Entity<FleetState>, cx: &mut AsyncApp) {
     let name = provider.info().name;
     let mut opened: Vec<FlowId> = Vec::new();
+    let mut deadline: Option<Instant> = None;
     let mut step = match off_thread(cx, {
         let provider = provider.clone();
         move || with_call(|call| start_sign_in(provider.as_ref(), call))
@@ -52,6 +54,9 @@ async fn drive(provider: Arc<dyn Provider>, fleet: &Entity<FleetState>, cx: &mut
         }
     };
     loop {
+        if let AuthStep::DeviceCode { expires_in, .. } = &step {
+            deadline.get_or_insert_with(|| Instant::now() + *expires_in);
+        }
         let action = sign_in_action(step);
         let message = sign_in_message(&name, &action);
         match action {
@@ -60,13 +65,7 @@ async fn drive(provider: Arc<dyn Provider>, fleet: &Entity<FleetState>, cx: &mut
                 return;
             }
             SignInAction::NeedsInput { flow } => {
-                let _ = off_thread(cx, {
-                    let provider = provider.clone();
-                    move || {
-                        with_call(|call| provider.continue_auth(call, &flow, AuthAnswer::Cancel))
-                    }
-                })
-                .await;
+                cancel_flow(provider.clone(), flow, cx).await;
                 show(fleet, message, cx);
                 return;
             }
@@ -78,6 +77,15 @@ async fn drive(provider: Arc<dyn Provider>, fleet: &Entity<FleetState>, cx: &mut
                     let _ = cx.update(|cx| cx.open_url(&url));
                 }
                 if !show(fleet, message, cx) || !poll {
+                    return;
+                }
+                if deadline_passed(deadline) {
+                    cancel_flow(provider.clone(), flow, cx).await;
+                    show(
+                        fleet,
+                        sign_in_failed_message(&name, &expired_error()),
+                        cx,
+                    );
                     return;
                 }
                 let polled = off_thread(cx, {
@@ -95,6 +103,21 @@ async fn drive(provider: Arc<dyn Provider>, fleet: &Entity<FleetState>, cx: &mut
             }
         }
     }
+}
+
+pub(crate) fn deadline_passed(deadline: Option<Instant>) -> bool {
+    deadline.is_some_and(|at| Instant::now() >= at)
+}
+
+pub(crate) fn expired_error() -> ProviderError {
+    ProviderError::new(ErrorKind::Timeout, "the sign-in code expired")
+}
+
+pub(crate) async fn cancel_flow(provider: Arc<dyn Provider>, flow: FlowId, cx: &AsyncApp) {
+    let _ = off_thread(cx, move || {
+        with_call(|call| provider.continue_auth(call, &flow, AuthAnswer::Cancel))
+    })
+    .await;
 }
 
 /// Returns `false` once the fleet has been dropped, so the flow can stop.
@@ -271,6 +294,30 @@ mod tests {
             Some("https://example.test/complete")
         );
         assert_eq!(provider.answers(), vec![AuthAnswer::Poll, AuthAnswer::Poll]);
+        assert!(in_flight.borrow().is_empty());
+    }
+
+    #[gpui::test]
+    fn device_code_past_its_expiry_is_cancelled_and_reported(cx: &mut TestAppContext) {
+        let expired = AuthStep::DeviceCode {
+            flow: FlowId::from("flow-1"),
+            code: "ABCD".to_string(),
+            url: "https://example.test/device".to_string(),
+            complete_url: None,
+            expires_in: Duration::ZERO,
+        };
+        let provider = FakeSignIn::new(Ok(expired), vec![AuthStep::Done]);
+        let fleet = fleet_for(cx, provider.clone());
+        let in_flight = Rc::default();
+
+        assert!(start(cx, &provider, &fleet, &in_flight));
+        cx.run_until_parked();
+
+        assert_eq!(provider.answers(), vec![AuthAnswer::Cancel]);
+        assert_eq!(
+            flash(cx, &fleet).as_deref(),
+            Some("Fake Cloud sign-in failed: the sign-in code expired")
+        );
         assert!(in_flight.borrow().is_empty());
     }
 
