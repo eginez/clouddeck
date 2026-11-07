@@ -433,6 +433,19 @@ impl AppShell {
         )
     }
 
+    fn load_connections(model: &mut ContextModel, providers: &[std::sync::Arc<dyn Provider>]) {
+        let active = model.active_provider().to_string();
+        let Some(provider) = providers.iter().find(|p| p.info().id == active) else {
+            return;
+        };
+        let call = Call {
+            deadline: None,
+            host: &LoadHost,
+        };
+        model.set_connections(provider.connections(&call));
+        model.set_signed_in(&active, !model.needs_sign_in());
+    }
+
     fn sync_provider_view(main_window: &Entity<MainWindow>, model: &ContextModel, cx: &mut App) {
         let provider_short_name = model
             .active_info()
@@ -520,7 +533,7 @@ impl AppShell {
         let settings = Settings::load(&settings_path());
         let request_timeout = settings.request_timeout();
         let providers = app_providers::providers(cx);
-        let context_model = ContextModel::new(
+        let mut context_model = ContextModel::new(
             providers
                 .iter()
                 .map(|provider| ProviderEntry {
@@ -532,6 +545,7 @@ impl AppShell {
             settings.active_provider.as_deref(),
             "aws",
         );
+        Self::load_connections(&mut context_model, &providers);
         let view_model = InstanceListViewModel::new(Self::provider_for_id(
             context_model.active_provider(),
             &providers,
@@ -787,30 +801,19 @@ impl AppShell {
 
     fn pick_provider(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
         let providers = app_providers::providers(cx);
-        let Some(provider) = providers
-            .iter()
-            .find(|provider| provider.info().id == id)
-            .cloned()
-        else {
-            return;
-        };
-        let mut settings = Settings::load(&settings_path());
-        if !switch_active_provider(&mut self.context_model, &mut settings, id) {
+        if !providers.iter().any(|provider| provider.info().id == id) {
             return;
         }
-        if let Err(error) = settings.save(&settings_path()) {
+        let mut settings = Settings::load(&settings_path());
+        let switched = switch_active_provider(&mut self.context_model, &mut settings, id);
+        if !switched && !self.context_model.needs_sign_in() {
+            return;
+        }
+        if switched && let Err(error) = settings.save(&settings_path()) {
             self.message = Some(format!("Could not remember this provider: {error}"));
         }
-        let call = Call {
-            deadline: None,
-            host: &LoadHost,
-        };
-        self.context_model
-            .set_connections(provider.connections(&call));
-        let needs_sign_in = self.context_model.needs_sign_in();
-        self.context_model
-            .set_signed_in(provider.info().id.as_str(), !needs_sign_in);
-        if needs_sign_in {
+        Self::load_connections(&mut self.context_model, &providers);
+        if self.context_model.needs_sign_in() {
             Self::sync_provider_view(&self.main_window, &self.context_model, cx);
             return;
         }
@@ -989,9 +992,18 @@ impl AppShell {
                         };
                         let _ = window_handle.update(cx, |_, window, cx| {
                             let _ = shell.update(cx, |shell, cx| {
-                                if next != shell.context {
-                                    shell.apply_context(next, window, cx);
+                                let was_sign_in = shell.context_model.needs_sign_in();
+                                if !was_sign_in && next == shell.context {
+                                    return;
                                 }
+                                let providers = app_providers::providers(cx);
+                                Self::load_connections(&mut shell.context_model, &providers);
+                                Self::sync_provider_view(
+                                    &shell.main_window,
+                                    &shell.context_model,
+                                    cx,
+                                );
+                                shell.apply_context(next, window, cx);
                             });
                         });
                     }
