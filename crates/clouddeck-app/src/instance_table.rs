@@ -207,6 +207,11 @@ impl Render for InstanceTable {
                     format!("table.columns.item.{}", column.key()),
                     Recorded {
                         text: Some(column.title().to_string()),
+                        fg: Some(if column == Column::Name {
+                            "faint"
+                        } else {
+                            "text"
+                        }),
                         ..Default::default()
                     },
                 );
