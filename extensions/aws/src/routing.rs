@@ -178,7 +178,11 @@ mod tests {
         providers.push(Arc::new(clouddeck_core::demo_provider()));
         let timeout = Duration::from_secs(5);
         let fleet_regions = ["us-east-1".to_string(), "eu-west-1".to_string()];
-        for region in ["us-east-1", "fleet"] {
+        let cases = [
+            ("us-east-1", vec!["us-east-1".to_string()]),
+            ("fleet", fleet_regions.to_vec()),
+        ];
+        for (region, regions) in cases {
             let expected = service_provider(service("", region, &fleet_regions, timeout, None))
                 .list(
                     &call(),
@@ -186,13 +190,12 @@ mod tests {
                     &KindId::instances(),
                     &Selection::new(),
                 );
-            let actual = workspace_provider(&providers, "", region, None, &fleet_regions, timeout)
-                .list(
-                    &call(),
-                    &ConnectionId::from(""),
-                    &KindId::instances(),
-                    &Selection::new(),
-                );
+            let actual = workspace_provider(&providers, "", &regions, None, timeout).list(
+                &call(),
+                &ConnectionId::from(""),
+                &KindId::instances(),
+                &Selection::new(),
+            );
             assert_eq!(actual, expected, "no profile {region}");
         }
     }

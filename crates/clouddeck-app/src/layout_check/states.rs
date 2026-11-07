@@ -7,9 +7,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use clouddeck_core::about::{AboutInfo, PluginOrigin, PluginRow, PluginStatus};
-use clouddeck_core::{
-    ProfileInput, Provider, RegionScope, Settings, TestScenarioKind, fixture_fleet,
-};
+use clouddeck_core::{ProfileInput, Provider, Settings, TestScenarioKind, fixture_fleet};
 use gpui::{AppContext, Bounds, Entity, TestAppContext, VisualTestContext, point, px, size};
 
 use clouddeck_core::extension_manager::plugins::{Action, PluginsViewModel, Tab};
@@ -402,9 +400,8 @@ pub(crate) fn build(
     let window = cx.update(|cx| {
         cx.open_window(window_options(bounds), move |window, cx| {
             gpui_component::init(cx);
-            let scope = RegionScope::all(&regions);
             let main =
-                cx.new(|cx| MainWindow::new(fleet_for_window.clone(), regions, scope, window, cx));
+                cx.new(|cx| MainWindow::new(fleet_for_window.clone(), regions, window, cx));
             if before_first_frame {
                 apply_render_state(
                     state,

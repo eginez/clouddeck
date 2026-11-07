@@ -30,7 +30,6 @@ const BUTTON_RADIUS: f32 = 8.0;
 const BADGE_SIZE: f32 = 34.0;
 const BADGE_FONT_SIZE: f32 = 11.0;
 const ROW_RADIUS: f32 = 8.0;
-const DEFAULT_REGION: &str = "us-east-1";
 const NO_PROFILES_TEXT: &str = "No AWS profiles found in ~/.aws/config.";
 const FOOTER_TEXT: &str = "Profiles are read from ~/.aws/config. Press ↵ to open the selected profile. If credentials expire, sign in with browser on the Connect screen.";
 
@@ -68,15 +67,9 @@ fn profile_inputs(profiles: Vec<AwsProfile>) -> Vec<ProfileInput> {
         .collect()
 }
 
-fn context_for_profile(profiles: &[ProfileInput], name: &str) -> WorkspaceContext {
-    let region = profiles
-        .iter()
-        .find(|profile| profile.name == name)
-        .and_then(|profile| profile.region.clone())
-        .unwrap_or_else(|| DEFAULT_REGION.into());
+fn context_for_profile(name: &str) -> WorkspaceContext {
     WorkspaceContext {
         profile: name.into(),
-        region,
     }
 }
 
@@ -427,7 +420,7 @@ fn route(
 ) {
     let opened = match event {
         WelcomeEvent::OpenProfile(name) => {
-            let context = context_for_profile(&view.read(cx).profiles, name);
+            let context = context_for_profile(name);
             if let Err(error) = context.save(&context_path()) {
                 view.update(cx, |view, cx| {
                     view.message = Some(format!("Could not remember this profile: {error}"));
@@ -680,7 +673,6 @@ mod tests {
     fn welcome_shows_only_on_a_first_real_run() {
         let saved = WorkspaceContext {
             profile: "prod".into(),
-            region: "us-east-1".into(),
         };
         assert!(should_show_welcome(false, None));
         assert!(!should_show_welcome(true, None));
@@ -688,27 +680,12 @@ mod tests {
     }
 
     #[test]
-    fn opening_a_profile_uses_its_region_or_the_default() {
-        let inputs = vec![
-            ProfileInput {
-                name: "prod".into(),
-                account_id: None,
-                region: Some("eu-west-1".into()),
-            },
-            ProfileInput {
-                name: "bare".into(),
-                account_id: None,
-                region: None,
-            },
-        ];
-
+    fn opening_a_profile_saves_only_its_name() {
         assert_eq!(
-            context_for_profile(&inputs, "prod"),
+            context_for_profile("prod"),
             WorkspaceContext {
                 profile: "prod".into(),
-                region: "eu-west-1".into(),
             }
         );
-        assert_eq!(context_for_profile(&inputs, "bare").region, DEFAULT_REGION);
     }
 }

@@ -6,11 +6,10 @@ use clouddeck_core::{
     AddressKind, CenterContext, CenterInput, CenterState, CenterText, CloudDeckError,
     CommandContext, CommandId, ComputeServicePartialFailure, ContextModel, DimValue, Dimension,
     DimensionId, EscapeAction, EscapeContext, Instance, ListResult, MAIN_WINDOW_MIN_WIDTH,
-    OPEN_IN_CONSOLE_FLASH, ProfileInput, ProviderMenuRow, REGION, RegionScope, Settings, Theme,
-    ValueId, center_state, center_text, clock_text, console_url_for, copied_flash, escape_action,
+    OPEN_IN_CONSOLE_FLASH, ProfileInput, ProviderMenuRow, REGION, Settings, Theme, ValueId,
+    center_state, center_text, clock_text, console_url_for, copied_flash, escape_action,
     filter_command_query, known_tag_keys, layout_rules, native_id, region_failure_reason,
-    region_scope_label, settings_path, should_auto_refresh, should_refresh_on_focus, stale_count,
-    updated_text,
+    settings_path, should_auto_refresh, should_refresh_on_focus, stale_count, updated_text,
 };
 use gpui::{
     AnyElement, AnyView, App, Bounds, ClickEvent, ClipboardItem, Context, Corner, Div, Entity,
@@ -82,7 +81,6 @@ impl Global for MenusInstalled {}
 
 pub struct MainWindow {
     pub fleet: Entity<FleetState>,
-    pub scope: RegionScope,
     pub available_regions: Vec<String>,
     pub failures: Vec<ComputeServicePartialFailure>,
     pub profiles: Vec<ProfileInput>,
@@ -102,7 +100,7 @@ pub struct MainWindow {
     focus_handle: FocusHandle,
     overlay_view: Option<AnyView>,
     overlay_subscription: Option<Subscription>,
-    region_scope_dirty: bool,
+    region_dirty: bool,
     /// Whether the window was narrow on the last render, to reset panes only when it crosses.
     last_narrow: Option<bool>,
     /// The last load error, kept through the next in-flight load so the status bar doesn't flicker.
@@ -184,7 +182,6 @@ impl MainWindow {
     pub fn new(
         fleet: Entity<FleetState>,
         available_regions: Vec<String>,
-        scope: RegionScope,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -293,9 +290,10 @@ impl MainWindow {
             }
         });
 
+        let mut context_model = ContextModel::new(Vec::new(), None, "");
+        context_model.set_dimensions(vec![region_dimension(&available_regions)]);
         Self {
             fleet,
-            scope,
             available_regions,
             failures: Vec::new(),
             profiles: Vec::new(),
@@ -303,7 +301,7 @@ impl MainWindow {
             connection_label: "Profile".to_string(),
             sign_in: false,
             provider_menu: Vec::new(),
-            context_model: ContextModel::new(Vec::new(), None, ""),
+            context_model,
             overlay: None,
             toolbar,
             sidebar,
@@ -315,7 +313,7 @@ impl MainWindow {
             focus_handle,
             overlay_view: None,
             overlay_subscription: None,
-            region_scope_dirty: false,
+            region_dirty: false,
             last_narrow: Some(rules.narrow),
             last_load_error: None,
             auto_refresh: settings.auto_refresh,
@@ -467,13 +465,8 @@ impl MainWindow {
                     window,
                     |this, _, event: &DimensionPickerEvent, window, cx| match event {
                         DimensionPickerEvent::Changed(values) => {
-                            let regions: Vec<String> = values
-                                .iter()
-                                .map(|value| value.as_str().to_string())
-                                .collect();
-                            this.scope =
-                                RegionScope::from_selected(&regions, &this.available_regions);
-                            this.region_scope_dirty = true;
+                            this.context_model.set_values(REGION, values.clone());
+                            this.region_dirty = true;
                             cx.notify();
                         }
                         DimensionPickerEvent::Dismissed => this.close_overlay(window, cx),
@@ -552,19 +545,19 @@ impl MainWindow {
     /// Announces a region selection once the picker that made it is no longer open,
     /// so the shell rebuilds the fleet without tearing down the picker mid-interaction.
     fn commit_region_scope(&mut self, cx: &mut Context<Self>) {
-        if std::mem::take(&mut self.region_scope_dirty) {
-            cx.emit(MainWindowEvent::RegionsChanged(
-                self.scope.selected().to_vec(),
-            ));
+        if std::mem::take(&mut self.region_dirty) {
+            cx.emit(MainWindowEvent::RegionsChanged(region_values(
+                &self.context_model,
+            )));
         }
     }
 
     fn select_all_regions(&mut self, cx: &mut Context<Self>) {
-        self.scope = RegionScope::all(&self.available_regions);
-        self.region_scope_dirty = false;
-        cx.emit(MainWindowEvent::RegionsChanged(
-            self.scope.selected().to_vec(),
-        ));
+        self.context_model.select_all(REGION);
+        self.region_dirty = false;
+        cx.emit(MainWindowEvent::RegionsChanged(region_values(
+            &self.context_model,
+        )));
         cx.notify();
     }
 
@@ -613,13 +606,7 @@ impl MainWindow {
                 &self.fleet.read(cx).view_model.instances(),
             )
         };
-        let selected: Vec<ValueId> = self
-            .scope
-            .selected()
-            .iter()
-            .map(|region| ValueId::from(region.as_str()))
-            .collect();
-        model.set_values(REGION, selected);
+        set_region_values(&mut model, &region_values(&self.context_model));
         model
     }
 
@@ -865,7 +852,7 @@ impl MainWindow {
     }
 
     fn sync_context_bar(&mut self, cx: &mut Context<Self>) {
-        let region_label = region_scope_label(self.scope.selected(), &self.available_regions);
+        let region_label = self.context_model.summary(REGION);
         let failed_regions: Vec<String> = self
             .failures
             .iter()
@@ -928,8 +915,8 @@ impl MainWindow {
         let state = center_state(&input)?;
         let context = CenterContext {
             profile: fleet.profile.clone(),
-            scope_label: region_scope_label(self.scope.selected(), &self.available_regions),
-            scope_is_all: self.scope.is_all(&self.available_regions),
+            scope_label: self.context_model.summary(REGION),
+            scope_is_all: self.context_model.is_all(REGION),
             query: fleet.query().to_string(),
             last_good: None,
             retry_in_seconds: fleet.retry_in_seconds,
@@ -1133,25 +1120,63 @@ impl Render for MainWindow {
     }
 }
 
-fn region_model(available: &[String], instances: &[Instance]) -> ContextModel {
-    let values = available
-        .iter()
-        .map(|region| DimValue {
-            id: ValueId::from(region.as_str()),
-            label: region.clone(),
-            parent: None,
-            default: false,
-        })
-        .collect();
-    let mut model = ContextModel::new(Vec::new(), None, "");
-    model.set_dimensions(vec![Dimension {
+pub(crate) fn region_dimension(available: &[String]) -> Dimension {
+    Dimension {
         id: DimensionId::from(REGION),
         label: "Region".to_string(),
         plural_label: None,
         multi: true,
         optional: false,
-        values,
-    }]);
+        values: available
+            .iter()
+            .map(|region| DimValue {
+                id: ValueId::from(region.as_str()),
+                label: region.clone(),
+                parent: None,
+                default: false,
+            })
+            .collect(),
+    }
+}
+
+pub(crate) fn ensure_region_dimension(model: &mut ContextModel, available: &[String]) {
+    let shares_app_regions = model.active_provider() == "demo";
+    let has_region = model.dimensions().iter().any(|dim| dim.id.as_str() == REGION);
+    if has_region && !shares_app_regions {
+        return;
+    }
+    let mut dimensions: Vec<Dimension> = model
+        .dimensions()
+        .iter()
+        .filter(|dim| dim.id.as_str() != REGION)
+        .cloned()
+        .collect();
+    dimensions.push(region_dimension(available));
+    model.set_dimensions(dimensions);
+}
+
+pub(crate) fn region_values(model: &ContextModel) -> Vec<String> {
+    model
+        .selection()
+        .values(REGION)
+        .iter()
+        .map(|value| value.as_str().to_string())
+        .collect()
+}
+
+pub(crate) fn set_region_values(model: &mut ContextModel, regions: &[String]) {
+    model.set_values(
+        REGION,
+        regions
+            .iter()
+            .map(|region| ValueId::from(region.as_str()))
+            .collect(),
+    );
+}
+
+fn region_model(available: &[String], instances: &[Instance]) -> ContextModel {
+    let mut model = ContextModel::new(Vec::new(), None, "");
+    model.set_dimensions(vec![region_dimension(available)]);
     model.set_list_result(
         &ListResult {
             resources: instances.to_vec(),
@@ -1359,8 +1384,7 @@ mod tests {
                 gpui_component::init(cx);
                 let main = cx.new(|cx| {
                     let regions = vec!["us-east-1".to_string()];
-                    let scope = RegionScope::all(&regions);
-                    MainWindow::new(fleet_for_window, regions, scope, window, cx)
+                    MainWindow::new(fleet_for_window, regions, window, cx)
                 });
                 *slot_for_window.borrow_mut() = Some(main.clone());
                 cx.new(|cx| gpui_component::Root::new(main, window, cx))
@@ -1576,9 +1600,10 @@ mod tests {
     fn empty_fleet_select_all_regions_emits_regions_changed(cx: &mut TestAppContext) {
         let (_fleet, main, cx) = rooted_main_window(cx, vec![], 1280.0, 760.0);
         main.update(cx, |main, cx| {
-            main.available_regions = vec!["us-east-1".to_string(), "eu-west-1".to_string()];
-            main.scope =
-                RegionScope::from_selected(&["us-east-1".to_string()], &main.available_regions);
+            let available = vec!["us-east-1".to_string(), "eu-west-1".to_string()];
+            main.available_regions = available.clone();
+            main.context_model.set_dimensions(vec![region_dimension(&available)]);
+            set_region_values(&mut main.context_model, &["us-east-1".to_string()]);
             cx.notify();
         });
         cx.run_until_parked();
@@ -1601,7 +1626,7 @@ mod tests {
                 "eu-west-1".to_string(),
             ])]
         );
-        assert!(main.read_with(cx, |main, _| main.scope.is_all(&main.available_regions)));
+        assert!(main.read_with(cx, |main, _| main.context_model.is_all(REGION)));
     }
 
     #[gpui::test]
