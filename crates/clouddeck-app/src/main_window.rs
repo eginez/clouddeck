@@ -4,12 +4,13 @@ use std::time::Duration;
 
 use clouddeck_core::{
     AddressKind, CenterContext, CenterInput, CenterState, CenterText, CloudDeckError,
-    CommandContext, CommandId, ComputeServicePartialFailure, EscapeAction, EscapeContext, Instance,
-    MAIN_WINDOW_MIN_WIDTH, OPEN_IN_CONSOLE_FLASH, ProfileInput, ProviderMenuRow, RegionScope,
-    Settings, Theme, center_state, center_text, clock_text, console_url_for, copied_flash,
-    escape_action, filter_command_query, known_tag_keys, layout_rules, native_id,
-    region_failure_reason, region_scope_label, settings_path, should_auto_refresh,
-    should_refresh_on_focus, stale_count, updated_text,
+    CommandContext, CommandId, ComputeServicePartialFailure, ContextModel, DimValue, Dimension,
+    DimensionId, EscapeAction, EscapeContext, Instance, ListResult, MAIN_WINDOW_MIN_WIDTH,
+    OPEN_IN_CONSOLE_FLASH, ProfileInput, ProviderMenuRow, REGION, RegionScope, Settings, Theme,
+    ValueId, center_state, center_text, clock_text, console_url_for, copied_flash, escape_action,
+    filter_command_query, known_tag_keys, layout_rules, native_id, region_failure_reason,
+    region_scope_label, settings_path, should_auto_refresh, should_refresh_on_focus, stale_count,
+    updated_text,
 };
 use gpui::{
     AnyElement, AnyView, App, Bounds, ClickEvent, ClipboardItem, Context, Corner, Div, Entity,
@@ -23,13 +24,13 @@ use crate::app_menus;
 use crate::center_state_view::{CenterEvent, CenterStateView};
 use crate::command_palette::{CommandPalette, PaletteEvent};
 use crate::context_bar::{ContextBar, ContextBarEvent};
+use crate::dimension_picker_view::{DimensionPicker, DimensionPickerEvent};
 use crate::failure_popover::{FailurePopover, FailurePopoverEvent, RegionFailure};
 use crate::fleet_state::FleetState;
 use crate::inspector_pane::InspectorPane;
 use crate::instance_table::{InstanceTable, InstanceTableEvent, table_key_bindings};
 use crate::profile_picker_view::{ProfilePicker, ProfilePickerEvent};
 use crate::provider_picker_view::{ProviderPicker, ProviderPickerEvent};
-use crate::region_picker_view::{RegionPicker, RegionPickerEvent};
 use crate::row_context_menu::{RowContextMenu, RowMenuEvent};
 use crate::search_field::{SearchField, search_key_bindings};
 use crate::sidebar::Sidebar;
@@ -89,6 +90,7 @@ pub struct MainWindow {
     pub connection_label: String,
     pub sign_in: bool,
     pub provider_menu: Vec<ProviderMenuRow>,
+    pub context_model: ContextModel,
     pub overlay: Option<Overlay>,
     toolbar: Entity<Toolbar>,
     sidebar: Entity<Sidebar>,
@@ -294,6 +296,7 @@ impl MainWindow {
             connection_label: "Profile".to_string(),
             sign_in: false,
             provider_menu: Vec::new(),
+            context_model: ContextModel::new(Vec::new(), None, ""),
             overlay: None,
             toolbar,
             sidebar,
@@ -445,21 +448,23 @@ impl MainWindow {
                 (picker.into(), subscription)
             }
             Overlay::Region => {
-                let scope = self.scope.clone();
-                let available = self.available_regions.clone();
-                let counts = self.region_counts(cx);
-                let picker = cx.new(|cx| RegionPicker::new(scope, available, counts, window, cx));
+                let model = self.region_picker_model(cx);
+                let picker = cx.new(|cx| DimensionPicker::new(model, REGION, window, cx));
                 let subscription = cx.subscribe_in(
                     &picker,
                     window,
-                    |this, _, event: &RegionPickerEvent, window, cx| match event {
-                        RegionPickerEvent::Changed(regions) => {
+                    |this, _, event: &DimensionPickerEvent, window, cx| match event {
+                        DimensionPickerEvent::Changed(values) => {
+                            let regions: Vec<String> = values
+                                .iter()
+                                .map(|value| value.as_str().to_string())
+                                .collect();
                             this.scope =
-                                RegionScope::from_selected(regions, &this.available_regions);
+                                RegionScope::from_selected(&regions, &this.available_regions);
                             this.region_scope_dirty = true;
                             cx.notify();
                         }
-                        RegionPickerEvent::Dismissed => this.close_overlay(window, cx),
+                        DimensionPickerEvent::Dismissed => this.close_overlay(window, cx),
                     },
                 );
                 (picker.into(), subscription)
@@ -579,12 +584,31 @@ impl MainWindow {
         }
     }
 
-    fn region_counts(&self, cx: &App) -> Vec<(String, usize)> {
-        let instances = self.fleet.read(cx).view_model.instances();
-        self.available_regions
+    fn region_picker_model(&self, cx: &App) -> ContextModel {
+        let has_regions = self.context_model.dimensions().iter().any(|dim| {
+            dim.id.as_str() == REGION
+                && dim
+                    .values
+                    .iter()
+                    .map(|v| v.id.as_str())
+                    .eq(self.available_regions.iter().map(String::as_str))
+        });
+        let mut model = if has_regions {
+            self.context_model.clone()
+        } else {
+            region_model(
+                &self.available_regions,
+                self.fleet.read(cx).view_model.instances(),
+            )
+        };
+        let selected: Vec<ValueId> = self
+            .scope
+            .selected()
             .iter()
-            .map(|region| (region.clone(), stale_count(instances, region)))
-            .collect()
+            .map(|region| ValueId::from(region.as_str()))
+            .collect();
+        model.set_values(REGION, selected);
+        model
     }
 
     fn region_failures(&self, cx: &App) -> Vec<RegionFailure> {
@@ -1095,6 +1119,41 @@ impl Render for MainWindow {
             )
             .children(overlay.map(|(_, layer)| layer))
     }
+}
+
+fn region_model(available: &[String], instances: &[Instance]) -> ContextModel {
+    let values = available
+        .iter()
+        .map(|region| DimValue {
+            id: ValueId::from(region.as_str()),
+            label: region.clone(),
+            parent: None,
+            default: false,
+        })
+        .collect();
+    let mut model = ContextModel::new(Vec::new(), None, "");
+    model.set_dimensions(vec![Dimension {
+        id: DimensionId::from(REGION),
+        label: "Region".to_string(),
+        plural_label: None,
+        multi: true,
+        optional: false,
+        values,
+    }]);
+    model.set_list_result(
+        &ListResult {
+            resources: instances.to_vec(),
+            failures: Vec::new(),
+        },
+        |instance| {
+            instance
+                .region
+                .iter()
+                .map(|region| ValueId::from(region.as_str()))
+                .collect()
+        },
+    );
+    model
 }
 
 fn overlay_panel(selector: &'static str, view: AnyView) -> Div {
@@ -1829,9 +1888,11 @@ mod tests {
 
         cx.dispatch_action(app_menus::SwitchRegion);
         cx.run_until_parked();
-        let picker = overlay_view::<RegionPicker>(&main, cx);
+        let picker = overlay_view::<DimensionPicker>(&main, cx);
         picker.update(cx, |_, cx| {
-            cx.emit(RegionPickerEvent::Changed(vec!["us-east-1".to_string()]))
+            cx.emit(DimensionPickerEvent::Changed(vec![ValueId::from(
+                "us-east-1",
+            )]))
         });
         cx.run_until_parked();
         assert!(
@@ -1839,7 +1900,7 @@ mod tests {
             "the fleet should not reload while the picker is still open"
         );
 
-        picker.update(cx, |_, cx| cx.emit(RegionPickerEvent::Dismissed));
+        picker.update(cx, |_, cx| cx.emit(DimensionPickerEvent::Dismissed));
         cx.run_until_parked();
 
         assert_eq!(

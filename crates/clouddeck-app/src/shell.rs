@@ -524,6 +524,7 @@ impl AppShell {
             main_window.connection_label = connection_label;
             main_window.sign_in = sign_in;
             main_window.provider_menu = provider_menu;
+            main_window.context_model = model.clone();
             cx.notify();
         });
     }
@@ -828,6 +829,7 @@ impl AppShell {
                             .map(|region| ValueId::from(region.as_str()))
                             .collect()
                     });
+                    Self::sync_provider_view(&this.main_window, &this.context_model, cx);
                 }
             }
             this.schedule_ui_state_save(cx)
