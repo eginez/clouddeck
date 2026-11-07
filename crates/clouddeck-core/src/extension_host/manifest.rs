@@ -16,6 +16,10 @@ pub struct Manifest {
     pub api_version: u32,
     #[serde(default)]
     pub authors: Vec<String>,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub platforms: Vec<String>,
     pub repository: Option<String>,
     /// File inside the extension directory; defaults to `lib<id>` with the platform's library suffix.
     pub library: Option<String>,
@@ -214,5 +218,20 @@ kind = "secrets"
     fn rejects_ids_that_are_not_plain_names() {
         let text = MANIFEST.replace("id = \"toy\"", "id = \"../toy\"");
         assert!(Manifest::parse(&text).is_err());
+    }
+
+    #[test]
+    fn description_and_platforms_default_when_absent() {
+        let manifest = Manifest::parse(MANIFEST).unwrap();
+        assert_eq!(manifest.description, "");
+        assert!(manifest.platforms.is_empty());
+
+        let text = MANIFEST.replace(
+            "authors = [\"Esteban\"]",
+            "authors = [\"Esteban\"]\ndescription = \"Lists queues\"\nplatforms = [\"macos\", \"linux\"]",
+        );
+        let manifest = Manifest::parse(&text).unwrap();
+        assert_eq!(manifest.description, "Lists queues");
+        assert_eq!(manifest.platforms, ["macos", "linux"]);
     }
 }
