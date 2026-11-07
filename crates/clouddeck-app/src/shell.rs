@@ -564,6 +564,7 @@ impl AppShell {
         let saved = (!demo)
             .then(|| WorkspaceContext::load(&clouddeck_core::context_path()))
             .flatten();
+        let ui_state_file_present = ui_state_path.as_ref().is_some_and(|path| path.exists());
         let (mut ui_state, ui_state_path, ui_state_message) = ui_state_path.map_or_else(
             || (UiState::default(), None, None),
             |path| {
@@ -571,6 +572,7 @@ impl AppShell {
                 restore_ui_state(path, loaded)
             },
         );
+        let ui_state_existed = ui_state_file_present && ui_state_path.is_some();
         let message = message.or(ui_state_message);
         let available = Self::available_regions(demo, demo_scenario);
         let context = saved
@@ -595,9 +597,11 @@ impl AppShell {
         };
         let saved_regions = match ui_state.dimension_selections.get(REGION) {
             Some(stored) => restored_regions(stored, &available),
-            None => legacy_regions.map_or(default_regions, |legacy| {
-                restored_regions(&legacy, &available)
-            }),
+            None => match legacy_regions {
+                Some(legacy) => restored_regions(&legacy, &available),
+                None if ui_state_existed => available.clone(),
+                None => default_regions,
+            },
         };
         let request_timeout = SCOPE_REQUEST_TIMEOUT;
         let providers = app_providers::providers(cx);
@@ -767,8 +771,10 @@ impl AppShell {
     fn ui_state_snapshot(&self, cx: &App) -> UiState {
         let fleet = self.fleet.read(cx);
         let dimension_selections = match &self.remembered_regions {
-            Some(regions) => BTreeMap::from([(REGION.to_string(), regions.clone())]),
-            None => BTreeMap::new(),
+            Some(regions) if !regions.is_empty() => {
+                BTreeMap::from([(REGION.to_string(), regions.clone())])
+            }
+            _ => BTreeMap::new(),
         };
         UiState {
             dimension_selections,
@@ -1545,13 +1551,13 @@ mod provider_switch_tests {
     }
 
     #[gpui::test]
-    fn all_regions_are_remembered_as_an_empty_region_list(cx: &mut TestAppContext) {
+    fn all_regions_are_not_saved_in_dimension_selections(cx: &mut TestAppContext) {
         let (aws, _) = recording_aws(aws_regions());
         install_providers(cx, vec![aws]);
         let (shell, cx) = add_rooted_shell(cx, |window, cx| {
             AppShell::build_with_profiles(
                 window,
-                true,
+                false,
                 DemoFleet::Happy,
                 Ok(Vec::new()),
                 None,
@@ -1562,10 +1568,7 @@ mod provider_switch_tests {
         shell.update(cx, |shell, cx| {
             shell.context_model.select_all(REGION);
             shell.remembered_regions = Some(AppShell::remembered_regions_for(&shell.context_model));
-            assert_eq!(
-                shell.ui_state_snapshot(cx).dimension_selections.get(REGION),
-                Some(&Vec::new())
-            );
+            assert!(!shell.ui_state_snapshot(cx).dimension_selections.contains_key(REGION));
         });
     }
 
@@ -1599,6 +1602,16 @@ mod provider_switch_tests {
                 ["us-west-2", "eu-west-1"]
             );
             assert!(shell.ui_state_saved.selected_regions.is_none());
+        });
+        shell.read_with(cx, |shell, cx| {
+            let path = shell.ui_state_path.clone().expect("ui state path");
+            shell
+                .ui_state_snapshot(cx)
+                .save(&path)
+                .expect("save ui state");
+            let saved = std::fs::read_to_string(&path).expect("read saved ui state");
+            assert!(!saved.contains("selected_regions"));
+            let _ = std::fs::remove_file(&path);
         });
     }
 
@@ -1639,8 +1652,7 @@ mod provider_switch_tests {
             "clouddeck-remembered-all-{}.json",
             std::process::id()
         ));
-        std::fs::write(&ui_file, r#"{"dimension_selections":{"region":[]}}"#)
-            .expect("write ui state");
+        std::fs::write(&ui_file, r#"{"sidebar_open":true}"#).expect("write ui state");
         let (aws, _) = recording_aws(aws_regions());
         install_providers(cx, vec![aws]);
         let (shell, cx) = add_rooted_shell(cx, move |window, cx| {
@@ -1658,6 +1670,33 @@ mod provider_switch_tests {
 
         shell.read_with(cx, |shell, _| {
             assert!(shell.context_model.is_all(REGION));
+        });
+    }
+
+    #[gpui::test]
+    fn unreadable_ui_state_restores_the_default_regions_not_all(cx: &mut TestAppContext) {
+        let ui_file = std::env::temp_dir().join(format!(
+            "clouddeck-unreadable-ui-{}.json",
+            std::process::id()
+        ));
+        std::fs::write(&ui_file, "{ not json").expect("write ui state");
+        let (aws, _) = recording_aws(aws_regions());
+        install_providers(cx, vec![aws]);
+        let (shell, cx) = add_rooted_shell(cx, move |window, cx| {
+            AppShell::build_with_profiles(
+                window,
+                false,
+                DemoFleet::Happy,
+                Ok(Vec::new()),
+                Some(ui_file.clone()),
+                Settings::default(),
+                cx,
+            )
+        });
+        cx.run_until_parked();
+
+        shell.read_with(cx, |shell, _| {
+            assert!(!shell.context_model.is_all(REGION));
         });
     }
 

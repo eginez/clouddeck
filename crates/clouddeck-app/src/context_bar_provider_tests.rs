@@ -41,10 +41,10 @@ fn wait_until(cx: &mut TestAppContext, mut condition: impl FnMut(&mut TestAppCon
     panic!("condition was not satisfied within the timeout");
 }
 
-fn open_bar<'a>(
-    cx: &'a mut TestAppContext,
+fn open_bar(
+    cx: &mut TestAppContext,
     sign_in: bool,
-) -> (Entity<ContextBar>, Events, &'a mut VisualTestContext) {
+) -> (Entity<ContextBar>, Events, &mut VisualTestContext) {
     let state = loaded_state(cx);
     let bar = cx.new(|cx| ContextBar::new(state, cx));
     bar.update(cx, |bar, _| bar.sign_in = sign_in);
