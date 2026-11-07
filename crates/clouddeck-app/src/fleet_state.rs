@@ -3,13 +3,15 @@
 #[cfg(test)]
 use std::cell::OnceCell;
 use std::cell::{Cell, RefCell};
+use std::collections::{BTreeMap, BTreeSet};
 #[cfg(test)]
 use std::time::Instant;
 use std::time::{Duration, SystemTime};
 
 use clouddeck_core::{
-    CloudDeckError, Column, Instance, RECENT_INSTANCE_LIMIT, SortState, StateFacetCounts,
-    join_failure, push_recent, sort_instances, throttle_retry_delay,
+    CloudDeckError, Column, DisplayRow, GroupBy, Instance, RECENT_INSTANCE_LIMIT, SortState,
+    StateFacetCounts, build_display_rows, join_failure, navigable_indices, push_recent,
+    sort_instances, throttle_retry_delay,
 };
 use gpui::{App, Context};
 
@@ -43,6 +45,10 @@ pub struct FleetState {
     pub recent_searches: Vec<String>,
     pub pinned_searches: Vec<String>,
     pub recent_instances: Vec<String>,
+    /// Column the table groups its rows by.
+    pub group_by: GroupBy,
+    /// Keys of the groups the user has collapsed.
+    pub collapsed_groups: BTreeSet<String>,
     /// Seconds until a throttled load is retried, while one is scheduled.
     pub retry_in_seconds: Option<u32>,
     flash_generation: u64,
@@ -70,6 +76,8 @@ impl FleetState {
             recent_searches: Vec::new(),
             pinned_searches: Vec::new(),
             recent_instances: Vec::new(),
+            group_by: GroupBy::None,
+            collapsed_groups: BTreeSet::new(),
             retry_in_seconds: None,
             flash_generation: 0,
             throttle_attempt: 0,
@@ -150,6 +158,61 @@ impl FleetState {
         rows
     }
 
+    /// The table rows for the current grouping, with the instances they refer to by index.
+    pub fn display_rows(&self) -> (Vec<Instance>, Vec<DisplayRow>) {
+        let rows = self.visible_rows();
+        let provider_id = self.view_model.row_provider_id();
+        let failed = if self.view_model.error().is_some() {
+            vec![provider_id.clone()]
+        } else {
+            Vec::new()
+        };
+        let names: BTreeMap<String, String> = self
+            .view_model
+            .provider_facet()
+            .into_iter()
+            .map(|facet| (facet.id, facet.name))
+            .collect();
+        let paired: Vec<(String, Instance)> = rows
+            .iter()
+            .map(|instance| (provider_id.clone(), instance.clone()))
+            .collect();
+        let display = build_display_rows(
+            &paired,
+            self.group_by,
+            &self.collapsed_groups,
+            &failed,
+            &names,
+        );
+        (rows, display)
+    }
+
+    /// Groups the table by `by`, with every group expanded.
+    pub fn set_group_by(&mut self, by: GroupBy, cx: &mut Context<Self>) {
+        self.group_by = by;
+        self.collapsed_groups.clear();
+        cx.notify();
+    }
+
+    /// Collapses or expands the group `key`. Collapsing the group that holds the selection
+    /// clears the selection, because group headers cannot be selected.
+    pub fn toggle_group(&mut self, key: &str, cx: &mut Context<Self>) {
+        if !self.collapsed_groups.remove(key) {
+            self.collapsed_groups.insert(key.to_string());
+        }
+        if let Some(selected) = self.selected.clone() {
+            let (rows, display) = self.display_rows();
+            let still_shown = navigable_indices(&display)
+                .into_iter()
+                .any(|index| rows[index].id == selected);
+            if !still_shown {
+                self.select(None, cx);
+                return;
+            }
+        }
+        cx.notify();
+    }
+
     /// Sorts by `column`, flipping direction when it is already the sort column.
     pub fn toggle_sort(&mut self, column: Column, cx: &mut Context<Self>) {
         self.sort = self.sort.toggled(column);
@@ -170,15 +233,24 @@ impl FleetState {
 
     /// Moves the selection to the previous or next visible row.
     pub fn move_selection(&mut self, down: bool, cx: &mut Context<Self>) {
-        let keys: Vec<String> = self.visible_rows().into_iter().map(|i| i.id).collect();
+        let (rows, display) = self.display_rows();
+        let keys: Vec<String> = navigable_indices(&display)
+            .into_iter()
+            .map(|index| rows[index].id.clone())
+            .collect();
         let next = clouddeck_core::move_selection(&keys, self.selected.as_deref(), down);
         self.select(next, cx);
     }
 
-    /// The selected instance, if it is still among the visible rows.
+    /// The selected instance, if its row is currently shown rather than inside a collapsed group.
     pub fn selected_instance(&self) -> Option<Instance> {
         let key = self.selected.as_deref()?;
-        self.visible_rows().into_iter().find(|i| i.id == key)
+        let (rows, display) = self.display_rows();
+        navigable_indices(&display)
+            .into_iter()
+            .map(|index| &rows[index])
+            .find(|instance| instance.id == key)
+            .cloned()
     }
 
     /// Shows `text` in the status bar until `FLASH_DURATION` has passed.
@@ -264,9 +336,12 @@ impl FleetState {
     }
 
     fn reconcile_selection(&mut self) {
-        if let Some(key) = self.selected.as_deref() {
-            let visible = self.visible_rows().iter().any(|i| i.id == key);
-            if !visible {
+        if let Some(key) = self.selected.clone() {
+            let (rows, display) = self.display_rows();
+            let shown = navigable_indices(&display)
+                .into_iter()
+                .any(|index| rows[index].id == key);
+            if !shown {
                 self.selected = None;
             }
         }
@@ -524,6 +599,127 @@ mod tests {
         });
         facets(&state, cx);
         assert_eq!(computations(&state, cx), 3);
+    }
+
+    fn grouped_by_state(cx: &mut TestAppContext) -> Entity<FleetState> {
+        let state = loaded_state(cx);
+        state.update(cx, |state, cx| state.set_group_by(GroupBy::State, cx));
+        state
+    }
+
+    fn navigable_ids(state: &Entity<FleetState>, cx: &mut TestAppContext) -> Vec<String> {
+        state.read_with(cx, |state, _| {
+            let (rows, display) = state.display_rows();
+            navigable_indices(&display)
+                .into_iter()
+                .map(|index| rows[index].id.clone())
+                .collect()
+        })
+    }
+
+    fn selected_id(state: &Entity<FleetState>, cx: &mut TestAppContext) -> Option<String> {
+        state.read_with(cx, |state, _| state.selected.clone())
+    }
+
+    #[gpui::test]
+    fn ungrouped_display_rows_are_the_visible_rows_in_order(cx: &mut TestAppContext) {
+        let state = loaded_state(cx);
+
+        let (indices, ids) = state.read_with(cx, |state, _| {
+            let (rows, display) = state.display_rows();
+            (
+                navigable_indices(&display),
+                rows.iter().map(|i| i.id.clone()).collect::<Vec<_>>(),
+            )
+        });
+
+        assert_eq!(indices, (0..ids.len()).collect::<Vec<_>>());
+        assert_eq!(ids, visible_ids(&state, cx));
+    }
+
+    #[gpui::test]
+    fn arrow_keys_skip_group_headers(cx: &mut TestAppContext) {
+        let state = grouped_by_state(cx);
+        let expected = vec![
+            "us-east-1:i-1".to_string(),
+            "us-east-1:i-4".to_string(),
+            "us-east-1:i-2".to_string(),
+            "us-east-1:i-3".to_string(),
+        ];
+        assert_eq!(navigable_ids(&state, cx), expected);
+
+        for id in &expected {
+            state.update(cx, |state, cx| state.move_selection(true, cx));
+            assert_eq!(selected_id(&state, cx).as_deref(), Some(id.as_str()));
+        }
+        state.update(cx, |state, cx| state.move_selection(false, cx));
+        assert_eq!(selected_id(&state, cx).as_deref(), Some("us-east-1:i-2"));
+    }
+
+    #[gpui::test]
+    fn arrow_keys_skip_a_collapsed_group(cx: &mut TestAppContext) {
+        let state = grouped_by_state(cx);
+        state.update(cx, |state, cx| state.toggle_group("Running", cx));
+
+        state.update(cx, |state, cx| state.move_selection(true, cx));
+
+        assert_eq!(selected_id(&state, cx).as_deref(), Some("us-east-1:i-2"));
+        assert_eq!(
+            navigable_ids(&state, cx),
+            vec!["us-east-1:i-2".to_string(), "us-east-1:i-3".to_string()]
+        );
+    }
+
+    #[gpui::test]
+    fn collapsing_the_selected_group_clears_the_selection(cx: &mut TestAppContext) {
+        let state = grouped_by_state(cx);
+        state.update(cx, |state, cx| {
+            state.select(Some("us-east-1:i-1".to_string()), cx)
+        });
+
+        state.update(cx, |state, cx| state.toggle_group("Running", cx));
+
+        assert_eq!(selected_id(&state, cx), None);
+        state.read_with(cx, |state, _| {
+            assert!(state.collapsed_groups.contains("Running"));
+            assert_eq!(state.selected_instance().map(|i| i.id), None);
+        });
+    }
+
+    #[gpui::test]
+    fn collapsing_another_group_keeps_the_selection(cx: &mut TestAppContext) {
+        let state = grouped_by_state(cx);
+        state.update(cx, |state, cx| {
+            state.select(Some("us-east-1:i-2".to_string()), cx)
+        });
+
+        state.update(cx, |state, cx| state.toggle_group("Running", cx));
+
+        assert_eq!(selected_id(&state, cx).as_deref(), Some("us-east-1:i-2"));
+    }
+
+    #[gpui::test]
+    fn toggling_a_group_twice_expands_it_again(cx: &mut TestAppContext) {
+        let state = grouped_by_state(cx);
+        state.update(cx, |state, cx| state.toggle_group("Stopped", cx));
+        assert_eq!(navigable_ids(&state, cx).len(), 2);
+
+        state.update(cx, |state, cx| state.toggle_group("Stopped", cx));
+
+        assert_eq!(navigable_ids(&state, cx).len(), 4);
+    }
+
+    #[gpui::test]
+    fn changing_the_grouping_expands_every_group(cx: &mut TestAppContext) {
+        let state = grouped_by_state(cx);
+        state.update(cx, |state, cx| state.toggle_group("Running", cx));
+
+        state.update(cx, |state, cx| state.set_group_by(GroupBy::Type, cx));
+
+        state.read_with(cx, |state, _| {
+            assert_eq!(state.group_by, GroupBy::Type);
+            assert!(state.collapsed_groups.is_empty());
+        });
     }
 
     #[gpui::test]

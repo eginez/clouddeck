@@ -40,7 +40,11 @@ fn service_for(state: State) -> (Arc<dyn Provider>, Vec<String>) {
         | State::OverlayProfile
         | State::OverlayRegion
         | State::OverlayPalette
-        | State::OverlayRowMenu => (
+        | State::OverlayRowMenu
+        | State::MainStateGrouped
+        | State::MainStateGroupedDark
+        | State::MainStateGroupedCollapsed
+        | State::MainStateGroupedCollapsedDark => (
             fixture_fleet::scenario_provider(TestScenarioKind::SmallHappyPath),
             us_east,
         ),
@@ -321,6 +325,8 @@ pub(crate) fn build(
     }
 
     let (service, regions) = service_for(state);
+    let dark = state.is_dark_main();
+    cx.update(|app| app.set_global(ActivePalette(Palette::for_dark(dark))));
     let vm = InstanceListViewModel::new(service);
     let fleet = cx.new(|_| FleetState::new(vm, "default".to_string(), true));
     fleet.update(cx, |fleet, cx| fleet.refresh(cx));
@@ -338,13 +344,14 @@ pub(crate) fn build(
     // debug_bounds is never cleared between frames, so a change after the first frame
     // (a focus change, or a selection that moves the table's columns) would leave stale
     // elements behind. These states are therefore applied while the window is built.
-    let before_first_frame = matches!(
-        state,
-        State::MainRowSelected
-            | State::SearchFocusedEmpty
-            | State::SearchTypingSt
-            | State::SearchError
-    );
+    let before_first_frame = state.is_grouped()
+        || matches!(
+            state,
+            State::MainRowSelected
+                | State::SearchFocusedEmpty
+                | State::SearchTypingSt
+                | State::SearchError
+        );
     let window = cx.update(|cx| {
         cx.open_window(window_options(bounds), move |window, cx| {
             gpui_component::init(cx);
@@ -435,13 +442,17 @@ mod tests {
     /// One key element per state that `apply_render_state` must produce.
     #[gpui::test]
     fn every_state_shows_its_key_element(cx: &mut TestAppContext) {
-        let key_elements: [(State, &str); 31] = [
+        let key_elements: [(State, &str); 35] = [
             (State::MainIdle, "main.root"),
             (State::MainRowSelected, "main.inspector"),
             (State::MainEmpty, "main.center-state"),
             (State::MainFailure, "main.center-state"),
             (State::MainPartial, "bar.failure"),
             (State::MainLarge, "main.root"),
+            (State::MainStateGrouped, "table.group.Running"),
+            (State::MainStateGroupedDark, "table.group.Running"),
+            (State::MainStateGroupedCollapsed, "table.group.Running"),
+            (State::MainStateGroupedCollapsedDark, "table.group.Running"),
             (State::SearchFocusedEmpty, "search.recent"),
             (State::SearchTypingSt, "search.suggestions"),
             (State::SearchError, "search.error"),
