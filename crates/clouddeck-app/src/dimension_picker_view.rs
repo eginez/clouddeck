@@ -194,6 +194,7 @@ fn dimension_row(
     });
 
     let label = div()
+        .debug_selector(move || format!("dimension-picker.label.{ix}"))
         .flex_1()
         .min_w_0()
         .text_size(px(LABEL_FONT_SIZE))

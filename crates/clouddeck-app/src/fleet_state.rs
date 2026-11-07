@@ -9,9 +9,10 @@ use std::time::Instant;
 use std::time::{Duration, SystemTime};
 
 use clouddeck_core::{
-    CloudDeckError, Column, DisplayRow, GroupBy, Instance, ListView, ProviderRow,
-    RECENT_INSTANCE_LIMIT, SortState, StateFacetCounts, build_display_rows, compare_instances,
-    join_failure, navigable_indices, push_recent, throttle_retry_delay,
+    CloudDeckError, Column, DisplayRow, GroupBy, Instance, ListView, PROVIDER_COLUMN_WIDTH,
+    ProviderRow, RECENT_INSTANCE_LIMIT, SortState, StateFacetCounts, build_display_rows,
+    compare_instances, join_failure, navigable_indices, provider_cell_text,
+    provider_column_default_visible, push_recent, throttle_retry_delay, visible_columns_fit_hidden,
 };
 use gpui::{App, Context};
 
@@ -47,7 +48,8 @@ pub struct FleetState {
     pub group_by: GroupBy,
     /// Keys of the groups the user has collapsed.
     pub collapsed_groups: BTreeSet<String>,
-    /// Columns the column chooser has hidden. Name is never hidden.
+    /// Columns the column chooser has flipped from their default. Name is never hidden, and the
+    /// Provider column is shown by default only in the All view.
     pub hidden_columns: Vec<Column>,
     /// Whether the column chooser menu is open.
     pub column_menu_open: bool,
@@ -169,12 +171,59 @@ impl FleetState {
     fn visible_provider_rows(&self) -> Vec<ProviderRow> {
         let mut rows = self.view_model.rows();
         let sort = self.sort;
-        rows.sort_by(|(_, left), (_, right)| compare_instances(left, right, sort));
+        if sort.column == Column::Provider {
+            let names = self.view_model.provider_names();
+            let label = |id: &str| {
+                let name = names.get(id).map_or(id, String::as_str);
+                provider_cell_text(id, name).text
+            };
+            rows.sort_by(|(left_id, left), (right_id, right)| {
+                let ordering = label(left_id).cmp(&label(right_id));
+                let ordering = if sort.ascending {
+                    ordering
+                } else {
+                    ordering.reverse()
+                };
+                ordering.then_with(|| compare_instances(left, right, SortState::default()))
+            });
+        } else {
+            rows.sort_by(|(_, left), (_, right)| compare_instances(left, right, sort));
+        }
         rows
     }
 
-    /// The table rows for the current grouping, with the instances they refer to by index.
-    pub fn display_rows(&self) -> (Vec<Instance>, Vec<DisplayRow>) {
+    /// Whether the Provider column is shown: its default in the current view, flipped by the chooser.
+    pub fn provider_column_shown(&self) -> bool {
+        let default = self.view_model.is_all()
+            && provider_column_default_visible(self.view_model.provider_names().len());
+        default != self.hidden_columns.contains(&Column::Provider)
+    }
+
+    pub fn column_shown(&self, column: Column) -> bool {
+        match column {
+            Column::Provider => self.provider_column_shown(),
+            _ => !self.hidden_columns.contains(&column),
+        }
+    }
+
+    /// The columns the table draws, in order, for the given window and table pane widths.
+    pub fn table_columns(&self, window_width: f32, pane_width: f32) -> Vec<Column> {
+        let provider = self.provider_column_shown();
+        let pane_width = if provider {
+            pane_width - PROVIDER_COLUMN_WIDTH
+        } else {
+            pane_width
+        };
+        let mut columns = visible_columns_fit_hidden(window_width, pane_width, &self.hidden_columns);
+        if provider {
+            columns.insert(0, Column::Provider);
+        }
+        columns
+    }
+
+    /// The table rows for the current grouping, each with its provider id, and the display rows
+    /// that index into them.
+    pub fn display_rows(&self) -> (Vec<ProviderRow>, Vec<DisplayRow>) {
         let paired = self.visible_provider_rows();
         let failed: Vec<String> = self
             .view_model
@@ -190,8 +239,7 @@ impl FleetState {
             &failed,
             &names,
         );
-        let rows = paired.into_iter().map(|(_, instance)| instance).collect();
-        (rows, display)
+        (paired, display)
     }
 
     /// Groups the table by `by`, with every group expanded.
@@ -211,7 +259,7 @@ impl FleetState {
             let (rows, display) = self.display_rows();
             let still_shown = navigable_indices(&display)
                 .into_iter()
-                .any(|index| rows[index].id == selected);
+                .any(|index| rows[index].1.id == selected);
             if !still_shown {
                 self.select(None, cx);
                 return;
@@ -280,7 +328,7 @@ impl FleetState {
         let (rows, display) = self.display_rows();
         let keys: Vec<String> = navigable_indices(&display)
             .into_iter()
-            .map(|index| rows[index].id.clone())
+            .map(|index| rows[index].1.id.clone())
             .collect();
         let next = clouddeck_core::move_selection(&keys, self.selected.as_deref(), down);
         self.select(next, cx);
@@ -292,7 +340,7 @@ impl FleetState {
         let (rows, display) = self.display_rows();
         navigable_indices(&display)
             .into_iter()
-            .map(|index| &rows[index])
+            .map(|index| &rows[index].1)
             .find(|instance| instance.id == key)
             .cloned()
     }
@@ -387,7 +435,7 @@ impl FleetState {
             let (rows, display) = self.display_rows();
             let shown = navigable_indices(&display)
                 .into_iter()
-                .any(|index| rows[index].id == key);
+                .any(|index| rows[index].1.id == key);
             if !shown {
                 self.selected = None;
             }
@@ -668,7 +716,7 @@ mod tests {
             let (rows, display) = state.display_rows();
             navigable_indices(&display)
                 .into_iter()
-                .map(|index| rows[index].id.clone())
+                .map(|index| rows[index].1.id.clone())
                 .collect()
         })
     }
@@ -685,7 +733,7 @@ mod tests {
             let (rows, display) = state.display_rows();
             (
                 navigable_indices(&display),
-                rows.iter().map(|i| i.id.clone()).collect::<Vec<_>>(),
+                rows.iter().map(|(_, i)| i.id.clone()).collect::<Vec<_>>(),
             )
         });
 

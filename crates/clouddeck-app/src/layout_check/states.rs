@@ -8,7 +8,9 @@ use std::time::Duration;
 
 use clouddeck_core::about::{AboutInfo, PluginOrigin, PluginRow, PluginStatus};
 use clouddeck_core::{
-    ProfileInput, Provider, RegionScope, Settings, TestScenarioKind, fixture_fleet,
+    ALL_PROVIDERS, Connection, ContextModel, Dimension, ErrorKind, Instance, ListView,
+    ProfileInput, Provider, ProviderEntry, ProviderError, RegionScope, Settings, TestScenarioKind,
+    all_providers_view, fixture_fleet,
 };
 use gpui::{AppContext, Bounds, Entity, TestAppContext, VisualTestContext, point, px, size};
 
@@ -68,6 +70,19 @@ fn service_for(state: State) -> (Arc<dyn Provider>, Vec<String>) {
             fixture_fleet::static_provider(fixture_fleet::large_fleet()),
             us_east,
         ),
+        State::MainAllProviders
+        | State::MainAllProvidersDark
+        | State::MainAllProvidersNoColumn
+        | State::MainAllProvidersNoColumnDark
+        | State::MainAllProvidersFailedGroup
+        | State::MainAllProvidersNarrow
+        | State::MainAllProvidersCompact
+        | State::MainGcpActive
+        | State::MainGcpSignIn
+        | State::OverlayDimensionTree
+        | State::OverlayDimensionSingle => {
+            unreachable!("provider-list states are built by multi_setup")
+        }
         State::Welcome
         | State::AboutLight
         | State::AboutDark
@@ -94,6 +109,129 @@ fn service_for(state: State) -> (Arc<dyn Provider>, Vec<String>) {
             unreachable!("only main window states have a fleet service")
         }
     }
+}
+
+const AWS_REGIONS: [&str; 3] = ["us-east-1", "eu-west-1", "ap-southeast-2"];
+const LIST_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// The providers a provider-list state shows, the provider the context selects, and the window's regions.
+struct MultiSetup {
+    providers: Vec<Arc<dyn Provider>>,
+    persisted: &'static str,
+    regions: Vec<String>,
+    dimension: Option<Dimension>,
+    signed_out: bool,
+}
+
+fn gcp_instances() -> Vec<Instance> {
+    fixture_fleet::instances(&[
+        ("gcp-instance-001", "gcp-api", "running", "e2-medium"),
+        ("gcp-instance-002", "gcp-batch", "stopped", "n2-standard-4"),
+        ("gcp-instance-003", "gcp-web", "running", "e2-small"),
+    ])
+}
+
+fn gcp_regions() -> Vec<String> {
+    fixture_fleet::gcp_region_tree()
+        .values
+        .iter()
+        .map(|value| value.id.as_str().to_string())
+        .collect()
+}
+
+fn multi_setup(state: State) -> Option<MultiSetup> {
+    let aws = || fixture_fleet::scenario_provider(TestScenarioKind::SmallHappyPath);
+    let all = |providers: Vec<Arc<dyn Provider>>, regions: Vec<String>| MultiSetup {
+        providers,
+        persisted: ALL_PROVIDERS,
+        regions,
+        dimension: None,
+        signed_out: false,
+    };
+    let us_east = vec!["us-east-1".to_string()];
+    let aws_regions = || AWS_REGIONS.map(String::from).to_vec();
+    let gcp_single = |signed_out: bool, instances: Vec<Instance>| MultiSetup {
+        providers: vec![aws(), fixture_fleet::gcp_provider(instances, None)],
+        persisted: "gcp",
+        regions: gcp_regions(),
+        dimension: Some(fixture_fleet::gcp_region_tree()),
+        signed_out,
+    };
+    match state {
+        State::MainAllProviders
+        | State::MainAllProvidersDark
+        | State::MainAllProvidersNoColumn
+        | State::MainAllProvidersNoColumnDark
+        | State::MainAllProvidersNarrow
+        | State::MainAllProvidersCompact => Some(all(
+            vec![aws(), fixture_fleet::gcp_provider(gcp_instances(), None)],
+            us_east,
+        )),
+        State::MainAllProvidersFailedGroup => Some(all(
+            vec![
+                aws(),
+                fixture_fleet::gcp_provider(
+                    Vec::new(),
+                    Some("Simulated Google Cloud outage".to_string()),
+                ),
+            ],
+            us_east,
+        )),
+        State::MainGcpActive => Some(gcp_single(false, gcp_instances())),
+        State::MainGcpSignIn => Some(gcp_single(true, Vec::new())),
+        State::OverlayDimensionTree => Some(gcp_single(false, gcp_instances())),
+        State::OverlayDimensionSingle => Some(MultiSetup {
+            providers: vec![aws(), fixture_fleet::gcp_provider(gcp_instances(), None)],
+            persisted: "aws",
+            regions: aws_regions(),
+            dimension: Some(fixture_fleet::single_region_dimension(&AWS_REGIONS)),
+            signed_out: false,
+        }),
+        _ => None,
+    }
+}
+
+fn list_view(setup: &MultiSetup) -> ListView {
+    if setup.persisted == ALL_PROVIDERS {
+        return all_providers_view(&setup.providers, None, LIST_TIMEOUT);
+    }
+    let provider = setup
+        .providers
+        .iter()
+        .find(|provider| provider.info().id == setup.persisted)
+        .expect("the persisted provider is in the list");
+    InstanceListViewModel::new(provider.clone()).into()
+}
+
+fn context_for(setup: &MultiSetup) -> ContextModel {
+    let providers: Vec<ProviderEntry> = setup
+        .providers
+        .iter()
+        .map(|provider| ProviderEntry {
+            info: provider.info(),
+            signed_in: !(setup.signed_out && provider.info().id == setup.persisted),
+            bundled: true,
+        })
+        .collect();
+    let mut model = ContextModel::new(providers, Some(setup.persisted), "aws");
+    if setup.signed_out {
+        model.set_signed_in(setup.persisted, false);
+        model.set_connections(Err(ProviderError {
+            kind: ErrorKind::Auth,
+            message: "Sign in to Google Cloud.".to_string(),
+            advice: None,
+            retry_after: None,
+        }));
+    } else {
+        model.set_connections(Ok(vec![Connection {
+            id: "default".into(),
+            display_name: "default".to_string(),
+        }]));
+    }
+    if let Some(dimension) = &setup.dimension {
+        model.set_dimensions(vec![dimension.clone()]);
+    }
+    model
 }
 
 /// The three profiles the welcome state lists.
@@ -371,11 +509,20 @@ pub(crate) fn build(
         return (None, None, open_settings(state, width, height, cx));
     }
 
-    let (service, regions) = service_for(state);
+    let (view, regions, context) = match multi_setup(state) {
+        Some(setup) => (
+            list_view(&setup),
+            setup.regions.clone(),
+            Some(context_for(&setup)),
+        ),
+        None => {
+            let (service, regions) = service_for(state);
+            (InstanceListViewModel::new(service).into(), regions, None)
+        }
+    };
     let dark = state.is_dark_main();
     cx.update(|app| app.set_global(ActivePalette(Palette::for_dark(dark))));
-    let vm = InstanceListViewModel::new(service);
-    let fleet = cx.new(|_| FleetState::new(vm, "default".to_string(), true));
+    let fleet = cx.new(|_| FleetState::new(view, "default".to_string(), true));
     fleet.update(cx, |fleet, cx| fleet.refresh(cx));
     wait_until(cx, |cx| {
         fleet.read_with(cx, |fleet, _| {
@@ -398,6 +545,9 @@ pub(crate) fn build(
                 | State::SearchFocusedEmpty
                 | State::SearchTypingSt
                 | State::SearchError
+                | State::MainAllProvidersNoColumn
+                | State::MainAllProvidersNoColumnDark
+                | State::MainAllProvidersFailedGroup
         );
     let window = cx.update(|cx| {
         cx.open_window(window_options(bounds), move |window, cx| {
@@ -445,6 +595,9 @@ pub(crate) fn build(
         main.failures = failures;
         cx.notify();
     });
+    if let Some(context) = &context {
+        cx.update(|_, app| crate::shell::AppShell::sync_provider_view(&main, context, app));
+    }
     cx.run_until_parked();
 
     if !before_first_frame {
@@ -489,7 +642,7 @@ mod tests {
     /// One key element per state that `apply_render_state` must produce.
     #[gpui::test]
     fn every_state_shows_its_key_element(cx: &mut TestAppContext) {
-        let key_elements: [(State, &str); 42] = [
+        let key_elements: [(State, &str); 53] = [
             (State::MainIdle, "main.root"),
             (State::MainRowSelected, "main.inspector"),
             (State::MainEmpty, "main.center-state"),
@@ -510,6 +663,17 @@ mod tests {
             (State::OverlayRowMenu, "main.overlay.rowmenu"),
             (State::OverlayColumnMenu, "table.columns.menu"),
             (State::OverlayColumnMenuDark, "table.columns.menu"),
+            (State::MainAllProviders, "table.header.0"),
+            (State::MainAllProvidersDark, "table.header.0"),
+            (State::MainAllProvidersNoColumn, "table.header"),
+            (State::MainAllProvidersNoColumnDark, "table.header"),
+            (State::MainAllProvidersFailedGroup, "table.group.gcp"),
+            (State::MainAllProvidersNarrow, "table.header.0"),
+            (State::MainAllProvidersCompact, "table.header.0"),
+            (State::MainGcpActive, "table.header.0"),
+            (State::MainGcpSignIn, "bar.sign-in"),
+            (State::OverlayDimensionTree, "main.overlay.region"),
+            (State::OverlayDimensionSingle, "dimension-picker.row.0"),
             (State::AboutLight, "about.title"),
             (State::AboutDark, "about.title"),
             (State::AboutRefusedPlugin, "about.title"),

@@ -82,6 +82,9 @@ impl Render for Sidebar {
         let type_total = type_counts.len();
         let state_value = selection.state.as_deref();
         let type_value = selection.instance_type.as_deref();
+        let provider_value = selection.provider.as_deref();
+        let providers = state.view_model.provider_facet();
+        let all_providers = state.view_model.is_all();
         let types = visible_types(&type_counts, self.show_all_types, type_value);
         let pins = state.pinned_searches.clone();
         let recent: Vec<Instance> = resolve_recent_instances(&state.recent_instances, &instances)
@@ -161,6 +164,25 @@ impl Render for Sidebar {
         }
         if type_total > TYPE_FACETS_SHOWN {
             panel = panel.child(types_toggle(type_total, self.show_all_types, &palette, cx));
+        }
+
+        if all_providers {
+            panel = panel.child(section_header("PROVIDER", &palette));
+            for facet in providers {
+                let active = is_value(provider_value, &facet.id);
+                panel = panel.child(facet_row(
+                    FacetRow {
+                        key: format!("sidebar.provider.{}", facet.id),
+                        label: facet.name,
+                        dot: None,
+                        mono: false,
+                        count: facet.count,
+                        active,
+                    },
+                    &palette,
+                    facet_click(QueryField::ProviderFacet, facet.id, active, cx),
+                ));
+            }
         }
 
         if !pins.is_empty() {

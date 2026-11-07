@@ -3,15 +3,16 @@
 use std::sync::{Arc, Condvar, Mutex};
 
 use clouddeck_provider_api::{
-    Call, Connection, ConnectionId, Dimension, FieldDef, InspectorSectionDef, KindId, KindInfo,
-    ListResult, Provider, ProviderError, ProviderInfo, Selection,
+    Call, Connection, ConnectionId, DimValue, Dimension, DimensionId, FieldDef,
+    InspectorSectionDef, KindId, KindInfo, ListResult, Provider, ProviderError, ProviderInfo,
+    Selection, ValueId,
 };
 
 use crate::models::{EC2InstanceTag, EC2SecurityGroup};
 use crate::scenario::DirectoryScenarioCatalog;
 use crate::service_provider::{
-    connections, console_url, fields, info, inspector, kinds, service_provider, unsupported_kind,
-    whole_load_failure,
+    REGION, connections, console_url, fields, info, inspector, kinds, service_provider,
+    unsupported_kind, whole_load_failure,
 };
 use crate::{CloudDeckError, EC2Instance, Instance, ScenarioService, TestScenarioKind};
 
@@ -140,18 +141,22 @@ fn scenario_service(kind: TestScenarioKind) -> ScenarioService {
 /// A provider that lists `instances` for every selection.
 pub fn static_provider(instances: Vec<Instance>) -> Arc<dyn Provider> {
     Arc::new(StaticProvider {
+        info: info(),
         instances,
         failure: None,
         gate: None,
+        dimensions: Vec::new(),
     })
 }
 
 /// A provider whose every load fails with `message`.
 pub fn failing_provider(message: &str) -> Arc<dyn Provider> {
     Arc::new(StaticProvider {
+        info: info(),
         instances: Vec::new(),
         failure: Some(message.to_string()),
         gate: None,
+        dimensions: Vec::new(),
     })
 }
 
@@ -162,21 +167,86 @@ pub fn gated_provider(
     gate: Arc<Gate>,
 ) -> Arc<dyn Provider> {
     Arc::new(StaticProvider {
+        info: info(),
         instances,
         failure,
         gate: Some(gate),
+        dimensions: Vec::new(),
     })
 }
 
+/// Google Cloud, with a region tree and `instances`, or a load `failure` when one is given.
+pub fn gcp_provider(instances: Vec<Instance>, failure: Option<String>) -> Arc<dyn Provider> {
+    Arc::new(StaticProvider {
+        info: ProviderInfo {
+            id: "gcp".to_string(),
+            name: "Google Cloud".to_string(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            connection_label: "Project".to_string(),
+        },
+        instances,
+        failure,
+        gate: None,
+        dimensions: vec![gcp_region_tree()],
+    })
+}
+
+/// The Google Cloud region dimension: zones nested under regions, with two root regions.
+pub fn gcp_region_tree() -> Dimension {
+    let value = |id: &str, label: &str, parent: Option<&str>| DimValue {
+        id: ValueId::from(id),
+        label: label.to_string(),
+        parent: parent.map(ValueId::from),
+        default: false,
+    };
+    Dimension {
+        id: DimensionId::from(REGION),
+        label: "Region".to_string(),
+        plural_label: Some("Regions".to_string()),
+        multi: true,
+        optional: false,
+        values: vec![
+            value("us", "us", None),
+            value("us-central1", "us-central1", Some("us")),
+            value("us-central1-a", "us-central1-a", Some("us-central1")),
+            value("us-central1-b", "us-central1-b", Some("us-central1")),
+            value("europe-west1", "europe-west1", None),
+            value("europe-west1-b", "europe-west1-b", Some("europe-west1")),
+        ],
+    }
+}
+
+/// A single-select region dimension over `regions`, as a provider without multi-select reports.
+pub fn single_region_dimension(regions: &[&str]) -> Dimension {
+    Dimension {
+        id: DimensionId::from(REGION),
+        label: "Region".to_string(),
+        plural_label: None,
+        multi: false,
+        optional: false,
+        values: regions
+            .iter()
+            .map(|region| DimValue {
+                id: ValueId::from(*region),
+                label: region.to_string(),
+                parent: None,
+                default: *region == regions[0],
+            })
+            .collect(),
+    }
+}
+
 struct StaticProvider {
+    info: ProviderInfo,
     instances: Vec<Instance>,
     failure: Option<String>,
     gate: Option<Arc<Gate>>,
+    dimensions: Vec<Dimension>,
 }
 
 impl Provider for StaticProvider {
     fn info(&self) -> ProviderInfo {
-        info()
+        self.info.clone()
     }
 
     fn connections(&self, _cx: &Call<'_>) -> Result<Vec<Connection>, ProviderError> {
@@ -188,7 +258,7 @@ impl Provider for StaticProvider {
         _cx: &Call<'_>,
         _connection: &ConnectionId,
     ) -> Result<Vec<Dimension>, ProviderError> {
-        Ok(Vec::new())
+        Ok(self.dimensions.clone())
     }
 
     fn kinds(&self) -> Vec<KindInfo> {

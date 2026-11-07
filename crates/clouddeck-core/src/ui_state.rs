@@ -389,7 +389,10 @@ mod tests {
             ..UiState::default()
         }
         .normalized();
-        assert_eq!(state.hidden_columns, vec!["az".to_string()]);
+        assert_eq!(
+            state.hidden_columns,
+            vec!["az".to_string(), "provider".to_string()]
+        );
     }
 
     #[test]

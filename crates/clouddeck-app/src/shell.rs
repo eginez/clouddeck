@@ -511,7 +511,11 @@ impl AppShell {
             .collect()
     }
 
-    fn sync_provider_view(main_window: &Entity<MainWindow>, model: &ContextModel, cx: &mut App) {
+    pub(crate) fn sync_provider_view(
+        main_window: &Entity<MainWindow>,
+        model: &ContextModel,
+        cx: &mut App,
+    ) {
         let provider_short_name = if model.shows_all_providers() {
             "All".to_string()
         } else {

@@ -10,6 +10,7 @@ use super::rules_bar;
 use super::rules_main;
 use super::rules_overlays;
 use super::rules_plugins;
+use super::rules_providers;
 use super::rules_search;
 use super::rules_settings;
 use super::rules_style;
@@ -49,6 +50,12 @@ pub(crate) enum Check {
     LeftOf(&'static str, &'static str),
     /// The two boxes share a vertical centre.
     SameRow(&'static str, &'static str),
+    /// The child box starts at least `min` points right of the parent box's left edge.
+    IndentedBy {
+        parent: &'static str,
+        child: &'static str,
+        min: f32,
+    },
     /// The box's right edge is on the window's right edge.
     RightEdgeAtWindow(&'static str),
     /// The box's bottom edge is on the window's bottom edge.
@@ -138,6 +145,16 @@ pub(crate) fn evaluate(
         }
         Check::LeftOf(a, b) => geometry::left_of(a, get(lookup, a)?, b, get(lookup, b)?, 0.0),
         Check::SameRow(a, b) => geometry::same_row(a, get(lookup, a)?, b, get(lookup, b)?, TOL),
+        Check::IndentedBy { parent, child, min } => {
+            let indent = f32::from(get(lookup, child)?.origin.x - get(lookup, parent)?.origin.x);
+            if indent >= min {
+                Ok(())
+            } else {
+                Err(format!(
+                    "{child} is indented {indent}pt from {parent}, want at least {min}pt"
+                ))
+            }
+        }
         Check::RightEdgeAtWindow(sel) => {
             geometry::right_edge_at_window(sel, get(lookup, sel)?, window, TOL)
         }
@@ -174,6 +191,7 @@ pub(crate) fn all_rules() -> Vec<Rule> {
     [
         rules_main::rules(),
         rules_table::rules(),
+        rules_providers::rules(),
         rules_bar::rules(),
         rules_search::rules(),
         rules_overlays::rules(),

@@ -10,7 +10,8 @@ use crate::service_provider::{LoadHost, REGION};
 use crate::{
     Call, CloudDeckError, ComputeServicePartialFailure, DemoFleet, ErrorKind, Instance,
     InstanceListViewModel, ListResult, LoadRequest, MergedListViewModel, Provider, ProviderError,
-    ProviderFailure, ProviderInfo, ProviderRow, QueryError, StateFacetCounts, default_selection,
+    ProviderFacet, ProviderFailure, ProviderInfo, ProviderRow, QueryError, StateFacetCounts,
+    default_selection,
 };
 
 /// The instance list for the active provider, or for every signed-in provider at once.
@@ -188,6 +189,13 @@ impl ListView {
                 }]
             }
             Self::All(merged) => merged.provider_failures(),
+        }
+    }
+
+    pub fn provider_facet(&self) -> Vec<ProviderFacet> {
+        match self {
+            Self::Single(view_model) => view_model.provider_facet(),
+            Self::All(merged) => merged.provider_facet(),
         }
     }
 

@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::SystemTime;
 
+use crate::query::{ProviderFacet, provider_facet_counts};
 use crate::table::{Column, column_header, compare_provider};
 use crate::{
     CloudDeckError, ComputeServicePartialFailure, ErrorKind, Instance, InstanceListViewModel,
@@ -127,6 +128,20 @@ impl MergedListViewModel {
                     .map(move |instance| (info.id.clone(), instance))
             })
             .collect()
+    }
+
+    /// Loaded row counts per provider, unfiltered.
+    pub fn provider_facet(&self) -> Vec<ProviderFacet> {
+        let rows: Vec<(String, String)> = self
+            .members
+            .iter()
+            .flat_map(|member| {
+                let info = member.provider_info();
+                let count = member.instances().len();
+                std::iter::repeat_with(move || (info.id.clone(), info.name.clone())).take(count)
+            })
+            .collect();
+        provider_facet_counts(&rows)
     }
 
     /// Every loaded instance of every provider, unfiltered.

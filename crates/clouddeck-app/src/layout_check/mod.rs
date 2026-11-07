@@ -9,6 +9,7 @@ pub(crate) mod rules_bar;
 pub(crate) mod rules_main;
 pub(crate) mod rules_overlays;
 pub(crate) mod rules_plugins;
+pub(crate) mod rules_providers;
 pub(crate) mod rules_search;
 pub(crate) mod rules_settings;
 pub(crate) mod rules_style;

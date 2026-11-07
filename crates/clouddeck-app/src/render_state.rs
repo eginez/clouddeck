@@ -8,7 +8,7 @@ use gpui::{App, Entity, Pixels, Point, Window, point, px};
 
 use crate::fleet_state::FleetState;
 use crate::main_window::{MainWindow, Overlay};
-use clouddeck_core::{DemoFleet, GroupBy};
+use clouddeck_core::{Column, DemoFleet, GroupBy};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum State {
@@ -52,6 +52,28 @@ pub(crate) enum State {
     OverlayColumnMenu,
     /// Column chooser opened over the idle main window, in the dark palette.
     OverlayColumnMenuDark,
+    /// All-providers list of AWS and Google Cloud rows, with the Provider column shown.
+    MainAllProviders,
+    /// The same All-providers list as `MainAllProviders`, in the dark palette.
+    MainAllProvidersDark,
+    /// The All-providers list with the Provider column hidden from the column chooser.
+    MainAllProvidersNoColumn,
+    /// The same hidden Provider column as `MainAllProvidersNoColumn`, in the dark palette.
+    MainAllProvidersNoColumnDark,
+    /// The All-providers list where Google Cloud failed to load and AWS rows still show.
+    MainAllProvidersFailedGroup,
+    /// The All-providers list at a narrow window, where the provider button and columns compete for width.
+    MainAllProvidersNarrow,
+    /// The All-providers list at the most compact window the layout supports.
+    MainAllProvidersCompact,
+    /// Google Cloud alone, as the single active provider with no Provider column.
+    MainGcpActive,
+    /// Google Cloud alone while signed out, so the sign-in button shows in the bar.
+    MainGcpSignIn,
+    /// Region picker over a Google Cloud region tree, with zones indented under their regions.
+    OverlayDimensionTree,
+    /// Region picker over a single-select region dimension, with no checkboxes.
+    OverlayDimensionSingle,
     /// First-run welcome window listing three profiles.
     Welcome,
     /// About window in the light palette, with the demo plus two bundled or installed plugins.
@@ -101,7 +123,7 @@ pub(crate) enum State {
 }
 
 impl State {
-    pub(crate) const ALL: [State; 43] = [
+    pub(crate) const ALL: [State; 54] = [
         State::MainIdle,
         State::MainRowSelected,
         State::MainEmpty,
@@ -122,6 +144,17 @@ impl State {
         State::OverlayRowMenu,
         State::OverlayColumnMenu,
         State::OverlayColumnMenuDark,
+        State::MainAllProviders,
+        State::MainAllProvidersDark,
+        State::MainAllProvidersNoColumn,
+        State::MainAllProvidersNoColumnDark,
+        State::MainAllProvidersFailedGroup,
+        State::MainAllProvidersNarrow,
+        State::MainAllProvidersCompact,
+        State::MainGcpActive,
+        State::MainGcpSignIn,
+        State::OverlayDimensionTree,
+        State::OverlayDimensionSingle,
         State::Welcome,
         State::AboutLight,
         State::AboutDark,
@@ -170,6 +203,17 @@ impl State {
             State::OverlayRowMenu => "OverlayRowMenu",
             State::OverlayColumnMenu => "OverlayColumnMenu",
             State::OverlayColumnMenuDark => "OverlayColumnMenuDark",
+            State::MainAllProviders => "MainAllProviders",
+            State::MainAllProvidersDark => "MainAllProvidersDark",
+            State::MainAllProvidersNoColumn => "MainAllProvidersNoColumn",
+            State::MainAllProvidersNoColumnDark => "MainAllProvidersNoColumnDark",
+            State::MainAllProvidersFailedGroup => "MainAllProvidersFailedGroup",
+            State::MainAllProvidersNarrow => "MainAllProvidersNarrow",
+            State::MainAllProvidersCompact => "MainAllProvidersCompact",
+            State::MainGcpActive => "MainGcpActive",
+            State::MainGcpSignIn => "MainGcpSignIn",
+            State::OverlayDimensionTree => "OverlayDimensionTree",
+            State::OverlayDimensionSingle => "OverlayDimensionSingle",
             State::Welcome => "Welcome",
             State::AboutLight => "AboutLight",
             State::AboutDark => "AboutDark",
@@ -216,6 +260,8 @@ impl State {
             State::MainStateGroupedDark
                 | State::MainStateGroupedCollapsedDark
                 | State::OverlayColumnMenuDark
+                | State::MainAllProvidersDark
+                | State::MainAllProvidersNoColumnDark
         )
     }
 
@@ -355,11 +401,26 @@ pub(crate) fn apply_render_state(
         State::OverlayColumnMenu | State::OverlayColumnMenuDark => {
             fleet.update(cx, |fleet, cx| fleet.set_column_menu_open(true, cx));
         }
+        State::MainAllProvidersNoColumn | State::MainAllProvidersNoColumnDark => {
+            fleet.update(cx, |fleet, cx| fleet.toggle_column(Column::Provider, cx));
+        }
+        State::MainAllProvidersFailedGroup => {
+            fleet.update(cx, |fleet, cx| fleet.set_group_by(GroupBy::Provider, cx));
+        }
+        State::OverlayDimensionTree | State::OverlayDimensionSingle => {
+            open(main, Overlay::Region, window, cx)
+        }
         State::MainIdle
         | State::MainEmpty
         | State::MainFailure
         | State::MainPartial
         | State::MainLarge
+        | State::MainAllProviders
+        | State::MainAllProvidersDark
+        | State::MainAllProvidersNarrow
+        | State::MainAllProvidersCompact
+        | State::MainGcpActive
+        | State::MainGcpSignIn
         | State::Welcome
         | State::AboutLight
         | State::AboutDark

@@ -6,7 +6,7 @@ use std::net::Ipv4Addr;
 use chrono::{DateTime, Utc};
 use clouddeck_provider_api::ProviderInfo;
 
-use crate::context_model::short_name;
+use crate::context_model::{short_name, short_name_for};
 use crate::instance::native_id;
 use crate::{AddressKind, Instance};
 
@@ -16,6 +16,7 @@ pub const PROVIDER_COLUMN_WIDTH: f32 = 64.0;
 /// Instance table column, in display order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Column {
+    Provider,
     Name,
     InstanceId,
     State,
@@ -28,7 +29,8 @@ pub enum Column {
 
 impl Column {
     /// Every column in display order.
-    pub const ALL: [Column; 8] = [
+    pub const ALL: [Column; 9] = [
+        Column::Provider,
         Column::Name,
         Column::InstanceId,
         Column::State,
@@ -42,6 +44,7 @@ impl Column {
     /// Stable key that identifies the column in saved UI state.
     pub fn key(self) -> &'static str {
         match self {
+            Column::Provider => "provider",
             Column::Name => "name",
             Column::InstanceId => "instance_id",
             Column::State => "state",
@@ -61,6 +64,7 @@ impl Column {
     /// Header title shown above the column.
     pub fn title(self) -> &'static str {
         match self {
+            Column::Provider => PROVIDER_COLUMN_TITLE,
             Column::Name => "Name",
             Column::InstanceId => "Instance ID",
             Column::State => "State",
@@ -75,6 +79,7 @@ impl Column {
     /// Default column width in points.
     pub fn default_width(self) -> f32 {
         match self {
+            Column::Provider => PROVIDER_COLUMN_WIDTH,
             Column::Name => 170.0,
             Column::InstanceId => 165.0,
             Column::State => 92.0,
@@ -107,6 +112,10 @@ pub struct CellText {
 /// Text for one instance's cell in the given column.
 pub fn cell_text(instance: &Instance, column: Column) -> CellText {
     match column {
+        Column::Provider => CellText {
+            text: String::new(),
+            muted: false,
+        },
         Column::Name => match instance.name.as_deref().filter(|name| !name.is_empty()) {
             Some(name) => CellText {
                 text: name.to_string(),
@@ -141,6 +150,7 @@ pub fn column_header(column: Column, mixed: bool) -> &'static str {
         return column.title();
     }
     match column {
+        Column::Provider => PROVIDER_COLUMN_TITLE,
         Column::Name => "Name",
         Column::InstanceId => "ID",
         Column::State => "State",
@@ -158,9 +168,9 @@ pub fn provider_column_default_visible(loaded_providers: usize) -> bool {
 }
 
 /// Short provider name shown in the Provider column.
-pub fn provider_cell_text(info: &ProviderInfo) -> CellText {
+pub fn provider_cell_text(id: &str, name: &str) -> CellText {
     CellText {
-        text: short_name(info),
+        text: short_name_for(id, name),
         muted: false,
     }
 }
@@ -177,6 +187,7 @@ pub fn visible_columns(window_width: f32) -> Vec<Column> {
     Column::ALL
         .into_iter()
         .filter(|column| match column {
+            Column::Provider => false,
             Column::Launched => window_width >= 1100.0,
             Column::PublicIp => window_width >= 960.0,
             Column::PrivateIp => window_width >= 840.0,
@@ -283,6 +294,7 @@ fn has_sort_key(instance: &Instance, column: Column) -> bool {
 
 fn sort_text(instance: &Instance, column: Column) -> &str {
     let value = match column {
+        Column::Provider => None,
         Column::Name => instance.name.as_deref(),
         Column::InstanceId => Some(native_id(instance)),
         Column::State => Some(instance.state.raw.as_str()),
@@ -348,6 +360,7 @@ mod tests {
         assert_eq!(
             titles,
             [
+                "Provider",
                 "Name",
                 "Instance ID",
                 "State",
@@ -361,7 +374,7 @@ mod tests {
         let widths: Vec<f32> = Column::ALL.iter().map(|c| c.default_width()).collect();
         assert_eq!(
             widths,
-            [170.0, 165.0, 92.0, 100.0, 92.0, 104.0, 112.0, 130.0]
+            [64.0, 170.0, 165.0, 92.0, 100.0, 92.0, 104.0, 112.0, 130.0]
         );
     }
 
@@ -498,6 +511,7 @@ mod tests {
         assert_eq!(
             keys,
             [
+                "provider",
                 "name",
                 "instance_id",
                 "state",
@@ -508,7 +522,7 @@ mod tests {
                 "launched"
             ]
         );
-        assert_eq!(Column::from_key("provider"), None);
+        assert_eq!(Column::from_key("provider"), Some(Column::Provider));
         assert_eq!(Column::from_key("bogus"), None);
     }
 
@@ -709,6 +723,7 @@ mod tests {
         assert_eq!(
             headers,
             [
+                "Provider",
                 "Name",
                 "ID",
                 "State",
@@ -730,9 +745,9 @@ mod tests {
 
     #[test]
     fn provider_cell_uses_short_name() {
-        assert_eq!(provider_cell_text(&provider("aws", "AWS")).text, "AWS");
+        assert_eq!(provider_cell_text("aws", "AWS").text, "AWS");
         assert_eq!(
-            provider_cell_text(&provider("gcp", "Google Cloud")).text,
+            provider_cell_text("gcp", "Google Cloud").text,
             "GCP"
         );
     }

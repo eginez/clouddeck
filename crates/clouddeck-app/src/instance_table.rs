@@ -2,7 +2,7 @@
 
 use clouddeck_core::{
     CellText, Column, DisplayRow, GroupBy, GroupHeader, Instance, SortState, cell_text,
-    display_index_of, is_stale_instance, layout_rules, visible_columns_fit_hidden,
+    column_header, display_index_of, is_stale_instance, layout_rules, provider_cell_text,
 };
 use gpui::{
     ClickEvent, Context, Div, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Hsla,
@@ -138,7 +138,7 @@ impl InstanceTable {
         let (rows, display) = state.display_rows();
         if let Some(instance_index) = rows
             .iter()
-            .position(|instance| Some(instance.id.as_str()) == selected)
+            .position(|(_, instance)| Some(instance.id.as_str()) == selected)
             && let Some(ix) = display_index_of(&display, instance_index)
         {
             self.scroll.scroll_to_item(ix, ScrollStrategy::Center);
@@ -178,7 +178,13 @@ impl Render for InstanceTable {
                 pane_width -= INSPECTOR_WIDTH;
             }
         }
-        let columns = visible_columns_fit_hidden(window_width, pane_width, &state.hidden_columns);
+        let columns = state.table_columns(window_width, pane_width);
+        let mixed = state.view_model.is_all();
+        let shown: Vec<Column> = Column::ALL
+            .into_iter()
+            .filter(|column| state.column_shown(*column))
+            .collect();
+        let names = state.view_model.provider_names();
         let sort = state.sort;
         let selected = state.selected.clone();
         let stale = state.view_model.stale_regions().to_vec();
@@ -187,14 +193,13 @@ impl Render for InstanceTable {
         let group_by = state.group_by;
         let column_menu_open = state.column_menu_open;
         let column_menu_focus = state.column_menu_focus;
-        let hidden = state.hidden_columns.clone();
 
         for (ix, column) in columns.iter().enumerate() {
             record(
                 cx,
                 format!("table.header.{ix}"),
                 Recorded {
-                    text: Some(column.title().to_string()),
+                    text: Some(column_header(*column, mixed).to_string()),
                     fg: Some("dim"),
                     ..Default::default()
                 },
@@ -265,7 +270,7 @@ impl Render for InstanceTable {
                     column_menu_item(
                         ix,
                         column,
-                        !hidden.contains(&column),
+                        shown.contains(&column),
                         ix == column_menu_focus,
                         palette,
                         entity.clone(),
@@ -289,7 +294,9 @@ impl Render for InstanceTable {
                 columns
                     .iter()
                     .enumerate()
-                    .map(|(ix, column)| header_cell(ix, *column, sort, palette, entity.clone())),
+                    .map(|(ix, column)| {
+                        header_cell(ix, *column, mixed, sort, palette, entity.clone())
+                    }),
             );
 
         let toolbar = group_by_toolbar(group_by, palette, entity.clone(), columns_button);
@@ -302,14 +309,19 @@ impl Render for InstanceTable {
                         group_header(group, palette, row_entity.clone()).into_any_element()
                     }
                     DisplayRow::Instance(index) => {
-                        let instance = &rows[*index];
+                        let (provider_id, instance) = &rows[*index];
+                        let provider_name = names.get(provider_id).unwrap_or(provider_id);
+                        let provider_text = provider_cell_text(provider_id, provider_name).text;
                         let is_selected = selected.as_deref() == Some(instance.id.as_str());
                         let is_stale = is_stale_instance(instance, &stale);
                         let (element, records) = row(
                             instance,
+                            &provider_text,
                             &columns,
-                            is_selected,
-                            is_stale,
+                            RowFlags {
+                                selected: is_selected,
+                                stale: is_stale,
+                            },
                             palette,
                             row_entity.clone(),
                             table.clone(),
@@ -486,6 +498,7 @@ fn cell_frame(column: Column) -> Div {
 fn header_cell(
     ix: usize,
     column: Column,
+    mixed: bool,
     sort: SortState,
     palette: Palette,
     state: Entity<FleetState>,
@@ -504,7 +517,7 @@ fn header_cell(
                 .overflow_hidden()
                 .text_ellipsis()
                 .whitespace_nowrap()
-                .child(column.title()),
+                .child(column_header(column, mixed)),
         );
     if sort.column == column {
         let icon = if sort.ascending {
@@ -523,11 +536,17 @@ fn header_cell(
         .child(label)
 }
 
-fn row(
-    instance: &Instance,
-    columns: &[Column],
+#[derive(Clone, Copy)]
+struct RowFlags {
     selected: bool,
     stale: bool,
+}
+
+fn row(
+    instance: &Instance,
+    provider_text: &str,
+    columns: &[Column],
+    flags: RowFlags,
     palette: Palette,
     state: Entity<FleetState>,
     table: Entity<InstanceTable>,
@@ -555,12 +574,12 @@ fn row(
         .h(px(ROW_HEIGHT))
         .border_b_1()
         .border_color(palette.line2);
-    if selected {
+    if flags.selected {
         row = row.bg(palette.sel);
     }
     let (cells, records): (Vec<Div>, Vec<Option<(String, Recorded)>>) = columns
         .iter()
-        .map(|column| cell(instance, *column, &row_key, palette, stale))
+        .map(|column| cell(instance, provider_text, *column, &row_key, palette, flags.stale))
         .unzip();
     (row.children(cells), records.into_iter().flatten().collect())
 }
@@ -588,18 +607,26 @@ fn cell_color(
 
 fn cell(
     instance: &Instance,
+    provider_text: &str,
     column: Column,
     row_key: &str,
     palette: Palette,
     stale: bool,
 ) -> (Div, Option<(String, Recorded)>) {
-    let CellText { text, muted } = cell_text(instance, column);
+    let CellText { text, muted } = match column {
+        Column::Provider => CellText {
+            text: provider_text.to_string(),
+            muted: false,
+        },
+        _ => cell_text(instance, column),
+    };
     let raw_state = instance.state.raw.as_str();
     let (fg, color) = cell_color(&palette, column, raw_state, stale, muted);
     let record = match column {
         Column::Name => Some((format!("{row_key}.name"), Some("ui"))),
         Column::InstanceId => Some((format!("{row_key}.id"), Some("mono"))),
         Column::State => Some((format!("{row_key}.state"), None)),
+        Column::Provider => Some((format!("{row_key}.provider"), None)),
         _ => None,
     }
     .map(|(selector, font)| {
@@ -645,6 +672,7 @@ fn cell(
         Column::Name => frame.debug_selector(|| format!("{row_key}.name")),
         Column::InstanceId => frame.debug_selector(|| format!("{row_key}.id")),
         Column::State => frame.debug_selector(|| format!("{row_key}.state")),
+        Column::Provider => frame.debug_selector(|| format!("{row_key}.provider")),
         _ => frame,
     };
     (frame, record)
@@ -1072,7 +1100,7 @@ mod tests {
         cx.run_until_parked();
         assert!(state.read_with(cx, |state, _| state.column_menu_open));
 
-        for keys in ["down", "down", "down", "space"] {
+        for keys in ["down", "down", "down", "down", "space"] {
             cx.simulate_keystrokes(keys);
             cx.run_until_parked();
         }

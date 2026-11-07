@@ -53,10 +53,14 @@ pub fn default_selection(dimensions: &[Dimension]) -> Selection {
 }
 
 pub fn short_name(info: &ProviderInfo) -> String {
-    if info.name.chars().count() <= 4 {
-        info.name.clone()
+    short_name_for(&info.id, &info.name)
+}
+
+pub fn short_name_for(id: &str, name: &str) -> String {
+    if name.chars().count() <= 4 {
+        name.to_string()
     } else {
-        info.id.to_uppercase()
+        id.to_uppercase()
     }
 }
 

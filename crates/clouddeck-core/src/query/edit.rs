@@ -54,6 +54,8 @@ pub struct FacetSelection {
     pub state: Option<String>,
     /// The values the query selects for instance type, as typed.
     pub instance_type: Option<String>,
+    /// The provider ids the query selects, as typed.
+    pub provider: Option<String>,
 }
 
 /// Reads the values the State and Type facets select, intersected across repeated terms.
@@ -62,6 +64,7 @@ pub fn facet_selection(query: &str, known_tag_keys: &[String]) -> FacetSelection
     FacetSelection {
         state: effective_facet_value(&terms, QueryField::State),
         instance_type: effective_facet_value(&terms, QueryField::Type),
+        provider: effective_facet_value(&terms, QueryField::ProviderFacet),
     }
 }
 
@@ -246,6 +249,7 @@ mod tests {
             FacetSelection {
                 state: Some("stopped".into()),
                 instance_type: Some("t3.small".into()),
+                provider: None,
             }
         );
         assert_eq!(
@@ -253,6 +257,7 @@ mod tests {
             FacetSelection {
                 state: Some("running,pending".into()),
                 instance_type: None,
+                provider: None,
             }
         );
         assert_eq!(facet_selection("-state:stopped", &k).state, None);
