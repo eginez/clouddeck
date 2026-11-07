@@ -73,6 +73,11 @@ fn main() {
             gpui_component::Theme::change(gpui_component::ThemeMode::Light, None, cx);
             let options = shell::launch_options();
             app_providers::install(cx);
+            if let Err(error) =
+                clouddeck_core::migrate_aws_settings(&clouddeck_core::settings_path())
+            {
+                eprintln!("could not move AWS settings into the AWS plugin: {error}");
+            }
             let saved = WorkspaceContext::load(&context_path());
             if let Some(state) = options.state.filter(|state| state.is_about()) {
                 if state == render_state::State::AboutDark {

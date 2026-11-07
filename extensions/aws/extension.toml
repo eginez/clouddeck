@@ -9,6 +9,25 @@ repository = "https://github.com/eginez/clouddeck"
 [providers.aws]
 name = "Amazon Web Services"
 
+[[settings]]
+key = "config_file"
+label = "AWS config file"
+description = "Where profiles are read from."
+kind = "path"
+default = "~/.aws/config"
+
+[[settings]]
+key = "request_timeout"
+label = "Request timeout"
+description = "Per region, per request."
+kind = "choice"
+default = "30"
+options = [
+    { value = "15", label = "15 seconds" },
+    { value = "30", label = "30 seconds" },
+    { value = "60", label = "60 seconds" },
+]
+
 [[capabilities]]
 kind = "network:http"
 hosts = ["*.amazonaws.com"]

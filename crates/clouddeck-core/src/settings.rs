@@ -9,15 +9,14 @@ use std::{
         Mutex, MutexGuard,
         atomic::{AtomicU64, Ordering},
     },
-    time::Duration,
 };
 
 /// Allowed auto-refresh intervals in minutes.
 pub const REFRESH_INTERVALS: [u32; 5] = [1, 2, 5, 10, 15];
 /// Allowed recent-search list lengths.
 pub const RECENT_SEARCH_LIMITS: [u32; 4] = [0, 5, 10, 20];
-/// Allowed request timeouts in seconds.
-pub const REQUEST_TIMEOUTS: [u32; 3] = [15, 30, 60];
+/// Request timeouts the AWS plugin offered before its settings moved into its manifest.
+const LEGACY_REQUEST_TIMEOUTS: [u32; 3] = [15, 30, 60];
 /// Settings categories in sidebar order.
 pub const SETTINGS_CATEGORIES: [&str; 9] = [
     "Appearance",
@@ -25,7 +24,7 @@ pub const SETTINGS_CATEGORIES: [&str; 9] = [
     "Table",
     "Search",
     "Keymap",
-    "AWS & Privacy",
+    "Privacy",
     "Advanced",
     "Plugins",
     "About",
@@ -109,10 +108,6 @@ pub struct Settings {
     pub recent_search_limit: u32,
     /// Whether search matches tag values.
     pub match_tags: bool,
-    /// Path to the AWS config file.
-    pub aws_config_file: String,
-    /// Seconds before an AWS request times out.
-    pub request_timeout_seconds: u32,
     /// Whether to use demo data instead of AWS.
     pub demo_mode: bool,
     /// Whether CloudDeck checks for new releases automatically.
@@ -143,8 +138,6 @@ impl Default for Settings {
             show_unnamed_label: true,
             recent_search_limit: 10,
             match_tags: true,
-            aws_config_file: "~/.aws/config".to_owned(),
-            request_timeout_seconds: 30,
             demo_mode: false,
             check_for_updates: true,
             providers: BTreeMap::new(),
@@ -175,11 +168,6 @@ impl Settings {
                 &RECENT_SEARCH_LIMITS,
                 defaults.recent_search_limit,
             ),
-            request_timeout_seconds: allowed_or(
-                self.request_timeout_seconds,
-                &REQUEST_TIMEOUTS,
-                defaults.request_timeout_seconds,
-            ),
             regions: if self.regions.is_empty() {
                 defaults.regions
             } else {
@@ -187,10 +175,6 @@ impl Settings {
             },
             ..self
         }
-    }
-
-    pub fn request_timeout(&self) -> Duration {
-        Duration::from_secs(u64::from(self.clone().normalized().request_timeout_seconds))
     }
 
     /// Loads settings from `path`, falling back to defaults when missing or invalid.
@@ -248,7 +232,7 @@ fn lock_file() -> MutexGuard<'static, ()> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-fn write_file(path: &Path, settings: &Settings) -> std::io::Result<()> {
+fn write_file<T: serde::Serialize>(path: &Path, value: &T) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -264,7 +248,7 @@ fn write_file(path: &Path, settings: &Settings) -> std::io::Result<()> {
     ));
     let mut file = std::fs::File::create(&temp)?;
     use std::io::Write;
-    file.write_all(&serde_json::to_vec(settings).map_err(std::io::Error::other)?)?;
+    file.write_all(&serde_json::to_vec(value).map_err(std::io::Error::other)?)?;
     file.sync_all()?;
     std::fs::rename(temp, path)
 }
@@ -272,6 +256,74 @@ fn write_file(path: &Path, settings: &Settings) -> std::io::Result<()> {
 /// Location of `settings.json`, next to `context.json`.
 pub fn settings_path() -> PathBuf {
     context_path().with_file_name("settings.json")
+}
+
+/// The AWS plugin's `config_file` value as the user stored it, `None` when unset.
+pub fn aws_config_setting() -> Option<String> {
+    match Settings::load(&settings_path())
+        .providers
+        .get("aws")?
+        .get("config_file")?
+    {
+        SettingValue::Text(path) => Some(path.clone()),
+        _ => None,
+    }
+}
+
+/// Copies the AWS settings that used to live in `settings.json` into the AWS plugin's provider values,
+/// then drops the old keys. Values already stored for the plugin are kept.
+pub fn migrate_aws_settings(path: &Path) -> std::io::Result<()> {
+    let _writing = lock_file();
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    let mut raw: serde_json::Map<String, serde_json::Value> = serde_json::from_slice(&bytes)
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    if !raw.contains_key("aws_config_file") && !raw.contains_key("request_timeout_seconds") {
+        return Ok(());
+    }
+    let invalid = |message: &str| {
+        std::io::Error::new(std::io::ErrorKind::InvalidData, message.to_owned())
+    };
+    let file = match raw.remove("aws_config_file") {
+        Some(serde_json::Value::String(file)) => Some(file),
+        Some(_) => return Err(invalid("aws_config_file must be a string")),
+        None => None,
+    };
+    let timeout = match raw.remove("request_timeout_seconds") {
+        Some(value) => Some(
+            value
+                .as_u64()
+                .and_then(|seconds| u32::try_from(seconds).ok())
+                .ok_or_else(|| invalid("request_timeout_seconds must be a whole number"))?,
+        ),
+        None => None,
+    };
+    let aws = raw
+        .entry("providers")
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+        .ok_or_else(|| invalid("providers must be an object"))?
+        .entry("aws")
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+        .ok_or_else(|| invalid("providers.aws must be an object"))?;
+    if let Some(file) = file {
+        aws.entry("config_file")
+            .or_insert_with(|| serde_json::json!({ "text": file }));
+    }
+    if let Some(seconds) = timeout {
+        let seconds = if LEGACY_REQUEST_TIMEOUTS.contains(&seconds) {
+            seconds
+        } else {
+            30
+        };
+        aws.entry("request_timeout")
+            .or_insert_with(|| serde_json::json!({ "text": seconds.to_string() }));
+    }
+    write_file(path, &raw)
 }
 
 /// One user-facing setting, in display order.
@@ -305,10 +357,6 @@ pub enum SettingId {
     RecentSearchLimit,
     /// Match tag keys and values in search.
     MatchTags,
-    /// Path to the AWS config file.
-    AwsConfigFile,
-    /// Seconds before an AWS request times out.
-    RequestTimeout,
     /// Check for new releases automatically.
     CheckForUpdates,
     /// Simulated fleet without AWS calls.
@@ -317,7 +365,7 @@ pub enum SettingId {
 
 impl SettingId {
     /// Every setting in display order.
-    pub const ALL: [SettingId; 18] = [
+    pub const ALL: [SettingId; 16] = [
         Self::Theme,
         Self::Density,
         Self::ShowSidebarOnLaunch,
@@ -332,8 +380,6 @@ impl SettingId {
         Self::ShowUnnamedLabel,
         Self::RecentSearchLimit,
         Self::MatchTags,
-        Self::AwsConfigFile,
-        Self::RequestTimeout,
         Self::CheckForUpdates,
         Self::DemoMode,
     ];
@@ -353,7 +399,6 @@ impl SettingId {
             | Self::Regions => "Fleet",
             Self::DefaultSort | Self::ShowUnnamedLabel => "Table",
             Self::RecentSearchLimit | Self::MatchTags => "Search",
-            Self::AwsConfigFile | Self::RequestTimeout => "AWS & Privacy",
             Self::CheckForUpdates | Self::DemoMode => "Advanced",
         }
     }
@@ -369,7 +414,6 @@ impl SettingId {
             Self::OnLaunch | Self::Regions => "Scope",
             Self::DefaultSort | Self::ShowUnnamedLabel => "Display",
             Self::RecentSearchLimit | Self::MatchTags => "Behaviour",
-            Self::AwsConfigFile | Self::RequestTimeout => "AWS",
             Self::CheckForUpdates => "Updates",
             Self::DemoMode => "Developer",
         }
@@ -432,8 +476,6 @@ impl SettingId {
                 "Match tag keys and values",
                 "Search also looks at name, ID, IPs, zone and type.",
             ),
-            Self::AwsConfigFile => ("AWS config file", "Where profiles are read from."),
-            Self::RequestTimeout => ("Request timeout", "Per region, per request."),
             Self::CheckForUpdates => (
                 "Check for updates automatically",
                 "Checks on launch and about once an hour while CloudDeck runs.",
@@ -458,7 +500,7 @@ impl SettingId {
         reset_appearance(self, settings, &defaults);
         reset_fleet(self, settings, &defaults);
         reset_table_and_search(self, settings, &defaults);
-        reset_aws_and_advanced(self, settings, &defaults);
+        reset_advanced(self, settings, &defaults);
     }
 
     /// Whether this setting is greyed out in `settings`.
@@ -505,12 +547,8 @@ fn reset_table_and_search(id: SettingId, settings: &mut Settings, defaults: &Set
     }
 }
 
-fn reset_aws_and_advanced(id: SettingId, settings: &mut Settings, defaults: &Settings) {
+fn reset_advanced(id: SettingId, settings: &mut Settings, defaults: &Settings) {
     match id {
-        SettingId::AwsConfigFile => settings.aws_config_file = defaults.aws_config_file.clone(),
-        SettingId::RequestTimeout => {
-            settings.request_timeout_seconds = defaults.request_timeout_seconds
-        }
         SettingId::CheckForUpdates => settings.check_for_updates = defaults.check_for_updates,
         SettingId::DemoMode => settings.demo_mode = defaults.demo_mode,
         _ => {}
@@ -645,6 +683,7 @@ pub fn settings_no_match_text(query: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     fn temp_file(label: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
@@ -677,8 +716,6 @@ mod tests {
         assert!(settings.show_unnamed_label);
         assert_eq!(settings.recent_search_limit, 10);
         assert!(settings.match_tags);
-        assert_eq!(settings.aws_config_file, "~/.aws/config");
-        assert_eq!(settings.request_timeout_seconds, 30);
         assert!(!settings.demo_mode);
         assert!(settings.check_for_updates);
         assert_eq!(SettingId::CheckForUpdates.category(), "Advanced");
@@ -792,13 +829,11 @@ mod tests {
         let settings = Settings {
             refresh_interval_minutes: 7,
             recent_search_limit: 3,
-            request_timeout_seconds: 45,
             ..Settings::default()
         }
         .normalized();
         assert_eq!(settings.refresh_interval_minutes, 5);
         assert_eq!(settings.recent_search_limit, 10);
-        assert_eq!(settings.request_timeout_seconds, 30);
     }
 
     #[test]
@@ -844,21 +879,81 @@ mod tests {
     }
 
     #[test]
-    fn request_timeout_maps_to_sdk_and_fleet_deadlines() {
-        let cases = [(15, 15, 20), (30, 30, 35), (60, 60, 65)];
-        for (seconds, sdk, fleet) in cases {
-            let settings = Settings {
-                request_timeout_seconds: seconds,
-                ..Settings::default()
-            };
-            let request = settings.request_timeout();
-            assert_eq!(request, Duration::from_secs(sdk));
-            assert_eq!(fleet_region_timeout(request), Duration::from_secs(fleet));
+    fn request_timeout_choices_map_to_fleet_deadlines() {
+        for (seconds, fleet) in [(15, 20), (30, 35), (60, 65)] {
+            assert_eq!(
+                fleet_region_timeout(Duration::from_secs(seconds)),
+                Duration::from_secs(fleet)
+            );
         }
+    }
+
+    #[test]
+    fn migration_moves_custom_aws_values_into_provider_settings() {
+        let path = temp_file("migrate-custom");
+        std::fs::write(
+            &path,
+            br#"{"aws_config_file":"/work/aws-config","request_timeout_seconds":60,"theme":"dark"}"#,
+        )
+        .unwrap();
+        migrate_aws_settings(&path).unwrap();
+        let loaded = Settings::load(&path);
+        assert_eq!(loaded.theme, Theme::Dark);
         assert_eq!(
-            Settings::default().request_timeout(),
-            Duration::from_secs(30)
+            loaded.providers["aws"]["config_file"],
+            SettingValue::Text("/work/aws-config".into())
         );
+        assert_eq!(
+            loaded.providers["aws"]["request_timeout"],
+            SettingValue::Text("60".into())
+        );
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(!raw.contains("aws_config_file"));
+        assert!(!raw.contains("request_timeout_seconds"));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn migration_keeps_provider_values_already_stored() {
+        let path = temp_file("migrate-existing");
+        std::fs::write(
+            &path,
+            br#"{"aws_config_file":"/old","request_timeout_seconds":15,"providers":{"aws":{"config_file":{"text":"/new"},"request_timeout":{"text":"30"}}}}"#,
+        )
+        .unwrap();
+        migrate_aws_settings(&path).unwrap();
+        let loaded = Settings::load(&path);
+        assert_eq!(
+            loaded.providers["aws"]["config_file"],
+            SettingValue::Text("/new".into())
+        );
+        assert_eq!(
+            loaded.providers["aws"]["request_timeout"],
+            SettingValue::Text("30".into())
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn migration_replaces_a_timeout_the_choices_no_longer_offer() {
+        let path = temp_file("migrate-timeout");
+        std::fs::write(&path, br#"{"request_timeout_seconds":45}"#).unwrap();
+        migrate_aws_settings(&path).unwrap();
+        assert_eq!(
+            Settings::load(&path).providers["aws"]["request_timeout"],
+            SettingValue::Text("30".into())
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn migration_leaves_files_without_old_keys_alone() {
+        let path = temp_file("migrate-none");
+        let original = br#"{"theme":"dark"}"#;
+        std::fs::write(&path, original).unwrap();
+        migrate_aws_settings(&path).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]
@@ -877,8 +972,8 @@ mod tests {
     }
 
     #[test]
-    fn catalog_has_twenty_labels_in_display_order() {
-        assert_eq!(SettingId::ALL.len(), 18);
+    fn catalog_has_sixteen_labels_in_display_order() {
+        assert_eq!(SettingId::ALL.len(), 16);
         let labels: Vec<&str> = SettingId::ALL.iter().map(|id| id.label()).collect();
         assert_eq!(
             labels,
@@ -897,8 +992,6 @@ mod tests {
                 "Show instances without a Name tag as “unnamed”",
                 "Remember recent searches",
                 "Match tag keys and values",
-                "AWS config file",
-                "Request timeout",
                 "Check for updates automatically",
                 "Demo mode",
             ]
@@ -915,7 +1008,6 @@ mod tests {
             SettingId::ShowUpdatedTime.label(),
             "Show “Updated” time in the status bar"
         );
-        assert_eq!(SettingId::AwsConfigFile.category(), "AWS & Privacy");
         assert_eq!(SettingId::DemoMode.group(), "Developer");
     }
 
@@ -993,8 +1085,6 @@ mod tests {
             show_unnamed_label: false,
             recent_search_limit: 0,
             match_tags: false,
-            aws_config_file: "/tmp/config".into(),
-            request_timeout_seconds: 60,
             demo_mode: true,
             check_for_updates: false,
             providers: BTreeMap::new(),

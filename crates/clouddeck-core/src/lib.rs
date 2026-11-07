@@ -20,15 +20,15 @@ mod scenario_service;
 pub use clouddeck_provider_kit::{
     AwsConfigFile, AwsConfigParseError, AwsCredentialKind, AwsProfile, AwsProfileAuth,
     AwsSsoConfiguration, CloudDeckError, ComputeInstanceFilters, ComputeInstanceLoadResult,
-    ComputeServicePartialFailure, ComputeService, BoxError, ConsoleUrlError, DefaultSleep,
-    DirectoryScenarioCatalog, EC2Instance, EC2InstanceTag, EC2Scenario, EC2ScenarioCatalog,
+    ComputeServicePartialFailure, ComputeService, BoxError, ConsoleUrlError,
+    DEFAULT_AWS_CONFIG_FILE, DefaultSleep, DirectoryScenarioCatalog, EC2Instance, EC2InstanceTag, EC2Scenario, EC2ScenarioCatalog,
     EC2ScenarioProfile, EC2ScenarioRegion, EC2SecurityGroup, FLEET_REGIONS,
     FaultInjectingComputeService, FaultInjectionBehavior, FaultInjectionOutcome,
     FleetComputeService, LoadHost, LoginGuidance, MockComputeService, Partition, REGION, REGIONS,
-    ScopeSettings, Sleep, WorkspaceContext, aws_file_paths, cloud_deck_error, console_url_for,
-    console_url_for_instance, context_path, join_failure, list_scenario, load_profile_auth,
-    load_profiles, login_guidance, parse_profile_auth, parse_profiles, parse_scenario,
-    partition_for_region, read_profile_auth, whole_load_failure,
+    ScopeSettings, Sleep, WorkspaceContext, aws_file_paths, aws_file_paths_for, cloud_deck_error,
+    console_url_for, console_url_for_instance, context_path, custom_aws_config_file, join_failure,
+    list_scenario, load_profile_auth_for, load_profiles_for, login_guidance, parse_profile_auth,
+    parse_profiles, parse_scenario, partition_for_region, read_profile_auth, whole_load_failure,
 };
 pub use clouddeck_provider_kit::aws_fields::aws_fields;
 pub use query::*;

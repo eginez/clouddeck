@@ -10,11 +10,11 @@ use clouddeck_core::extension_host::{
     ProviderRegistry, SettingsCategory, search_provider_settings,
 };
 use clouddeck_core::{
-    DefaultSort, Density, FLEET_REGIONS, KEYMAP, LaunchBehavior, Platform, RECENT_SEARCH_LIMITS,
-    REFRESH_INTERVALS, REQUEST_TIMEOUTS, SETTINGS_CATEGORIES, SettingDef, SettingId, SettingKind,
-    SettingValue, Settings, SettingsSearchResults, Theme, UiState, changed_categories,
-    context_path, search_settings, settings_no_match_text, settings_path, settings_results_title,
-    settings_search_breadcrumb, shortcut_label, ui_state_path,
+    DEFAULT_AWS_CONFIG_FILE, DefaultSort, Density, FLEET_REGIONS, KEYMAP, LaunchBehavior, Platform,
+    RECENT_SEARCH_LIMITS, REFRESH_INTERVALS, SETTINGS_CATEGORIES, SettingDef, SettingId,
+    SettingKind, SettingValue, Settings, SettingsSearchResults, Theme, UiState, aws_config_setting,
+    changed_categories, context_path, search_settings, settings_no_match_text, settings_path,
+    settings_results_title, settings_search_breadcrumb, shortcut_label, ui_state_path,
 };
 use gpui::{
     AnyElement, AnyView, App, Bounds, ClickEvent, Context, Div, Entity, EventEmitter, Global,
@@ -78,7 +78,6 @@ pub struct SettingsWindow {
     provider_selects: Vec<(FieldKey, Entity<SelectState<Vec<ProviderChoice>>>)>,
     setting_errors: BTreeMap<FieldKey, String>,
     search: Entity<InputState>,
-    config_input: Entity<InputState>,
     selects: Vec<(SettingId, Entity<SelectState<Vec<Choice>>>)>,
     _subscriptions: Vec<Subscription>,
     path: PathBuf,
@@ -109,7 +108,6 @@ enum Pick {
     DefaultSort(DefaultSort),
     RefreshInterval(u32),
     RecentSearchLimit(u32),
-    RequestTimeout(u32),
 }
 
 impl Pick {
@@ -121,7 +119,6 @@ impl Pick {
             Pick::DefaultSort(value) => settings.default_sort = value,
             Pick::RefreshInterval(value) => settings.refresh_interval_minutes = value,
             Pick::RecentSearchLimit(value) => settings.recent_search_limit = value,
-            Pick::RequestTimeout(value) => settings.request_timeout_seconds = value,
         }
     }
 }
@@ -276,10 +273,6 @@ fn choices(id: SettingId) -> Vec<Choice> {
             .iter()
             .map(|&limit| choice(limit.to_string(), Pick::RecentSearchLimit(limit)))
             .collect(),
-        SettingId::RequestTimeout => REQUEST_TIMEOUTS
-            .iter()
-            .map(|&seconds| choice(format!("{seconds} seconds"), Pick::RequestTimeout(seconds)))
-            .collect(),
         _ => Vec::new(),
     }
 }
@@ -292,7 +285,6 @@ fn current(id: SettingId, settings: &Settings) -> Option<Pick> {
         SettingId::DefaultSort => Pick::DefaultSort(settings.default_sort),
         SettingId::RefreshInterval => Pick::RefreshInterval(settings.refresh_interval_minutes),
         SettingId::RecentSearchLimit => Pick::RecentSearchLimit(settings.recent_search_limit),
-        SettingId::RequestTimeout => Pick::RequestTimeout(settings.request_timeout_seconds),
         _ => return None,
     })
 }
@@ -505,24 +497,12 @@ impl SettingsWindow {
                 .placeholder("Search settings")
                 .clean_on_escape()
         });
-        let config_input = cx
-            .new(|cx| InputState::new(window, cx).default_value(settings.aws_config_file.clone()));
         let mut selects = Vec::new();
         let mut subscriptions = vec![cx.observe(&search, |_, _, cx| cx.notify())];
         subscriptions.push(cx.on_app_quit(|this: &mut Self, _| {
             this.flush_pending_save();
             std::future::ready(())
         }));
-        subscriptions.push(cx.subscribe_in(
-            &config_input,
-            window,
-            |this: &mut Self, state, event: &InputEvent, _, cx| {
-                if matches!(event, InputEvent::Change) {
-                    let value = state.read(cx).value().to_string();
-                    this.change(cx, |settings| settings.aws_config_file = value);
-                }
-            },
-        ));
         for id in SettingId::ALL {
             let items = choices(id);
             if items.is_empty() {
@@ -617,7 +597,6 @@ impl SettingsWindow {
             provider_selects,
             setting_errors: BTreeMap::new(),
             search,
-            config_input,
             selects,
             _subscriptions: subscriptions,
             path: settings_path(),
@@ -926,12 +905,6 @@ impl SettingsWindow {
                 state.update(cx, |state, cx| state.set_selected_value(&pick, window, cx));
             }
         }
-        let value = self.settings.aws_config_file.clone();
-        self.config_input.update(cx, |input, cx| {
-            if input.value() != value {
-                input.set_value(value, window, cx);
-            }
-        });
     }
 
     fn show_note(
@@ -1129,11 +1102,6 @@ impl SettingsWindow {
     fn control(&self, id: SettingId, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
         match id {
             SettingId::Regions => self.regions_control(palette, cx),
-            SettingId::AwsConfigFile => div()
-                .debug_selector(move || format!("settings.control.{id:?}"))
-                .w(px(260.))
-                .child(Input::new(&self.config_input).small())
-                .into_any_element(),
             _ => match flag(&self.settings, id) {
                 Some(on) => self.switch(id, on, palette, cx),
                 None => self.select_control(id, palette),
@@ -1598,7 +1566,10 @@ impl SettingsWindow {
         ];
         rows.extend(
             [
-                ("Config file", self.settings.aws_config_file.clone()),
+                (
+                    "Config file",
+                    aws_config_setting().unwrap_or_else(|| DEFAULT_AWS_CONFIG_FILE.to_owned()),
+                ),
                 ("Data folder", "~/.config/clouddeck".to_owned()),
                 ("Platform", platform.to_owned()),
             ]
@@ -1773,7 +1744,7 @@ impl Render for SettingsWindow {
                         .into_iter()
                         .map(|(group, ids)| self.group_section(group, &ids, &palette, cx))
                         .collect();
-                    if category == "AWS & Privacy" {
+                    if category == "Privacy" {
                         sections.push(self.stored_data_section(&palette, cx));
                     }
                     sections
@@ -2587,15 +2558,6 @@ mod tests {
 
         assert!(cx.debug_bounds("settings.keymap.9").is_some());
         assert!(cx.debug_bounds("settings.keymap.10").is_none());
-    }
-
-    #[gpui::test]
-    fn aws_pane_has_config_control(cx: &mut TestAppContext) {
-        let (_view, cx) = rooted(cx, Settings::default());
-
-        click(cx, "settings.cat.5");
-
-        assert!(cx.debug_bounds("settings.control.AwsConfigFile").is_some());
     }
 
     #[gpui::test]

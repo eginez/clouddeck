@@ -65,7 +65,7 @@ On the Connect screen, the title is `No AWS profiles detected`, with:
 > Sign in through your browser, then rescan to pick up the profile.
 
 Check that `~/.aws/config` contains a `[profile <name>]` section. If your
-profiles live somewhere else, set `Settings > AWS & Privacy > AWS config file`
+profiles live somewhere else, set `Settings > Amazon Web Services > AWS config file`
 to that file. Then choose `Rescan`. If the file cannot be read, CloudDeck shows
 `Could not read AWS profiles:` followed by the reason.
 

@@ -311,12 +311,18 @@ pub fn read_profile_auth(
         .map_err(|error| error.into_io_error(config_path, credentials_path))
 }
 
-pub fn aws_file_paths() -> (PathBuf, PathBuf) {
-    let home = std::env::var_os("HOME")
+/// The `config_file` setting's default, meaning "use AWS_CONFIG_FILE, else ~/.aws/config".
+pub const DEFAULT_AWS_CONFIG_FILE: &str = "~/.aws/config";
+
+fn home_dir() -> PathBuf {
+    std::env::var_os("HOME")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
         .unwrap_or_default()
-        .join(".aws");
+}
+
+pub fn aws_file_paths() -> (PathBuf, PathBuf) {
+    let home = home_dir().join(".aws");
     let config = std::env::var_os("AWS_CONFIG_FILE")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
@@ -328,8 +334,32 @@ pub fn aws_file_paths() -> (PathBuf, PathBuf) {
     (config, credentials)
 }
 
-pub fn load_profile_auth() -> std::io::Result<Vec<AwsProfileAuth>> {
+/// The config file named by the `config_file` setting, or `None` when it is unset or the default.
+pub fn custom_aws_config_file(setting: Option<&str>) -> Option<PathBuf> {
+    let value = setting?.trim();
+    if value.is_empty() || value == DEFAULT_AWS_CONFIG_FILE {
+        return None;
+    }
+    match value.strip_prefix("~/") {
+        Some(rest) => {
+            let home = std::env::var_os("HOME").filter(|value| !value.is_empty())?;
+            Some(PathBuf::from(home).join(rest))
+        }
+        None => Some(PathBuf::from(value)),
+    }
+}
+
+/// Config and credentials paths for the `config_file` setting; credentials always come from the environment.
+pub fn aws_file_paths_for(setting: Option<&str>) -> (PathBuf, PathBuf) {
     let (config, credentials) = aws_file_paths();
+    (
+        custom_aws_config_file(setting).unwrap_or(config),
+        credentials,
+    )
+}
+
+pub fn load_profile_auth_for(setting: Option<&str>) -> std::io::Result<Vec<AwsProfileAuth>> {
+    let (config, credentials) = aws_file_paths_for(setting);
     read_profile_auth(&config, &credentials)
 }
 
@@ -344,8 +374,8 @@ pub fn parse_profiles(
         .collect())
 }
 
-pub fn load_profiles() -> std::io::Result<Vec<AwsProfile>> {
-    Ok(load_profile_auth()?
+pub fn load_profiles_for(setting: Option<&str>) -> std::io::Result<Vec<AwsProfile>> {
+    Ok(load_profile_auth_for(setting)?
         .into_iter()
         .map(AwsProfile::from)
         .collect())
@@ -655,5 +685,29 @@ mod tests {
             WorkspaceContext::decode(br#"{"provider":"aws","connection":"team","scopes":[]}"#)
                 .is_none()
         );
+    }
+
+    #[test]
+    fn default_or_blank_config_setting_uses_the_environment_paths() {
+        assert_eq!(custom_aws_config_file(None), None);
+        assert_eq!(custom_aws_config_file(Some("  ")), None);
+        assert_eq!(custom_aws_config_file(Some(DEFAULT_AWS_CONFIG_FILE)), None);
+        assert_eq!(aws_file_paths_for(None), aws_file_paths());
+        assert_eq!(aws_file_paths_for(Some("")), aws_file_paths());
+    }
+
+    #[test]
+    fn custom_config_setting_replaces_only_the_config_path() {
+        assert_eq!(
+            custom_aws_config_file(Some("/srv/aws/profiles")),
+            Some(PathBuf::from("/srv/aws/profiles"))
+        );
+        assert_eq!(
+            custom_aws_config_file(Some("~/work/aws-config")),
+            Some(home_dir().join("work/aws-config"))
+        );
+        let (config, credentials) = aws_file_paths_for(Some("/srv/aws/profiles"));
+        assert_eq!(config, PathBuf::from("/srv/aws/profiles"));
+        assert_eq!(credentials, aws_file_paths().1);
     }
 }

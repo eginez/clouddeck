@@ -5,15 +5,42 @@
 //! it never shells out to the AWS CLI.
 
 use aws_config::BehaviorVersion;
+use aws_runtime::env_config::file::{EnvConfigFileKind, EnvConfigFiles};
 use aws_sdk_ec2::operation::describe_instances::DescribeInstancesError;
 use aws_types::region::Region;
 use clouddeck_provider_kit::{
     BoxError, CloudDeckError, ComputeInstanceFilters, ComputeInstanceLoadResult, ComputeService,
     EC2Instance, EC2InstanceTag, EC2SecurityGroup,
 };
-use std::{collections::HashSet, sync::Arc, time::Duration};
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// A custom config file replaces the default `~/.aws/config`; the default
+/// credentials file stays in use either way.
+pub(crate) async fn sdk_config(
+    profile: &str,
+    region: &str,
+    config_file: Option<&Path>,
+) -> aws_config::SdkConfig {
+    let mut loader = aws_config::defaults(BehaviorVersion::latest())
+        .profile_name(profile)
+        .region(Region::new(region.to_owned()));
+    if let Some(path) = config_file {
+        loader = loader.profile_files(
+            EnvConfigFiles::builder()
+                .include_default_credentials_file(true)
+                .with_file(EnvConfigFileKind::Config, path.to_path_buf())
+                .build(),
+        );
+    }
+    loader.load().await
+}
 
 /// One page returned by [`Ec2PageSource`].  Keeping pagination behind this
 /// small seam makes failure and continuation behavior testable without AWS.
@@ -68,6 +95,7 @@ pub struct AwsSdkComputeService {
     pub region: String,
     page_source: Option<Arc<dyn Ec2PageSource>>,
     request_timeout: Duration,
+    config_file: Option<PathBuf>,
 }
 
 impl AwsSdkComputeService {
@@ -77,6 +105,7 @@ impl AwsSdkComputeService {
             region: region.into(),
             page_source: None,
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
+            config_file: None,
         }
     }
 
@@ -92,11 +121,17 @@ impl AwsSdkComputeService {
             region: region.into(),
             page_source: Some(page_source),
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
+            config_file: None,
         }
     }
 
     pub fn with_timeout(mut self, request_timeout: Duration) -> Self {
         self.request_timeout = request_timeout;
+        self
+    }
+
+    pub fn with_config_file(mut self, config_file: Option<PathBuf>) -> Self {
+        self.config_file = config_file;
         self
     }
 
@@ -106,11 +141,7 @@ impl AwsSdkComputeService {
         }
 
         validate_context(&self.profile, &self.region)?;
-        let config = aws_config::defaults(BehaviorVersion::latest())
-            .profile_name(&self.profile)
-            .region(Region::new(self.region.clone()))
-            .load()
-            .await;
+        let config = sdk_config(&self.profile, &self.region, self.config_file.as_deref()).await;
         Ok(Arc::new(SdkEc2PageSource {
             client: aws_sdk_ec2::Client::new(&config),
             region: self.region.clone(),
@@ -277,7 +308,9 @@ fn map_instance(instance: &aws_sdk_ec2::types::Instance, region: &str) -> Option
             .map(str::to_owned),
         image_id: instance.image_id().map(str::to_owned),
         key_name: instance.key_name().map(str::to_owned),
-        architecture: instance.architecture().map(|value| value.as_str().to_owned()),
+        architecture: instance
+            .architecture()
+            .map(|value| value.as_str().to_owned()),
         state_transition_reason: instance
             .state_transition_reason()
             .map(str::to_owned)

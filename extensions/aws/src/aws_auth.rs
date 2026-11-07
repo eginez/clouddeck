@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 use std::future::Future;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::SystemTime;
@@ -12,12 +12,14 @@ use std::time::SystemTime;
 use clouddeck_provider_api::{
     AuthAnswer, AuthInput, AuthMethod, AuthStatus, AuthStep, Call, Connection, ConnectionId,
     ErrorKind, FieldDef, FlowId, InspectorSectionDef, Instance, KindId, KindInfo, ListResult,
-    Provider, ProviderError, ProviderInfo, Selection,
+    Provider, ProviderError, ProviderInfo, Selection, SettingDef, SettingKind, SettingOption,
+    SettingValue,
 };
 
 use clouddeck_provider_kit::{
-    AwsCredentialKind, AwsSsoConfiguration, BoxError, ComputeServiceProvider, Dimension,
-    LoginGuidance, REGION, REGIONS, ScopeSettings, aws_file_paths, list_scenario, load_profiles,
+    AwsCredentialKind, AwsSsoConfiguration, BoxError, ComputeServiceProvider,
+    DEFAULT_AWS_CONFIG_FILE, Dimension, LoginGuidance, REGION, REGIONS, ScopeSettings,
+    aws_file_paths, aws_file_paths_for, custom_aws_config_file, list_scenario, load_profiles_for,
     login_guidance, read_profile_auth,
 };
 
@@ -30,6 +32,8 @@ use crate::aws_sso_login::{
 use crate::routing::{routed_list, verify_instance_access};
 
 const SSO_METHOD_ID: &str = "aws-sso";
+pub(crate) const CONFIG_FILE_SETTING: &str = "config_file";
+pub(crate) const REQUEST_TIMEOUT_SETTING: &str = "request_timeout";
 
 struct Flow {
     authorization: SsoDeviceAuthorization,
@@ -37,7 +41,6 @@ struct Flow {
 }
 
 struct AwsAuth {
-    config: PathBuf,
     credentials: PathBuf,
     home: PathBuf,
     sso: AwsSsoLoginService,
@@ -46,9 +49,8 @@ struct AwsAuth {
 }
 
 impl AwsAuth {
-    fn new(config: PathBuf, credentials: PathBuf, home: PathBuf, sso: AwsSsoLoginService) -> Self {
+    fn new(credentials: PathBuf, home: PathBuf, sso: AwsSsoLoginService) -> Self {
         Self {
-            config,
             credentials,
             home,
             sso,
@@ -64,8 +66,12 @@ impl AwsAuth {
         }]
     }
 
-    fn credential_kind(&self, profile: &str) -> Result<AwsCredentialKind, ProviderError> {
-        let profiles = read_profile_auth(&self.config, &self.credentials)
+    fn credential_kind(
+        &self,
+        config: &Path,
+        profile: &str,
+    ) -> Result<AwsCredentialKind, ProviderError> {
+        let profiles = read_profile_auth(config, &self.credentials)
             .map_err(|error| ProviderError::new(ErrorKind::Other, error.to_string()))?;
         Ok(profiles
             .into_iter()
@@ -75,7 +81,12 @@ impl AwsAuth {
             }))
     }
 
-    fn begin(&self, method: &AuthMethod, input: AuthInput) -> Result<AuthStep, ProviderError> {
+    fn begin(
+        &self,
+        config: &Path,
+        method: &AuthMethod,
+        input: AuthInput,
+    ) -> Result<AuthStep, ProviderError> {
         if method.id != SSO_METHOD_ID {
             return Err(ProviderError::unsupported());
         }
@@ -85,7 +96,7 @@ impl AwsAuth {
                 "Choose a profile to sign in to.",
             ));
         };
-        let kind = self.credential_kind(connection.as_str())?;
+        let kind = self.credential_kind(config, connection.as_str())?;
         match login_guidance(&kind) {
             LoginGuidance::BrowserSignIn(_) => {}
             LoginGuidance::AlreadyConfigured => {
@@ -155,11 +166,11 @@ impl AwsAuth {
             })
     }
 
-    fn status(&self, connection: Option<&ConnectionId>) -> AuthStatus {
+    fn status(&self, config: &Path, connection: Option<&ConnectionId>) -> AuthStatus {
         let Some(connection) = connection else {
             return AuthStatus::SignedOut;
         };
-        match self.credential_kind(connection.as_str()) {
+        match self.credential_kind(config, connection.as_str()) {
             Ok(AwsCredentialKind::Sso(config)) => self.sso_token_status(&config),
             Ok(AwsCredentialKind::SharedCredentials) => AuthStatus::SignedIn { expires: None },
             Ok(_) => AuthStatus::SignedOut,
@@ -182,14 +193,18 @@ impl AwsAuth {
         }
     }
 
-    fn sign_out(&self, connection: Option<&ConnectionId>) -> Result<(), ProviderError> {
+    fn sign_out(
+        &self,
+        config: &Path,
+        connection: Option<&ConnectionId>,
+    ) -> Result<(), ProviderError> {
         let Some(connection) = connection else {
             return Ok(());
         };
-        let AwsCredentialKind::Sso(config) = self.credential_kind(connection.as_str())? else {
+        let AwsCredentialKind::Sso(sso) = self.credential_kind(config, connection.as_str())? else {
             return Ok(());
         };
-        let path = sso_cache_path(sso_cache_identifier(&config), &self.home);
+        let path = sso_cache_path(sso_cache_identifier(&sso), &self.home);
         match std::fs::remove_file(path) {
             Ok(()) => Ok(()),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -269,13 +284,63 @@ struct AwsProvider {
     auth: AwsAuth,
 }
 
+fn config_setting(cx: &Call<'_>) -> Option<String> {
+    cx.host.setting(CONFIG_FILE_SETTING)
+}
+
+fn config_path(cx: &Call<'_>) -> PathBuf {
+    aws_file_paths_for(config_setting(cx).as_deref()).0
+}
+
+fn custom_config_file(cx: &Call<'_>) -> Option<PathBuf> {
+    custom_aws_config_file(config_setting(cx).as_deref())
+}
+
+fn setting_defs() -> Vec<SettingDef> {
+    let option = |seconds: &str| SettingOption {
+        value: seconds.into(),
+        label: format!("{seconds} seconds"),
+    };
+    vec![
+        SettingDef {
+            key: CONFIG_FILE_SETTING.into(),
+            label: "AWS config file".into(),
+            description: Some("Where profiles are read from.".into()),
+            group: None,
+            kind: SettingKind::Path,
+            default: Some(SettingValue::Text(DEFAULT_AWS_CONFIG_FILE.into())),
+            secret: false,
+        },
+        SettingDef {
+            key: REQUEST_TIMEOUT_SETTING.into(),
+            label: "Request timeout".into(),
+            description: Some("Per region, per request.".into()),
+            group: None,
+            kind: SettingKind::Choice(vec![option("15"), option("30"), option("60")]),
+            default: Some(SettingValue::Text("30".into())),
+            secret: false,
+        },
+    ]
+}
+
 impl Provider for AwsProvider {
     fn info(&self) -> ProviderInfo {
         self.inner.info()
     }
 
+    fn settings(&self) -> Vec<SettingDef> {
+        setting_defs()
+    }
+
     fn connections(&self, cx: &Call<'_>) -> Result<Vec<Connection>, ProviderError> {
-        self.inner.connections(cx)
+        let profiles = load_profiles_for(config_setting(cx).as_deref()).unwrap_or_default();
+        Ok(profiles
+            .into_iter()
+            .map(|profile| Connection {
+                id: ConnectionId::from(profile.name.as_str()),
+                display_name: profile.name,
+            })
+            .collect())
     }
 
     fn dimensions(
@@ -331,11 +396,11 @@ impl Provider for AwsProvider {
 
     fn begin_auth(
         &self,
-        _cx: &Call<'_>,
+        cx: &Call<'_>,
         method: &AuthMethod,
         input: AuthInput,
     ) -> Result<AuthStep, ProviderError> {
-        self.auth.begin(method, input)
+        self.auth.begin(&config_path(cx), method, input)
     }
 
     fn continue_auth(
@@ -347,16 +412,16 @@ impl Provider for AwsProvider {
         self.auth.continue_flow(flow, answer)
     }
 
-    fn auth_status(&self, _cx: &Call<'_>, connection: Option<&ConnectionId>) -> AuthStatus {
-        self.auth.status(connection)
+    fn auth_status(&self, cx: &Call<'_>, connection: Option<&ConnectionId>) -> AuthStatus {
+        self.auth.status(&config_path(cx), connection)
     }
 
     fn sign_out(
         &self,
-        _cx: &Call<'_>,
+        cx: &Call<'_>,
         connection: Option<&ConnectionId>,
     ) -> Result<(), ProviderError> {
-        self.auth.sign_out(connection)
+        self.auth.sign_out(&config_path(cx), connection)
     }
 
     fn identity(
@@ -365,7 +430,8 @@ impl Provider for AwsProvider {
         connection: &ConnectionId,
         selection: &Selection,
     ) -> Result<String, ProviderError> {
-        let service = AwsIdentityService::new(connection.as_str(), first_region(selection));
+        let service = AwsIdentityService::new(connection.as_str(), first_region(selection))
+            .with_config_file(custom_config_file(cx));
         within_deadline(cx, service.resolve()).map(|identity| identity.account_id)
     }
 
@@ -378,7 +444,11 @@ impl Provider for AwsProvider {
     ) -> Result<(), ProviderError> {
         within_deadline(
             cx,
-            verify_instance_access(connection.as_str().to_string(), first_region(selection)),
+            verify_instance_access(
+                connection.as_str().to_string(),
+                first_region(selection),
+                custom_config_file(cx),
+            ),
         )
     }
 }
@@ -388,20 +458,12 @@ pub fn aws_provider() -> Arc<dyn Provider> {
 }
 
 pub(crate) fn boxed_aws_provider() -> Box<dyn Provider> {
-    let (config, credentials) = aws_file_paths();
-    let connections = load_profiles()
-        .unwrap_or_default()
-        .into_iter()
-        .map(|profile| Connection {
-            id: ConnectionId::from(profile.name.as_str()),
-            display_name: profile.name,
-        })
-        .collect();
+    let (_, credentials) = aws_file_paths();
     let regions = REGIONS.iter().map(|region| (*region).to_string()).collect();
-    let inner = ComputeServiceProvider::new("aws", connections, regions, |profile, region| {
+    let inner = ComputeServiceProvider::new("aws", Vec::new(), regions, |profile, region| {
         Box::new(AwsSdkComputeService::new(profile, region))
     });
-    let auth = AwsAuth::new(config, credentials, home_dir(), AwsSsoLoginService::new());
+    let auth = AwsAuth::new(credentials, home_dir(), AwsSsoLoginService::new());
     Box::new(AwsProvider { inner, auth })
 }
 
@@ -427,6 +489,7 @@ credential_process = /usr/local/bin/creds
         _dir: tempfile::TempDir,
         auth: AwsAuth,
         home: PathBuf,
+        config: PathBuf,
     }
 
     fn fixture(fake: Arc<FakeProvider>) -> Fixture {
@@ -435,7 +498,6 @@ credential_process = /usr/local/bin/creds
         let config = home.join("config");
         std::fs::write(&config, SSO_PROFILE).unwrap();
         let auth = AwsAuth::new(
-            config,
             home.join("credentials"),
             home.clone(),
             AwsSsoLoginService::with_provider(fake),
@@ -444,6 +506,7 @@ credential_process = /usr/local/bin/creds
             _dir: dir,
             auth,
             home,
+            config,
         }
     }
 
@@ -471,7 +534,7 @@ credential_process = /usr/local/bin/creds
     fn begin_sso(fixture: &Fixture) -> AuthStep {
         fixture
             .auth
-            .begin(&sso_method(fixture), input("sso"))
+            .begin(&fixture.config, &sso_method(fixture), input("sso"))
             .unwrap()
     }
 
@@ -530,7 +593,7 @@ credential_process = /usr/local/bin/creds
 
         let error = fixture
             .auth
-            .begin(&sso_method(&fixture), input("external"))
+            .begin(&fixture.config, &sso_method(&fixture), input("external"))
             .unwrap_err();
 
         assert_eq!(error.kind, ErrorKind::Unsupported);
@@ -541,7 +604,7 @@ credential_process = /usr/local/bin/creds
         let fixture = fixture(approved_after_one_pending_poll());
         let connection = ConnectionId::from("sso");
         assert_eq!(
-            fixture.auth.status(Some(&connection)),
+            fixture.auth.status(&fixture.config, Some(&connection)),
             AuthStatus::SignedOut
         );
 
@@ -552,7 +615,7 @@ credential_process = /usr/local/bin/creds
             Ok(AuthStep::Done)
         );
         assert!(matches!(
-            fixture.auth.status(Some(&connection)),
+            fixture.auth.status(&fixture.config, Some(&connection)),
             AuthStatus::SignedIn { expires: Some(_) }
         ));
 
@@ -562,12 +625,18 @@ credential_process = /usr/local/bin/creds
             r#"{"accessToken":"expired","expiresAt":"2001-01-01T00:00:00Z"}"#,
         )
         .unwrap();
-        assert_eq!(fixture.auth.status(Some(&connection)), AuthStatus::Expired);
+        assert_eq!(
+            fixture.auth.status(&fixture.config, Some(&connection)),
+            AuthStatus::Expired
+        );
 
-        fixture.auth.sign_out(Some(&connection)).unwrap();
+        fixture
+            .auth
+            .sign_out(&fixture.config, Some(&connection))
+            .unwrap();
         assert!(!cache.exists());
         assert_eq!(
-            fixture.auth.status(Some(&connection)),
+            fixture.auth.status(&fixture.config, Some(&connection)),
             AuthStatus::SignedOut
         );
     }
@@ -580,7 +649,9 @@ credential_process = /usr/local/bin/creds
         std::fs::create_dir(&config).unwrap();
 
         assert_eq!(
-            fixture.auth.status(Some(&ConnectionId::from("sso"))),
+            fixture
+                .auth
+                .status(&fixture.config, Some(&ConnectionId::from("sso"))),
             AuthStatus::Unknown
         );
     }
@@ -601,11 +672,12 @@ mod conformance {
     use std::path::Path;
     use std::time::Duration;
 
+    use clouddeck_extension_api::conformance::{check_manifest_settings, check_provider};
+    use clouddeck_provider_api::{ExtrasSection, Host, LogLevel, ProviderError, ResourceId};
     use clouddeck_provider_kit::{
         BoxError, CloudDeckError, ComputeInstanceFilters, ComputeInstanceLoadResult,
         ComputeService, EC2Instance,
     };
-    use clouddeck_extension_api::conformance::check_provider;
 
     use super::*;
     use crate::aws_sso_login::TokenPoll;
@@ -660,8 +732,6 @@ sso_role_name = Admin
     }
 
     fn provider(dir: &Path) -> Box<dyn Provider> {
-        let config = dir.join("config");
-        std::fs::write(&config, PROFILE).unwrap();
         let connections = vec![Connection {
             id: ConnectionId::from("conformance"),
             display_name: "conformance".to_string(),
@@ -680,14 +750,257 @@ sso_role_name = Admin
             Duration::ZERO,
             (0..8).map(|_| Ok(TokenPoll::Pending)).collect(),
         ));
-        let auth = AwsAuth::new(config, dir.join("credentials"), dir.to_path_buf(), sso);
+        let auth = AwsAuth::new(dir.join("credentials"), dir.to_path_buf(), sso);
         Box::new(AwsProvider { inner, auth })
+    }
+
+    struct NoHost;
+
+    impl Host for NoHost {
+        fn log(&self, _level: LogLevel, _message: &str) {}
+
+        fn data_dir(&self) -> PathBuf {
+            PathBuf::new()
+        }
+
+        fn setting(&self, _key: &str) -> Option<String> {
+            None
+        }
+
+        fn secret(&self, _key: &str) -> Option<String> {
+            None
+        }
+
+        fn set_secret(&self, _key: &str, _value: Option<&str>) -> Result<(), ProviderError> {
+            Ok(())
+        }
+
+        fn open_url(&self, _url: &str) -> Result<(), ProviderError> {
+            Ok(())
+        }
+
+        fn cancelled(&self) -> bool {
+            false
+        }
+    }
+
+    struct PinnedHost<'a> {
+        base: &'a dyn Host,
+        config: &'a Path,
+    }
+
+    impl Host for PinnedHost<'_> {
+        fn log(&self, level: LogLevel, message: &str) {
+            self.base.log(level, message)
+        }
+
+        fn data_dir(&self) -> PathBuf {
+            self.base.data_dir()
+        }
+
+        fn setting(&self, key: &str) -> Option<String> {
+            if key == CONFIG_FILE_SETTING {
+                return Some(self.config.display().to_string());
+            }
+            self.base.setting(key)
+        }
+
+        fn secret(&self, key: &str) -> Option<String> {
+            self.base.secret(key)
+        }
+
+        fn set_secret(&self, key: &str, value: Option<&str>) -> Result<(), ProviderError> {
+            self.base.set_secret(key, value)
+        }
+
+        fn open_url(&self, url: &str) -> Result<(), ProviderError> {
+            self.base.open_url(url)
+        }
+
+        fn cancelled(&self) -> bool {
+            self.base.cancelled()
+        }
+    }
+
+    /// Points the wrapped provider at `config` for calls the conformance kit makes with its own host.
+    struct Pinned {
+        inner: Arc<dyn Provider>,
+        config: PathBuf,
+    }
+
+    impl Pinned {
+        fn with_host<R>(&self, cx: &Call<'_>, f: impl FnOnce(&Call<'_>) -> R) -> R {
+            let host = PinnedHost {
+                base: cx.host,
+                config: &self.config,
+            };
+            f(&Call {
+                deadline: cx.deadline,
+                host: &host,
+            })
+        }
+    }
+
+    impl Provider for Pinned {
+        fn info(&self) -> ProviderInfo {
+            self.inner.info()
+        }
+
+        fn connections(&self, cx: &Call<'_>) -> Result<Vec<Connection>, ProviderError> {
+            self.with_host(cx, |cx| self.inner.connections(cx))
+        }
+
+        fn dimensions(
+            &self,
+            cx: &Call<'_>,
+            connection: &ConnectionId,
+        ) -> Result<Vec<Dimension>, ProviderError> {
+            self.with_host(cx, |cx| self.inner.dimensions(cx, connection))
+        }
+
+        fn kinds(&self) -> Vec<KindInfo> {
+            self.inner.kinds()
+        }
+
+        fn list(
+            &self,
+            cx: &Call<'_>,
+            connection: &ConnectionId,
+            kind: &KindId,
+            selection: &Selection,
+        ) -> ListResult {
+            self.with_host(cx, |cx| self.inner.list(cx, connection, kind, selection))
+        }
+
+        fn describe(
+            &self,
+            cx: &Call<'_>,
+            connection: &ConnectionId,
+            kind: &KindId,
+            id: &ResourceId,
+        ) -> Result<Vec<ExtrasSection>, ProviderError> {
+            self.with_host(cx, |cx| self.inner.describe(cx, connection, kind, id))
+        }
+
+        fn settings(&self) -> Vec<SettingDef> {
+            self.inner.settings()
+        }
+
+        fn settings_changed(&self, cx: &Call<'_>, changed: &[String]) {
+            self.with_host(cx, |cx| self.inner.settings_changed(cx, changed))
+        }
+
+        fn auth_methods(&self) -> Vec<AuthMethod> {
+            self.inner.auth_methods()
+        }
+
+        fn begin_auth(
+            &self,
+            cx: &Call<'_>,
+            method: &AuthMethod,
+            input: AuthInput,
+        ) -> Result<AuthStep, ProviderError> {
+            self.with_host(cx, |cx| self.inner.begin_auth(cx, method, input))
+        }
+
+        fn continue_auth(
+            &self,
+            cx: &Call<'_>,
+            flow: &FlowId,
+            answer: AuthAnswer,
+        ) -> Result<AuthStep, ProviderError> {
+            self.with_host(cx, |cx| self.inner.continue_auth(cx, flow, answer))
+        }
+
+        fn auth_status(&self, cx: &Call<'_>, connection: Option<&ConnectionId>) -> AuthStatus {
+            self.with_host(cx, |cx| self.inner.auth_status(cx, connection))
+        }
+
+        fn sign_out(
+            &self,
+            cx: &Call<'_>,
+            connection: Option<&ConnectionId>,
+        ) -> Result<(), ProviderError> {
+            self.with_host(cx, |cx| self.inner.sign_out(cx, connection))
+        }
+
+        fn console_url(
+            &self,
+            connection: &ConnectionId,
+            kind: &KindId,
+            resource: &Instance,
+        ) -> Option<String> {
+            self.inner.console_url(connection, kind, resource)
+        }
+
+        fn fields(&self, kind: &KindId) -> Vec<FieldDef> {
+            self.inner.fields(kind)
+        }
+
+        fn inspector(&self, kind: &KindId) -> Vec<InspectorSectionDef> {
+            self.inner.inspector(kind)
+        }
+
+        fn identity(
+            &self,
+            cx: &Call<'_>,
+            connection: &ConnectionId,
+            selection: &Selection,
+        ) -> Result<String, ProviderError> {
+            self.with_host(cx, |cx| self.inner.identity(cx, connection, selection))
+        }
+
+        fn check_access(
+            &self,
+            cx: &Call<'_>,
+            connection: &ConnectionId,
+            kind: &KindId,
+            selection: &Selection,
+        ) -> Result<(), ProviderError> {
+            self.with_host(cx, |cx| {
+                self.inner.check_access(cx, connection, kind, selection)
+            })
+        }
     }
 
     #[test]
     fn provider_passes_the_conformance_kit() {
         let dir = tempfile::tempdir().unwrap();
-        let violations = check_provider(Arc::from(provider(dir.path())));
+        let config = dir.path().join("custom-config");
+        std::fs::write(&config, PROFILE).unwrap();
+        let pinned = Pinned {
+            inner: Arc::from(provider(dir.path())),
+            config,
+        };
+        let violations = check_provider(Arc::new(pinned));
         assert!(violations.is_empty(), "{violations:#?}");
+    }
+
+    #[test]
+    fn manifest_settings_match_the_code() {
+        let manifest =
+            clouddeck_core::extension_host::Manifest::parse(include_str!("../extension.toml"))
+                .unwrap();
+        let provider = aws_provider();
+        let violations = check_manifest_settings(&*provider, &manifest.settings);
+        assert!(violations.is_empty(), "{}", violations.join("\n"));
+    }
+
+    #[test]
+    fn connections_come_from_the_configured_config_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("custom-config");
+        std::fs::write(&config, PROFILE).unwrap();
+        let pinned = Pinned {
+            inner: Arc::from(provider(dir.path())),
+            config,
+        };
+        let cx = Call {
+            deadline: None,
+            host: &NoHost,
+        };
+        let connections = pinned.connections(&cx).unwrap();
+        let ids: Vec<&str> = connections.iter().map(|c| c.id.as_str()).collect();
+        assert_eq!(ids, ["conformance"]);
     }
 }

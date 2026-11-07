@@ -1,10 +1,8 @@
 //! AWS account identity resolution used to verify onboarding credentials.
 
-use crate::aws_sdk::sdk_error_detail;
-use aws_config::BehaviorVersion;
-use aws_types::region::Region;
+use crate::aws_sdk::{sdk_config, sdk_error_detail};
 use clouddeck_provider_kit::{BoxError, CloudDeckError};
-use std::{sync::Arc, time::Duration};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -58,6 +56,7 @@ pub struct AwsIdentityService {
     pub region: String,
     provider: Option<Arc<dyn AwsIdentityProvider>>,
     request_timeout: Duration,
+    config_file: Option<PathBuf>,
 }
 
 impl AwsIdentityService {
@@ -67,7 +66,13 @@ impl AwsIdentityService {
             region: region.into(),
             provider: None,
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
+            config_file: None,
         }
+    }
+
+    pub fn with_config_file(mut self, config_file: Option<PathBuf>) -> Self {
+        self.config_file = config_file;
+        self
     }
 
     #[cfg(test)]
@@ -81,6 +86,7 @@ impl AwsIdentityService {
             region: region.into(),
             provider: Some(provider),
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
+            config_file: None,
         }
     }
 
@@ -89,11 +95,8 @@ impl AwsIdentityService {
         let provider = match self.provider.as_ref() {
             Some(provider) => Arc::clone(provider),
             None => {
-                let config = aws_config::defaults(BehaviorVersion::latest())
-                    .profile_name(&self.profile)
-                    .region(Region::new(self.region.clone()))
-                    .load()
-                    .await;
+                let config =
+                    sdk_config(&self.profile, &self.region, self.config_file.as_deref()).await;
                 Arc::new(SdkIdentityProvider {
                     client: aws_sdk_sts::Client::new(&config),
                 })

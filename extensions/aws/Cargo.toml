@@ -33,6 +33,7 @@ aws-sdk-sts = { version = "1.113.0", default-features = false, features = [
     "default-https-client",
     "rt-tokio",
 ] }
+aws-runtime = "1.9.1"
 aws-types = "1.5.0"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 clouddeck-extension-api = { path = "../../crates/clouddeck-extension-api" }

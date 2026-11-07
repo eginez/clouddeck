@@ -12,7 +12,7 @@ use std::sync::Arc;
 use clouddeck_extension_api::{
     AuthAnswer, AuthInput, AuthMethod, AuthStatus, AuthStep, Call, Connection, ConnectionId,
     Dimension, Extension, ExtrasSection, FieldDef, FlowId, InspectorSectionDef, Instance, KindId,
-    KindInfo, ListResult, Provider, ProviderError, ProviderInfo, ResourceId, Selection,
+    KindInfo, ListResult, Provider, ProviderError, ProviderInfo, ResourceId, Selection, SettingDef,
     register_extension,
 };
 
@@ -42,6 +42,14 @@ struct Shared(Arc<dyn Provider>);
 impl Provider for Shared {
     fn info(&self) -> ProviderInfo {
         self.0.info()
+    }
+
+    fn settings(&self) -> Vec<SettingDef> {
+        self.0.settings()
+    }
+
+    fn settings_changed(&self, cx: &Call<'_>, changed: &[String]) {
+        self.0.settings_changed(cx, changed)
     }
 
     fn connections(&self, cx: &Call<'_>) -> Result<Vec<Connection>, ProviderError> {

@@ -28,6 +28,8 @@ use std::{
 actions!(clouddeck, [Refresh]);
 
 const UI_STATE_SAVE_DEBOUNCE: Duration = Duration::from_secs(1);
+/// Scope timeout handed to the AWS plugin; its own `request_timeout` setting takes precedence.
+const SCOPE_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub fn app_key_bindings() -> [KeyBinding; 2] {
     [
@@ -325,7 +327,7 @@ impl AppShell {
         if demo {
             Ok(demo_profiles(demo_scenario))
         } else {
-            clouddeck_core::load_profiles()
+            clouddeck_core::load_profiles_for(clouddeck_core::aws_config_setting().as_deref())
         }
     }
 
@@ -546,7 +548,7 @@ impl AppShell {
             restored
         };
         let fleet_regions = Self::fleet_regions(&scope, &available);
-        let request_timeout = settings.request_timeout();
+        let request_timeout = SCOPE_REQUEST_TIMEOUT;
         let providers = app_providers::providers(cx);
         let mut context_model = ContextModel::new(
             providers
@@ -687,7 +689,6 @@ impl AppShell {
     fn handle_settings_event(&mut self, event: &SettingsEvent, cx: &mut Context<Self>) {
         match event {
             SettingsEvent::Changed(settings) => {
-                self.request_timeout = settings.request_timeout();
                 let main_window = self.main_window.clone();
                 let _ = self.window_handle.update(cx, |_, window, cx| {
                     main_window.update(cx, |main_window, cx| {
