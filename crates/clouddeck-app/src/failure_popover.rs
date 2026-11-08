@@ -619,4 +619,26 @@ mod tests {
         ));
         assert!(text.ends_with(&failure_body(4, "12:01", 3)));
     }
+
+    #[test]
+    fn single_failure_body_leads_with_advice_unless_it_repeats_the_message() {
+        let mut entry = failure("us-east-1", "AccessDenied");
+        let advice = failure_advice(&entry.error);
+        assert_eq!(
+            single_failure_body(&entry, "12:01", 0),
+            format!("{} {}", advice.text(), failure_body(4, "12:01", 0))
+        );
+        entry.message = advice.cause.clone();
+        assert_eq!(
+            single_failure_body(&entry, "12:01", 0),
+            failure_body(4, "12:01", 0)
+        );
+    }
+
+    #[test]
+    fn title_record_uses_warning_text() {
+        let record = title_record("Couldn’t load".to_string());
+        assert_eq!(record.text, Some("Couldn’t load".to_string()));
+        assert_eq!(record.fg, Some("warntext"));
+    }
 }

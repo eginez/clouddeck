@@ -295,4 +295,26 @@ mod tests {
             .expect("center title records");
         assert_eq!(title.text, Some("Couldn’t load instances".to_string()));
     }
+
+    #[test]
+    fn state_icon_colours_follow_the_state() {
+        let palette = crate::tokens::Palette::dark();
+        let cases = [
+            (CenterState::Loading, palette.accent),
+            (CenterState::EmptyFleet, palette.faint),
+            (CenterState::NoMatch, palette.faint),
+            (CenterState::SignedOut, palette.faint),
+            (CenterState::Offline, palette.faint),
+            (CenterState::Throttled, palette.warntext),
+            (
+                CenterState::Error {
+                    message: "boom".to_string(),
+                },
+                palette.err,
+            ),
+        ];
+        for (state, colour) in cases {
+            assert_eq!(state_icon(&state, &palette).1, colour, "{state:?}");
+        }
+    }
 }

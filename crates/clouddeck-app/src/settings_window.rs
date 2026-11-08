@@ -2625,4 +2625,82 @@ mod tests {
         };
         assert_eq!(unit_suffix(&kind), Some("seconds"));
     }
+
+    fn setting(key: &str, group: Option<&str>) -> SettingDef {
+        SettingDef {
+            key: key.to_string(),
+            label: key.to_string(),
+            description: None,
+            group: group.map(str::to_string),
+            kind: SettingKind::Text,
+            default: None,
+            secret: false,
+        }
+    }
+
+    fn category(settings: Vec<SettingDef>) -> SettingsCategory {
+        SettingsCategory {
+            extension: "aws".to_string(),
+            name: "AWS".to_string(),
+            settings,
+        }
+    }
+
+    #[test]
+    fn provider_match_count_sums_settings_across_categories() {
+        let hits = [
+            category(vec![setting("a", None), setting("b", None)]),
+            category(Vec::new()),
+            category(vec![setting("c", None)]),
+        ];
+        assert_eq!(provider_match_count(&hits), 3);
+        assert_eq!(provider_match_count(&[]), 0);
+    }
+
+    #[test]
+    fn field_key_pairs_extension_with_setting_key() {
+        assert_eq!(
+            field_key("aws", "region"),
+            ("aws".to_string(), "region".to_string())
+        );
+    }
+
+    #[test]
+    fn display_text_is_empty_without_a_value() {
+        assert_eq!(display_text(None), "");
+        assert_eq!(display_text(Some(SettingValue::Bool(true))), "true");
+        assert_eq!(display_text(Some(SettingValue::DurationSecs(45))), "45");
+    }
+
+    #[test]
+    fn provider_groups_keep_first_appearance_order() {
+        let defs = [
+            setting("a", Some("Network")),
+            setting("b", None),
+            setting("c", Some("Network")),
+            setting("d", Some("Auth")),
+        ];
+        let groups: Vec<(Option<&str>, Vec<&str>)> = provider_groups(&defs)
+            .into_iter()
+            .map(|(name, defs)| (name, defs.iter().map(|def| def.key.as_str()).collect()))
+            .collect();
+        assert_eq!(
+            groups,
+            vec![
+                (Some("Network"), vec!["a", "c"]),
+                (None, vec!["b"]),
+                (Some("Auth"), vec!["d"]),
+            ]
+        );
+    }
+
+    #[test]
+    fn host_platform_matches_build_target() {
+        let expected = if cfg!(target_os = "macos") {
+            Platform::Mac
+        } else {
+            Platform::Linux
+        };
+        assert_eq!(host_platform(), expected);
+    }
 }

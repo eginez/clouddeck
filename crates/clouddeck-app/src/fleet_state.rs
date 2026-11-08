@@ -880,4 +880,33 @@ mod tests {
         cx.run_until_parked();
         state.read_with(cx, |state, _| assert_eq!(state.flash, None));
     }
+
+    fn plain_state() -> FleetState {
+        let vm = InstanceListViewModel::new(fleet::static_provider(fleet::instances(&[(
+            "i-1",
+            "api-server",
+            "running",
+            "t3.medium",
+        )])));
+        FleetState::new(vm, "default".to_string(), true)
+    }
+
+    #[test]
+    fn column_shown_respects_hidden_columns() {
+        let mut state = plain_state();
+        assert!(state.column_shown(Column::Name));
+        state.hidden_columns.push(Column::Name);
+        assert!(!state.column_shown(Column::Name));
+    }
+
+    #[test]
+    fn table_columns_omit_hidden_columns_except_the_name() {
+        let mut state = plain_state();
+        assert!(state.table_columns(4000.0, 4000.0).contains(&Column::InstanceId));
+        state.hidden_columns.push(Column::InstanceId);
+        state.hidden_columns.push(Column::Name);
+        let columns = state.table_columns(4000.0, 4000.0);
+        assert!(!columns.contains(&Column::InstanceId));
+        assert!(columns.contains(&Column::Name));
+    }
 }

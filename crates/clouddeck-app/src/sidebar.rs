@@ -649,4 +649,33 @@ mod tests {
         assert!(!is_value(Some("stopped"), "running"));
         assert!(!is_value(None, "running"));
     }
+
+    fn type_counts(count: usize) -> Vec<(String, usize)> {
+        (0..count)
+            .map(|i| (format!("t{i:02}"), count - i))
+            .collect()
+    }
+
+    #[test]
+    fn visible_types_shows_every_type_when_expanded() {
+        let counts = type_counts(TYPE_FACETS_SHOWN + 3);
+        assert_eq!(visible_types(&counts, true, None), counts);
+    }
+
+    #[test]
+    fn visible_types_appends_active_type_outside_the_top_facets() {
+        let counts = type_counts(TYPE_FACETS_SHOWN + 3);
+        let last = counts.last().cloned().unwrap();
+        let shown = visible_types(&counts, false, Some(&last.0));
+        assert_eq!(shown.len(), TYPE_FACETS_SHOWN + 1);
+        assert_eq!(shown.last(), Some(&last));
+    }
+
+    #[test]
+    fn visible_types_does_not_repeat_an_active_top_type() {
+        let counts = type_counts(TYPE_FACETS_SHOWN + 3);
+        let top = top_types(&counts, TYPE_FACETS_SHOWN);
+        let active = top[0].0.clone();
+        assert_eq!(visible_types(&counts, false, Some(&active)), top);
+    }
 }
