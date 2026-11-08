@@ -104,6 +104,10 @@ impl AboutInfo {
     }
 }
 
+pub fn version_short() -> String {
+    AboutInfo::with_build(VERSION, COMMIT, CHANNEL, Vec::new()).version_short
+}
+
 /// `refusals` comes from the app's `ProviderRegistry::refusals`, so rows match what the app loads.
 pub fn about_info(
     bundled_root: Option<&Path>,
