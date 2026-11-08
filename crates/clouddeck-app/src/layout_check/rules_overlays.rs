@@ -51,6 +51,15 @@ macro_rules! column_menu_rules {
                 "name item inside the chooser",
             ),
             column_menu_rule(
+                concat!($p, "item-provider-inside"),
+                $state,
+                Check::Inside {
+                    inner: "table.columns.item.provider",
+                    outer: "table.columns.menu",
+                },
+                "provider item inside the chooser",
+            ),
+            column_menu_rule(
                 concat!($p, "item-instance-id-inside"),
                 $state,
                 Check::Inside {
@@ -121,6 +130,15 @@ macro_rules! column_menu_rules {
                     text: "Name",
                 },
                 "name item text",
+            ),
+            column_menu_rule(
+                concat!($p, "text-provider"),
+                $state,
+                Check::TextIs {
+                    target: "table.columns.item.provider",
+                    text: "Provider",
+                },
+                "provider item text",
             ),
             column_menu_rule(
                 concat!($p, "text-instance-id"),
@@ -195,6 +213,15 @@ macro_rules! column_menu_rules {
                 "name item above instance id item",
             ),
             column_menu_rule(
+                concat!($p, "above-provider-name"),
+                $state,
+                Check::Above {
+                    upper: "table.columns.item.provider",
+                    lower: "table.columns.item.name",
+                },
+                "provider item above name item",
+            ),
+            column_menu_rule(
                 concat!($p, "above-instance-id-state"),
                 $state,
                 Check::Above {
@@ -253,6 +280,12 @@ macro_rules! column_menu_rules {
                 $state,
                 Check::HeightBetween("table.columns.item.name", 27.0, 29.0),
                 "name item not clipped vertically",
+            ),
+            column_menu_rule(
+                concat!($p, "height-provider"),
+                $state,
+                Check::HeightBetween("table.columns.item.provider", 27.0, 29.0),
+                "provider item not clipped vertically",
             ),
             column_menu_rule(
                 concat!($p, "height-instance-id"),
