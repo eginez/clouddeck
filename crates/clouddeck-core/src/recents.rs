@@ -21,6 +21,7 @@ pub fn push_recent(list: &mut Vec<String>, item: &str, limit: usize) {
 }
 
 /// Appends a trimmed query to the pins unless it is empty or already pinned.
+#[cfg(test)]
 pub fn pin_search(pins: &mut Vec<String>, query: &str) -> bool {
     let trimmed = query.trim();
     if trimmed.is_empty() || is_pinned(pins, trimmed) {
@@ -31,6 +32,7 @@ pub fn pin_search(pins: &mut Vec<String>, query: &str) -> bool {
 }
 
 /// Removes and returns the pin at `index`, or `None` when out of range.
+#[cfg(test)]
 pub fn unpin_search(pins: &mut Vec<String>, index: usize) -> Option<String> {
     (index < pins.len()).then(|| pins.remove(index))
 }

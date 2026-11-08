@@ -198,6 +198,7 @@ pub fn visible_columns(window_width: f32) -> Vec<Column> {
 }
 
 /// Columns that fit the table pane, dropping from the right until their widths fit or three remain.
+#[cfg(test)]
 pub fn visible_columns_fit(window_width: f32, pane_width: f32) -> Vec<Column> {
     visible_columns_fit_hidden(window_width, pane_width, &[])
 }

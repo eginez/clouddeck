@@ -36,8 +36,10 @@ pub use scenario_service::{
     DEFAULT_FAILURE_MESSAGE, ScenarioFailureError, ScenarioService, TestScenarioKind,
 };
 
+#[cfg(test)]
 mod instance_detail_view_model;
 mod instance_list_view_model;
+#[cfg(test)]
 pub use instance_detail_view_model::InstanceDetailViewModel;
 pub use instance_list_view_model::{InstanceListViewModel, LoadRequest};
 mod merged_list_view_model;
@@ -52,7 +54,9 @@ pub mod fixture_fleet;
 #[cfg(feature = "test-support")]
 pub use extension_host::load_extension;
 pub use extension_host::{LoadError, LoadedExtension};
+#[cfg(test)]
 mod bound_provider;
+#[cfg(test)]
 pub use bound_provider::{BoundProvider, bound_provider};
 mod demo_provider;
 #[cfg(test)]

@@ -547,6 +547,7 @@ pub fn changed_categories(settings: &Settings) -> Vec<&'static str> {
 }
 
 /// Number of settings that differ from their defaults.
+#[cfg(test)]
 pub fn changed_count(settings: &Settings) -> usize {
     SettingId::ALL
         .iter()

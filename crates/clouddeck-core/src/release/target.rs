@@ -47,6 +47,7 @@ pub fn asset_name(version: &str, target: Target) -> String {
 }
 
 /// The macOS disk image asset name for a version.
+#[cfg(test)]
 pub fn dmg_name(version: &str) -> String {
     format!("CloudDeck-{version}-macos-aarch64.dmg")
 }
