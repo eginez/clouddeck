@@ -1351,7 +1351,7 @@ dependencies = [
 
 [[package]]
 name = "clouddeck-app"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "chrono",
  "clouddeck-core",
@@ -1366,7 +1366,7 @@ dependencies = [
 
 [[package]]
 name = "clouddeck-aws"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "async-trait",
  "aws-config",
@@ -1389,7 +1389,7 @@ dependencies = [
 
 [[package]]
 name = "clouddeck-core"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "async-trait",
  "base64",
@@ -1418,7 +1418,7 @@ dependencies = [
 
 [[package]]
 name = "clouddeck-extension-api"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "clouddeck-provider-api",
  "serde",
@@ -1427,7 +1427,7 @@ dependencies = [
 
 [[package]]
 name = "clouddeck-extension-toy"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "clouddeck-core",
  "clouddeck-extension-api",
@@ -1437,7 +1437,7 @@ dependencies = [
 
 [[package]]
 name = "clouddeck-gcp"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "clouddeck-extension-api",
  "serde",
@@ -1448,7 +1448,7 @@ dependencies = [
 
 [[package]]
 name = "clouddeck-provider-api"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -1456,7 +1456,7 @@ dependencies = [
 
 [[package]]
 name = "clouddeck-provider-kit"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "async-trait",
  "chrono",
