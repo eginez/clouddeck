@@ -12,7 +12,7 @@ use clouddeck_core::release::manifest::{
     Asset, AvailableUpdate, check_tag, parse_manifest, update_for,
 };
 use clouddeck_core::release::schedule::{UpdateState, should_auto_check, state_after_check};
-use clouddeck_core::release::source::{FetchedRelease, UpdateSource, github_source_from_env};
+use clouddeck_core::release::source::{UpdateSource, github_source_from_env};
 use clouddeck_core::release::target::{Target, current_target, current_version};
 use clouddeck_core::release::verify::{RELEASE_PUBLIC_KEY, check_asset, verify_manifest};
 use clouddeck_core::{Settings, settings_path};
@@ -212,11 +212,7 @@ impl Updater {
 
 /// Starts the updater with the release source from the environment and an hourly auto check.
 pub fn start(cx: &mut App) -> Entity<Updater> {
-    let source: Arc<dyn UpdateSource> = match github_source_from_env() {
-        Ok(source) => Arc::new(source),
-        Err(message) => Arc::new(UnavailableSource(message)),
-    };
-    start_with_source(cx, source, settings_path())
+    start_with_source(cx, Arc::new(github_source_from_env()), settings_path())
 }
 
 fn start_with_source(
@@ -258,23 +254,6 @@ fn start_with_source(
 
 fn auto_check_enabled(settings_file: &Path) -> bool {
     Settings::load(settings_file).check_for_updates
-}
-
-struct UnavailableSource(String);
-
-impl UpdateSource for UnavailableSource {
-    fn latest(&self) -> Result<FetchedRelease, String> {
-        Err(self.0.clone())
-    }
-
-    fn download(
-        &self,
-        _asset_name: &str,
-        _max_bytes: u64,
-        _progress: &mut dyn FnMut(u64, u64),
-    ) -> Result<Vec<u8>, String> {
-        Err(self.0.clone())
-    }
 }
 
 fn fetch_update(
@@ -336,6 +315,7 @@ pub(crate) fn spawn_relaunch(exe: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clouddeck_core::release::source::FetchedRelease;
     use std::collections::BTreeMap;
     use std::fs;
     use std::sync::atomic::AtomicUsize;
