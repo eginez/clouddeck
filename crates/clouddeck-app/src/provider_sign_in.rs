@@ -9,8 +9,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use clouddeck_core::{
-    AuthAnswer, AuthStep, ErrorKind, FlowId, Provider, ProviderError, SignInAction,
-    sign_in_action, sign_in_failed_message, sign_in_message, start_sign_in,
+    AuthAnswer, AuthStep, ErrorKind, FlowId, Provider, ProviderError, SignInAction, sign_in_action,
+    sign_in_failed_message, sign_in_message, start_sign_in,
 };
 use gpui::{App, AsyncApp, Entity};
 
@@ -18,11 +18,12 @@ use crate::account_connect::{off_thread, with_call};
 use crate::fleet_state::FleetState;
 
 /// Starts `provider`'s sign-in unless one is already running for it. Returns
-/// whether a new flow started.
+/// whether a new flow started. `on_signed_in` runs only when the flow completes.
 pub fn begin_provider_sign_in(
     provider: Arc<dyn Provider>,
     fleet: Entity<FleetState>,
     in_flight: Rc<RefCell<HashSet<String>>>,
+    on_signed_in: impl FnOnce(&mut App) + 'static,
     cx: &mut App,
 ) -> bool {
     let id = provider.info().id;
@@ -30,14 +31,17 @@ pub fn begin_provider_sign_in(
         return false;
     }
     cx.spawn(async move |cx| {
-        drive(provider, &fleet, cx).await;
+        let signed_in = drive(provider, &fleet, cx).await;
         in_flight.borrow_mut().remove(&id);
+        if signed_in {
+            let _ = cx.update(on_signed_in);
+        }
     })
     .detach();
     true
 }
 
-async fn drive(provider: Arc<dyn Provider>, fleet: &Entity<FleetState>, cx: &mut AsyncApp) {
+async fn drive(provider: Arc<dyn Provider>, fleet: &Entity<FleetState>, cx: &mut AsyncApp) -> bool {
     let name = provider.info().name;
     let mut opened: Vec<FlowId> = Vec::new();
     let mut deadline: Option<Instant> = None;
@@ -50,7 +54,7 @@ async fn drive(provider: Arc<dyn Provider>, fleet: &Entity<FleetState>, cx: &mut
         Ok(step) => step,
         Err(error) => {
             show(fleet, sign_in_failed_message(&name, &error), cx);
-            return;
+            return false;
         }
     };
     loop {
@@ -62,12 +66,12 @@ async fn drive(provider: Arc<dyn Provider>, fleet: &Entity<FleetState>, cx: &mut
         match action {
             SignInAction::Finish => {
                 show(fleet, message, cx);
-                return;
+                return true;
             }
             SignInAction::NeedsInput { flow } => {
                 cancel_flow(provider.clone(), flow, cx).await;
                 show(fleet, message, cx);
-                return;
+                return false;
             }
             SignInAction::OpenBrowser {
                 flow, url, poll, ..
@@ -77,16 +81,12 @@ async fn drive(provider: Arc<dyn Provider>, fleet: &Entity<FleetState>, cx: &mut
                     let _ = cx.update(|cx| cx.open_url(&url));
                 }
                 if !show(fleet, message, cx) || !poll {
-                    return;
+                    return false;
                 }
                 if deadline_passed(deadline) {
                     cancel_flow(provider.clone(), flow, cx).await;
-                    show(
-                        fleet,
-                        sign_in_failed_message(&name, &expired_error()),
-                        cx,
-                    );
-                    return;
+                    show(fleet, sign_in_failed_message(&name, &expired_error()), cx);
+                    return false;
                 }
                 let polled = off_thread(cx, {
                     let provider = provider.clone();
@@ -97,7 +97,7 @@ async fn drive(provider: Arc<dyn Provider>, fleet: &Entity<FleetState>, cx: &mut
                     Ok(next) => step = next,
                     Err(error) => {
                         show(fleet, sign_in_failed_message(&name, &error), cx);
-                        return;
+                        return false;
                     }
                 }
             }
@@ -130,6 +130,7 @@ fn show(fleet: &Entity<FleetState>, text: String, cx: &mut AsyncApp) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
     use std::collections::VecDeque;
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -266,7 +267,9 @@ mod tests {
         in_flight: &Rc<RefCell<HashSet<String>>>,
     ) -> bool {
         let provider: Arc<dyn Provider> = provider.clone();
-        cx.update(|cx| begin_provider_sign_in(provider, fleet.clone(), in_flight.clone(), cx))
+        cx.update(|cx| {
+            begin_provider_sign_in(provider, fleet.clone(), in_flight.clone(), |_| {}, cx)
+        })
     }
 
     fn flash(cx: &mut TestAppContext, fleet: &Entity<FleetState>) -> Option<String> {
@@ -376,6 +379,43 @@ mod tests {
 
         assert_eq!(provider.begin_calls.load(Ordering::SeqCst), 0);
         assert!(flash(cx, &fleet).is_none());
+    }
+
+    fn run_flow_counting_signed_in(
+        cx: &mut TestAppContext,
+        provider: &Arc<FakeSignIn>,
+    ) -> Rc<Cell<usize>> {
+        let fleet = fleet_for(cx, provider.clone());
+        let in_flight = Rc::default();
+        let calls = Rc::new(Cell::new(0));
+        let counter = calls.clone();
+        let provider: Arc<dyn Provider> = provider.clone();
+        cx.update(|cx| {
+            begin_provider_sign_in(
+                provider,
+                fleet,
+                in_flight,
+                move |_: &mut App| counter.set(counter.get() + 1),
+                cx,
+            )
+        });
+        cx.run_until_parked();
+        calls
+    }
+
+    #[gpui::test]
+    fn finishing_the_flow_runs_the_signed_in_callback(cx: &mut TestAppContext) {
+        let provider = FakeSignIn::new(Ok(device_code(None)), vec![AuthStep::Done]);
+        assert_eq!(run_flow_counting_signed_in(cx, &provider).get(), 1);
+    }
+
+    #[gpui::test]
+    fn a_failed_flow_does_not_run_the_signed_in_callback(cx: &mut TestAppContext) {
+        let provider = FakeSignIn::new(
+            Err(ProviderError::new(ErrorKind::Auth, "token expired")),
+            vec![],
+        );
+        assert_eq!(run_flow_counting_signed_in(cx, &provider).get(), 0);
     }
 
     #[gpui::test]
