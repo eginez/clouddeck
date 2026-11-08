@@ -50,6 +50,7 @@ mod updater;
 // `AppShell::render`'s `table_and_status_are_docked_without_a_sidebar` test.
 #[cfg(test)]
 mod context_bar_provider_tests;
+#[cfg(test)]
 mod view_models;
 mod welcome_window;
 

@@ -472,6 +472,7 @@ impl AppShell {
         }
     }
 
+    #[cfg(test)]
     fn provider_for(
         providers: &[std::sync::Arc<dyn Provider>],
         context: &WorkspaceContext,
@@ -1098,16 +1099,15 @@ impl AppShell {
         providers: &[std::sync::Arc<dyn Provider>],
         fleet_regions: &[String],
     ) -> ListView {
-        self.context_model
-            .shows_all_providers()
-            .then(|| {
-                all_providers_view(
-                    providers,
-                    self.demo.then_some(self.demo_scenario),
-                    self.request_timeout,
-                )
-            })
-            .unwrap_or_else(|| self.active_provider_view(providers, fleet_regions))
+        if self.context_model.shows_all_providers() {
+            all_providers_view(
+                providers,
+                self.demo.then_some(self.demo_scenario),
+                self.request_timeout,
+            )
+        } else {
+            self.active_provider_view(providers, fleet_regions)
+        }
     }
 
     fn active_provider_view(
