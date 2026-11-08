@@ -63,12 +63,10 @@ impl FleetComputeService {
     }
 }
 
-#[async_trait::async_trait]
-impl ComputeService for FleetComputeService {
-    async fn list_instances(
-        &self,
-        filters: Option<ComputeInstanceFilters>,
-    ) -> Result<ComputeInstanceLoadResult, BoxError> {
+type RegionOutcome = (usize, String, Result<ComputeInstanceLoadResult, BoxError>);
+
+impl FleetComputeService {
+    async fn load_regions(&self, filters: Option<ComputeInstanceFilters>) -> Vec<RegionOutcome> {
         let mut tasks = tokio::task::JoinSet::new();
         for (index, region) in self.regions.iter().cloned().enumerate() {
             let service_factory = self.service_factory.clone();
@@ -112,63 +110,77 @@ impl ComputeService for FleetComputeService {
             }
         }
 
-        // Completion order is intentionally independent of result order. Use
-        // the original region order for deterministic errors and diagnostics.
-        completed.sort_by_key(|(index, _, _)| *index);
-        let mut aggregated_instances = Vec::new();
-        let mut partial_failures: Vec<ComputeServicePartialFailure> = Vec::new();
-        let mut had_successful_region_load = false;
-
-        for (_, region, result) in completed {
-            match result {
-                Ok(result) => {
-                    had_successful_region_load = true;
-                    aggregated_instances.extend(result.instances.into_iter().map(
-                        |mut instance| {
-                            instance.region = Some(region.clone());
-                            instance
-                        },
-                    ));
-                    partial_failures.extend(result.partial_failures);
-                }
-                Err(error) => {
-                    let cloud_deck_error = error
-                        .downcast_ref::<CloudDeckError>()
-                        .cloned()
-                        .unwrap_or_else(|| CloudDeckError::from_service_error(error.as_ref()));
-                    partial_failures.push(ComputeServicePartialFailure {
-                        region: region.clone(),
-                        message: cloud_deck_error.user_message(),
-                        error: cloud_deck_error,
-                    });
-                }
-            }
-        }
-
-        aggregated_instances.sort_by(|a, b| {
-            let region_a = a.region.as_deref().unwrap_or("");
-            let region_b = b.region.as_deref().unwrap_or("");
-            let region_cmp = region_a.to_lowercase().cmp(&region_b.to_lowercase());
-            if region_cmp == std::cmp::Ordering::Equal {
-                a.instance_id
-                    .to_lowercase()
-                    .cmp(&b.instance_id.to_lowercase())
-            } else {
-                region_cmp
-            }
-        });
-
-        if !had_successful_region_load && let Some(first_failure) = partial_failures.first() {
-            return Err(Box::new(first_failure.error.clone()));
-        }
-
-        partial_failures.sort_by_key(|f| f.region.to_lowercase());
-
-        Ok(ComputeInstanceLoadResult {
-            instances: aggregated_instances,
-            partial_failures,
-        })
+        completed
     }
+}
+
+#[async_trait::async_trait]
+impl ComputeService for FleetComputeService {
+    async fn list_instances(
+        &self,
+        filters: Option<ComputeInstanceFilters>,
+    ) -> Result<ComputeInstanceLoadResult, BoxError> {
+        aggregate_regions(self.load_regions(filters).await)
+    }
+}
+
+fn aggregate_regions(
+    mut completed: Vec<RegionOutcome>,
+) -> Result<ComputeInstanceLoadResult, BoxError> {
+    // Completion order is intentionally independent of result order. Use
+    // the original region order for deterministic errors and diagnostics.
+    completed.sort_by_key(|(index, _, _)| *index);
+    let mut aggregated_instances = Vec::new();
+    let mut partial_failures: Vec<ComputeServicePartialFailure> = Vec::new();
+    let mut had_successful_region_load = false;
+
+    for (_, region, result) in completed {
+        match result {
+            Ok(result) => {
+                had_successful_region_load = true;
+                aggregated_instances.extend(result.instances.into_iter().map(|mut instance| {
+                    instance.region = Some(region.clone());
+                    instance
+                }));
+                partial_failures.extend(result.partial_failures);
+            }
+            Err(error) => {
+                let cloud_deck_error = error
+                    .downcast_ref::<CloudDeckError>()
+                    .cloned()
+                    .unwrap_or_else(|| CloudDeckError::from_service_error(error.as_ref()));
+                partial_failures.push(ComputeServicePartialFailure {
+                    region: region.clone(),
+                    message: cloud_deck_error.user_message(),
+                    error: cloud_deck_error,
+                });
+            }
+        }
+    }
+
+    aggregated_instances.sort_by(|a, b| {
+        let region_a = a.region.as_deref().unwrap_or("");
+        let region_b = b.region.as_deref().unwrap_or("");
+        let region_cmp = region_a.to_lowercase().cmp(&region_b.to_lowercase());
+        if region_cmp == std::cmp::Ordering::Equal {
+            a.instance_id
+                .to_lowercase()
+                .cmp(&b.instance_id.to_lowercase())
+        } else {
+            region_cmp
+        }
+    });
+
+    if !had_successful_region_load && let Some(first_failure) = partial_failures.first() {
+        return Err(Box::new(first_failure.error.clone()));
+    }
+
+    partial_failures.sort_by_key(|f| f.region.to_lowercase());
+
+    Ok(ComputeInstanceLoadResult {
+        instances: aggregated_instances,
+        partial_failures,
+    })
 }
 
 #[cfg(test)]

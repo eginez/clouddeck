@@ -84,10 +84,22 @@ pub fn dispatch<E: Extension>(
     method: u32,
     request: &[u8],
 ) -> Vec<u8> {
+    let unsupported = || error_response(ErrorKind::Unsupported, format!("unknown method {method}"));
     let Some(method) = Method::from_code(method) else {
-        return error_response(ErrorKind::Unsupported, format!("unknown method {method}"));
+        return unsupported();
     };
-    match method {
+    catalog_call(extension, host, method, request)
+        .or_else(|| auth_call(extension, host, method, request))
+        .unwrap_or_else(unsupported)
+}
+
+fn catalog_call<E: Extension>(
+    extension: &E,
+    host: &dyn Host,
+    method: Method,
+    request: &[u8],
+) -> Option<Vec<u8>> {
+    let response = match method {
         Method::Info => serve(extension, host, request, |p, _, ()| Ok(p.info())),
         Method::Connections => serve(extension, host, request, |p, cx, ()| p.connections(cx)),
         Method::Dimensions => serve(
@@ -113,6 +125,47 @@ pub fn dispatch<E: Extension>(
                 p.describe(cx, &connection, &kind, &id)
             },
         ),
+        Method::ConsoleUrl => serve(
+            extension,
+            host,
+            request,
+            |p, _, (connection, kind, resource): (ConnectionId, KindId, Instance)| {
+                Ok(p.console_url(&connection, &kind, &resource))
+            },
+        ),
+        Method::Fields => serve(extension, host, request, |p, _, kind: KindId| {
+            Ok(p.fields(&kind))
+        }),
+        Method::Inspector => serve(extension, host, request, |p, _, kind: KindId| {
+            Ok(p.inspector(&kind))
+        }),
+        Method::Identity => serve(
+            extension,
+            host,
+            request,
+            |p, cx, (connection, selection): (ConnectionId, Selection)| {
+                p.identity(cx, &connection, &selection)
+            },
+        ),
+        Method::Settings => serve(extension, host, request, |p, _, ()| Ok(p.settings())),
+        Method::SettingsChanged => {
+            serve(extension, host, request, |p, cx, changed: Vec<String>| {
+                p.settings_changed(cx, &changed);
+                Ok(())
+            })
+        }
+        _ => return None,
+    };
+    Some(response)
+}
+
+fn auth_call<E: Extension>(
+    extension: &E,
+    host: &dyn Host,
+    method: Method,
+    request: &[u8],
+) -> Option<Vec<u8>> {
+    let response = match method {
         Method::AuthMethods => serve(extension, host, request, |p, _, ()| Ok(p.auth_methods())),
         Method::BeginAuth => serve(
             extension,
@@ -140,28 +193,6 @@ pub fn dispatch<E: Extension>(
             request,
             |p, cx, connection: Option<ConnectionId>| p.sign_out(cx, connection.as_ref()),
         ),
-        Method::ConsoleUrl => serve(
-            extension,
-            host,
-            request,
-            |p, _, (connection, kind, resource): (ConnectionId, KindId, Instance)| {
-                Ok(p.console_url(&connection, &kind, &resource))
-            },
-        ),
-        Method::Fields => serve(extension, host, request, |p, _, kind: KindId| {
-            Ok(p.fields(&kind))
-        }),
-        Method::Inspector => serve(extension, host, request, |p, _, kind: KindId| {
-            Ok(p.inspector(&kind))
-        }),
-        Method::Identity => serve(
-            extension,
-            host,
-            request,
-            |p, cx, (connection, selection): (ConnectionId, Selection)| {
-                p.identity(cx, &connection, &selection)
-            },
-        ),
         Method::CheckAccess => serve(
             extension,
             host,
@@ -170,14 +201,9 @@ pub fn dispatch<E: Extension>(
                 p.check_access(cx, &connection, &kind, &selection)
             },
         ),
-        Method::Settings => serve(extension, host, request, |p, _, ()| Ok(p.settings())),
-        Method::SettingsChanged => {
-            serve(extension, host, request, |p, cx, changed: Vec<String>| {
-                p.settings_changed(cx, &changed);
-                Ok(())
-            })
-        }
-    }
+        _ => return None,
+    };
+    Some(response)
 }
 
 fn serve<E, A, R>(
@@ -228,8 +254,7 @@ fn encode<T: Serialize>(outcome: Result<T, ProviderError>) -> Vec<u8> {
 }
 
 pub fn error_response(kind: ErrorKind, message: impl Into<String>) -> Vec<u8> {
-    serde_json::to_vec(&Err::<(), _>(ProviderError::new(kind, message)))
-        .expect("error responses always encode")
+    serde_json::to_vec(&Err::<(), _>(ProviderError::new(kind, message))).unwrap_or_default()
 }
 
 #[cfg(test)]

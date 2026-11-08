@@ -109,8 +109,8 @@ impl AwsSdkComputeService {
         }
     }
 
-    /// Builds a service around a page source for fast, deterministic tests or
-    /// an embedding application's own transport boundary.
+    /// Builds a service around a page source for fast, deterministic tests.
+    #[cfg(test)]
     pub fn with_page_source(
         profile: impl Into<String>,
         region: impl Into<String>,
@@ -284,24 +284,8 @@ fn map_instance(instance: &aws_sdk_ec2::types::Instance, region: &str) -> Option
         private_ip_address: instance.private_ip_address().map(str::to_owned),
         vpc_id: instance.vpc_id().map(str::to_owned),
         subnet_id: instance.subnet_id().map(str::to_owned),
-        security_groups: instance
-            .security_groups()
-            .iter()
-            .map(|group| EC2SecurityGroup {
-                group_id: group.group_id().map(str::to_owned),
-                group_name: group.group_name().map(str::to_owned),
-            })
-            .collect(),
-        tags: instance
-            .tags()
-            .iter()
-            .filter_map(|tag| {
-                Some(EC2InstanceTag {
-                    key: tag.key()?.to_owned(),
-                    value: tag.value()?.to_owned(),
-                })
-            })
-            .collect(),
+        security_groups: security_groups(instance),
+        tags: tags(instance),
         availability_zone: instance
             .placement()
             .and_then(|p| p.availability_zone())
@@ -322,6 +306,30 @@ fn map_instance(instance: &aws_sdk_ec2::types::Instance, region: &str) -> Option
         private_dns_name: instance.private_dns_name().map(str::to_owned),
         public_dns_name: instance.public_dns_name().map(str::to_owned),
     })
+}
+
+fn security_groups(instance: &aws_sdk_ec2::types::Instance) -> Vec<EC2SecurityGroup> {
+    instance
+        .security_groups()
+        .iter()
+        .map(|group| EC2SecurityGroup {
+            group_id: group.group_id().map(str::to_owned),
+            group_name: group.group_name().map(str::to_owned),
+        })
+        .collect()
+}
+
+fn tags(instance: &aws_sdk_ec2::types::Instance) -> Vec<EC2InstanceTag> {
+    instance
+        .tags()
+        .iter()
+        .filter_map(|tag| {
+            Some(EC2InstanceTag {
+                key: tag.key()?.to_owned(),
+                value: tag.value()?.to_owned(),
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]

@@ -99,7 +99,8 @@ pub fn check_provider(shared: Arc<dyn Provider>) -> Vec<String> {
         }
     }
     if let Some(conn) = connections.first() {
-        check_resource_views(p, &cx, &mut r, conn, &kinds, &listing);
+        let probe = Probe { p, cx: &cx, conn };
+        check_resource_views(&probe, &mut r, &kinds, &listing);
         if let Some(kind) = kinds.first() {
             check_deadline(Arc::clone(&shared), &mut r, conn, kind);
         }
@@ -110,18 +111,6 @@ pub fn check_provider(shared: Arc<dyn Provider>) -> Vec<String> {
         let defs = r.guard("fields()", || p.fields(kind)).unwrap_or_default();
         r.unique(&format!("fields({kind})"), defs.into_iter().map(|d| d.name));
     }
-    r.0
-}
-
-/// Checks the settings a provider declares in code. Compare against the manifest with [`check_manifest_settings`].
-pub fn check_settings_declared(p: &dyn Provider) -> Vec<String> {
-    let host = KitHost { cancelled: false };
-    let cx = Call {
-        deadline: None,
-        host: &host,
-    };
-    let mut r = Report(Vec::new());
-    check_settings(p, &cx, &mut r);
     r.0
 }
 
@@ -201,6 +190,7 @@ fn check_connection(
         }
     }
 
+    let probe = Probe { p, cx, conn };
     let mut listing = Vec::new();
     for kind in kinds {
         let Some(list) = r.guard("list()", || p.list(cx, conn, kind, &Selection::new())) else {
@@ -212,12 +202,12 @@ fn check_connection(
         );
         listing.extend(list.resources.into_iter().map(|i| (kind.clone(), i)));
         if let Some(dim) = dims.first() {
-            check_bad_selection(p, cx, r, conn, kind, &dim.id);
+            check_bad_selection(&probe, r, kind, &dim.id);
         }
     }
     for kind in kinds {
         for dim in &dims {
-            check_selection_tree(p, cx, r, conn, kind, dim);
+            check_selection_tree(&probe, r, kind, dim);
         }
     }
     listing
@@ -287,30 +277,96 @@ fn check_failure_cells(r: &mut Report, dim: &Dimension, selection: &Selection, l
     }
 }
 
-fn check_selection_tree(
-    p: &dyn Provider,
-    cx: &Call<'_>,
-    r: &mut Report,
-    conn: &ConnectionId,
-    kind: &KindId,
-    dim: &Dimension,
-) {
+struct Probe<'a> {
+    p: &'a dyn Provider,
+    cx: &'a Call<'a>,
+    conn: &'a ConnectionId,
+}
+
+impl Probe<'_> {
+    fn list(&self, kind: &KindId, selection: &Selection) -> ListResult {
+        self.p.list(self.cx, self.conn, kind, selection)
+    }
+
+    fn members(
+        &self,
+        r: &mut Report,
+        kind: &KindId,
+        dim: &Dimension,
+    ) -> Option<BTreeMap<ValueId, BTreeSet<String>>> {
+        let mut members = BTreeMap::new();
+        for value in &dim.values {
+            let selection = Selection::new().with(dim.id.clone(), vec![value.id.clone()]);
+            let list = r.guard("list() for a dimension value", || {
+                self.list(kind, &selection)
+            })?;
+            check_failure_cells(r, dim, &selection, &list);
+            let ids = list.resources.iter().map(|i| i.id.clone()).collect();
+            members.insert(value.id.clone(), ids);
+        }
+        Some(members)
+    }
+
+    fn check_parent(
+        &self,
+        r: &mut Report,
+        kind: &KindId,
+        dim: &Dimension,
+        members: &BTreeMap<ValueId, BTreeSet<String>>,
+        parent: &ValueId,
+    ) {
+        let kids = children(dim, parent);
+        let under_children: BTreeSet<String> = kids
+            .iter()
+            .flat_map(|c| members[c].iter().cloned())
+            .collect();
+        if members[parent] != under_children {
+            r.fail(format!(
+                "dimension {}: selecting {parent} does not list exactly its children's resources",
+                dim.id
+            ));
+        }
+        let mut both = kids;
+        both.insert(0, parent.clone());
+        let selection = Selection::new().with(dim.id.clone(), both);
+        if let Some(list) = r.guard("list() for a parent with its children", || {
+            self.list(kind, &selection)
+        }) {
+            check_failure_cells(r, dim, &selection, &list);
+            let ids: BTreeSet<String> = list.resources.iter().map(|i| i.id.clone()).collect();
+            if ids != members[parent] {
+                r.fail(format!(
+                    "dimension {}: selecting {parent} with its children lists different resources than {parent} alone",
+                    dim.id
+                ));
+            }
+        }
+    }
+}
+
+fn check_selection_tree(probe: &Probe<'_>, r: &mut Report, kind: &KindId, dim: &Dimension) {
     if dim.values.iter().all(|v| v.parent.is_none()) || has_cycle(dim) {
         return;
     }
-    let mut members: BTreeMap<ValueId, BTreeSet<String>> = BTreeMap::new();
-    for value in &dim.values {
-        let selection = Selection::new().with(dim.id.clone(), vec![value.id.clone()]);
-        let Some(list) = r.guard("list() for a dimension value", || {
-            p.list(cx, conn, kind, &selection)
-        }) else {
-            return;
-        };
-        check_failure_cells(r, dim, &selection, &list);
-        let ids = list.resources.iter().map(|i| i.id.clone()).collect();
-        members.insert(value.id.clone(), ids);
+    let Some(members) = probe.members(r, kind, dim) else {
+        return;
+    };
+    check_leaves_disjoint(r, dim, &members);
+    for parent in dim
+        .values
+        .iter()
+        .map(|v| &v.id)
+        .filter(|v| is_parent(dim, v))
+    {
+        probe.check_parent(r, kind, dim, &members, parent);
     }
+}
 
+fn check_leaves_disjoint(
+    r: &mut Report,
+    dim: &Dimension,
+    members: &BTreeMap<ValueId, BTreeSet<String>>,
+) {
     let leaves: Vec<&ValueId> = dim
         .values
         .iter()
@@ -327,54 +383,13 @@ fn check_selection_tree(
             }
         }
     }
-
-    for parent in dim
-        .values
-        .iter()
-        .map(|v| &v.id)
-        .filter(|v| is_parent(dim, v))
-    {
-        let kids = children(dim, parent);
-        let under_children: BTreeSet<String> = kids
-            .iter()
-            .flat_map(|c| members[c].iter().cloned())
-            .collect();
-        if members[parent] != under_children {
-            r.fail(format!(
-                "dimension {}: selecting {parent} does not list exactly its children's resources",
-                dim.id
-            ));
-        }
-        let mut both = kids;
-        both.insert(0, parent.clone());
-        let selection = Selection::new().with(dim.id.clone(), both);
-        if let Some(list) = r.guard("list() for a parent with its children", || {
-            p.list(cx, conn, kind, &selection)
-        }) {
-            check_failure_cells(r, dim, &selection, &list);
-            let ids: BTreeSet<String> = list.resources.iter().map(|i| i.id.clone()).collect();
-            if ids != members[parent] {
-                r.fail(format!(
-                    "dimension {}: selecting {parent} with its children lists different resources than {parent} alone",
-                    dim.id
-                ));
-            }
-        }
-    }
 }
 
-fn check_bad_selection(
-    p: &dyn Provider,
-    cx: &Call<'_>,
-    r: &mut Report,
-    conn: &ConnectionId,
-    kind: &KindId,
-    dim: &DimensionId,
-) {
+fn check_bad_selection(probe: &Probe<'_>, r: &mut Report, kind: &KindId, dim: &DimensionId) {
     let bad = ValueId::from(MISSING);
     let selection = Selection::new().with(dim.clone(), vec![bad.clone()]);
     let Some(list) = r.guard("list() with a bad selection", || {
-        p.list(cx, conn, kind, &selection)
+        probe.list(kind, &selection)
     }) else {
         return;
     };
@@ -418,13 +433,12 @@ fn check_deadline(p: Arc<dyn Provider>, r: &mut Report, conn: &ConnectionId, kin
 }
 
 fn check_resource_views(
-    p: &dyn Provider,
-    cx: &Call<'_>,
+    probe: &Probe<'_>,
     r: &mut Report,
-    conn: &ConnectionId,
     kinds: &[KindId],
     listing: &[(KindId, Instance)],
 ) {
+    let (p, cx, conn) = (probe.p, probe.cx, probe.conn);
     if let Some((kind, first)) = listing.first() {
         let id = ResourceId::from(first.id.as_str());
         if let Some(Err(error)) = r.guard("describe() on a known id", || {

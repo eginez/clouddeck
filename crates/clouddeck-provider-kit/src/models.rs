@@ -77,6 +77,7 @@ impl EC2Instance {
 
     /// Human-readable uptime like "3d 4h 5m" (zero higher units omitted),
     /// or `"—"` when launch time is absent or not in the past.
+    #[cfg(test)]
     pub fn uptime_description(&self) -> String {
         match self.uptime() {
             Some(uptime) => {

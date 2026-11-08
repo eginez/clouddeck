@@ -65,6 +65,33 @@ fn instances() -> Vec<Instance> {
         .collect()
 }
 
+fn unknown_region_failures(regions: &[ValueId]) -> Vec<CellFailure> {
+    let unknown: Vec<ValueId> = regions
+        .iter()
+        .filter(|r| !REGION_TREE.iter().any(|(id, _)| *id == r.as_str()))
+        .cloned()
+        .collect();
+    match unknown.is_empty() {
+        true => vec![],
+        false => vec![CellFailure {
+            cell: Selection::new().with("region", unknown),
+            error: ProviderError::of(ErrorKind::NotFound),
+        }],
+    }
+}
+
+fn selected_instances(regions: &[ValueId], flat: bool) -> Vec<Instance> {
+    instances()
+        .into_iter()
+        .filter(|i| {
+            regions.is_empty()
+                || regions
+                    .iter()
+                    .any(|r| selects(r.as_str(), i.region.as_deref().unwrap_or_default(), flat))
+        })
+        .collect()
+}
+
 fn value(id: &str, parent: Option<&str>) -> DimValue {
     DimValue {
         id: id.into(),
@@ -155,37 +182,14 @@ impl Provider for Fake {
             return ListResult::default();
         }
         let regions = sel.values("region");
-        let unknown: Vec<ValueId> = regions
-            .iter()
-            .filter(|r| !REGION_TREE.iter().any(|(id, _)| *id == r.as_str()))
-            .cloned()
-            .collect();
-        let mut failures = match unknown.is_empty() {
-            true => vec![],
-            false => vec![CellFailure {
-                cell: Selection::new().with("region", unknown),
-                error: ProviderError::of(ErrorKind::NotFound),
-            }],
-        };
+        let mut failures = unknown_region_failures(regions);
         if self.failure_outside_selection {
             failures.push(CellFailure {
                 cell: Selection::new().with("region", vec!["eu".into()]),
                 error: ProviderError::of(ErrorKind::Other),
             });
         }
-        let mut resources: Vec<Instance> = instances()
-            .into_iter()
-            .filter(|i| {
-                regions.is_empty()
-                    || regions.iter().any(|r| {
-                        selects(
-                            r.as_str(),
-                            i.region.as_deref().unwrap_or_default(),
-                            self.flat_regions,
-                        )
-                    })
-            })
-            .collect();
+        let mut resources = selected_instances(regions, self.flat_regions);
         if self.duplicate_ids {
             resources.extend(resources.clone());
         }

@@ -9,8 +9,12 @@ use clouddeck_provider_api::{
 use crate::console_url::console_url_for_instance;
 use crate::error::CloudDeckError;
 use crate::fleet_compute::FleetComputeService;
+use crate::service::{ComputeService, until_done};
+
+#[cfg(test)]
 use crate::models::{ComputeInstanceFilters, ComputeInstanceLoadResult};
-use crate::service::{BoxError, ComputeService, until_done};
+#[cfg(test)]
+use crate::service::BoxError;
 
 type ServiceFactory = dyn Fn(&str, &str) -> Box<dyn ComputeService + Send + Sync> + Send + Sync;
 
@@ -40,11 +44,13 @@ impl ComputeServiceProvider {
         }
     }
 
+    #[cfg(test)]
     pub fn with_console_url(mut self, console: bool) -> Self {
         self.console = console;
         self
     }
 
+    #[cfg(test)]
     pub fn from_shared(
         id: impl Into<String>,
         regions: Vec<String>,
@@ -60,8 +66,10 @@ impl ComputeServiceProvider {
     }
 }
 
+#[cfg(test)]
 struct Forwarding(Arc<dyn ComputeService + Send + Sync>);
 
+#[cfg(test)]
 #[async_trait::async_trait]
 impl ComputeService for Forwarding {
     async fn list_instances(
@@ -173,54 +181,7 @@ impl Provider for ComputeServiceProvider {
         if requested.is_empty() {
             return ListResult::default();
         }
-
-        let runtime = match tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-        {
-            Ok(runtime) => runtime,
-            Err(error) => {
-                return all_regions_failed(
-                    &requested,
-                    &CloudDeckError::Unknown(format!("could not start a runtime: {error}")),
-                );
-            }
-        };
-
-        let factory = self.factory.clone();
-        let connection = connection.as_str().to_string();
-        let fleet = FleetComputeService::new(requested.clone(), move |region: &str| {
-            factory(&connection, region)
-        });
-
-        let outcome = match runtime.block_on(until_done(cx, fleet.list_instances(None))) {
-            Ok(outcome) => outcome,
-            Err(error) => return all_regions_failed(&requested, &error),
-        };
-        match outcome {
-            Ok(result) => ListResult {
-                resources: result.instances.iter().map(Instance::from).collect(),
-                failures: result
-                    .partial_failures
-                    .into_iter()
-                    .map(|failure| {
-                        let mut error = ProviderError::from(failure.error);
-                        error.message = failure.message;
-                        CellFailure {
-                            cell: region_cell(&failure.region),
-                            error,
-                        }
-                    })
-                    .collect(),
-            },
-            Err(error) => {
-                let classified = error
-                    .downcast_ref::<CloudDeckError>()
-                    .cloned()
-                    .unwrap_or_else(|| CloudDeckError::from_service_error(error.as_ref()));
-                all_regions_failed(&requested, &classified)
-            }
-        }
+        list_regions(&self.factory, cx, connection, &requested)
     }
 
     fn console_url(
@@ -249,6 +210,61 @@ impl Provider for ComputeServiceProvider {
             crate::aws_inspector::aws_inspector()
         } else {
             Vec::new()
+        }
+    }
+}
+
+fn list_regions(
+    factory: &Arc<ServiceFactory>,
+    cx: &Call<'_>,
+    connection: &ConnectionId,
+    requested: &[String],
+) -> ListResult {
+    let runtime = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            return all_regions_failed(
+                requested,
+                &CloudDeckError::Unknown(format!("could not start a runtime: {error}")),
+            );
+        }
+    };
+
+    let factory = factory.clone();
+    let connection = connection.as_str().to_string();
+    let fleet = FleetComputeService::new(requested.to_vec(), move |region: &str| {
+        factory(&connection, region)
+    });
+
+    let outcome = match runtime.block_on(until_done(cx, fleet.list_instances(None))) {
+        Ok(outcome) => outcome,
+        Err(error) => return all_regions_failed(requested, &error),
+    };
+    match outcome {
+        Ok(result) => ListResult {
+            resources: result.instances.iter().map(Instance::from).collect(),
+            failures: result
+                .partial_failures
+                .into_iter()
+                .map(|failure| {
+                    let mut error = ProviderError::from(failure.error);
+                    error.message = failure.message;
+                    CellFailure {
+                        cell: region_cell(&failure.region),
+                        error,
+                    }
+                })
+                .collect(),
+        },
+        Err(error) => {
+            let classified = error
+                .downcast_ref::<CloudDeckError>()
+                .cloned()
+                .unwrap_or_else(|| CloudDeckError::from_service_error(error.as_ref()));
+            all_regions_failed(requested, &classified)
         }
     }
 }

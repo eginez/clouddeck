@@ -13,6 +13,34 @@ pub enum CloudDeckError {
     Unknown(String),
 }
 
+/// Checked in order against the lowercased error text; the first rule with a matching needle wins.
+const SERVICE_ERROR_RULES: &[(&[&str], CloudDeckError)] = &[
+    (
+        &["forbidden", "access denied", "not authorized", "permission"],
+        CloudDeckError::Permission,
+    ),
+    (&["credential", "token", "auth"], CloudDeckError::Auth),
+    (&["timed out", "timeout"], CloudDeckError::Timeout),
+    (
+        &["network", "connection", "could not connect", "offline"],
+        CloudDeckError::Network,
+    ),
+    (
+        &[
+            "throttl",
+            "requestlimitexceeded",
+            "toomanyrequests",
+            "rate exceeded",
+            "too many requests",
+        ],
+        CloudDeckError::Throttled,
+    ),
+    (
+        &["not found", "no such", "does not exist"],
+        CloudDeckError::NotFound,
+    ),
+];
+
 impl CloudDeckError {
     pub const THROTTLED_RETRY_MESSAGE: &'static str =
         "The service throttled this request. Retry the load after a short delay.";
@@ -56,51 +84,13 @@ impl CloudDeckError {
     pub fn from_service_error(error: &(dyn std::error::Error + 'static)) -> CloudDeckError {
         let description = error.to_string();
         let normalized = description.to_lowercase();
-
-        if normalized.contains("forbidden")
-            || normalized.contains("access denied")
-            || normalized.contains("not authorized")
-            || normalized.contains("permission")
-        {
-            return CloudDeckError::Permission;
-        }
-
-        if normalized.contains("credential")
-            || normalized.contains("token")
-            || normalized.contains("auth")
-        {
-            return CloudDeckError::Auth;
-        }
-
-        if normalized.contains("timed out") || normalized.contains("timeout") {
-            return CloudDeckError::Timeout;
-        }
-
-        if normalized.contains("network")
-            || normalized.contains("connection")
-            || normalized.contains("could not connect")
-            || normalized.contains("offline")
-        {
-            return CloudDeckError::Network;
-        }
-
-        if normalized.contains("throttl")
-            || normalized.contains("requestlimitexceeded")
-            || normalized.contains("toomanyrequests")
-            || normalized.contains("rate exceeded")
-            || normalized.contains("too many requests")
-        {
-            return CloudDeckError::Throttled;
-        }
-
-        if normalized.contains("not found")
-            || normalized.contains("no such")
-            || normalized.contains("does not exist")
-        {
-            return CloudDeckError::NotFound;
-        }
-
-        CloudDeckError::Unknown(description)
+        SERVICE_ERROR_RULES
+            .iter()
+            .find(|(needles, _)| needles.iter().any(|needle| normalized.contains(needle)))
+            .map_or_else(
+                || CloudDeckError::Unknown(description),
+                |(_, kind)| kind.clone(),
+            )
     }
 
     /// Classifies a modeled AWS service error using its error code first, then

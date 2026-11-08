@@ -6,53 +6,6 @@ use crate::models::EC2Instance;
 
 impl From<&EC2Instance> for Instance {
     fn from(instance: &EC2Instance) -> Self {
-        let mut addresses = Vec::new();
-        if let Some(value) = non_empty(&instance.private_ip_address) {
-            addresses.push(Address {
-                kind: AddressKind::Private,
-                value,
-            });
-        }
-        if let Some(value) = non_empty(&instance.public_ip_address) {
-            addresses.push(Address {
-                kind: AddressKind::Public,
-                value,
-            });
-        }
-
-        let extras = vec![
-            ExtrasSection {
-                title: "Instance".to_string(),
-                entries: vec![
-                    entry("AMI", &instance.image_id),
-                    entry("Key pair", &instance.key_name),
-                    entry("IAM instance profile", &instance.iam_instance_profile_arn),
-                ],
-            },
-            ExtrasSection {
-                title: "Network".to_string(),
-                entries: vec![
-                    entry("Private DNS", &instance.private_dns_name),
-                    entry("VPC", &instance.vpc_id),
-                    entry("Subnet", &instance.subnet_id),
-                    entry("Public DNS", &instance.public_dns_name),
-                ],
-            },
-            ExtrasSection {
-                title: "Security groups".to_string(),
-                entries: instance
-                    .security_groups
-                    .iter()
-                    .map(|group| {
-                        (
-                            group.group_name.clone().unwrap_or_default(),
-                            group.group_id.clone().unwrap_or_default(),
-                        )
-                    })
-                    .collect(),
-            },
-        ];
-
         Instance {
             id: instance.id(),
             name: instance
@@ -69,18 +22,74 @@ impl From<&EC2Instance> for Instance {
             region: instance.region.clone(),
             location: instance.availability_zone.clone(),
             created: instance.launch_time,
-            addresses,
-            labels: instance
-                .tags
-                .iter()
-                .map(|tag| Label {
-                    key: tag.key.clone(),
-                    value: Some(tag.value.clone()),
-                })
-                .collect(),
-            extras,
+            addresses: addresses(instance),
+            labels: labels(instance),
+            extras: extras(instance),
         }
     }
+}
+
+fn addresses(instance: &EC2Instance) -> Vec<Address> {
+    let mut addresses = Vec::new();
+    if let Some(value) = non_empty(&instance.private_ip_address) {
+        addresses.push(Address {
+            kind: AddressKind::Private,
+            value,
+        });
+    }
+    if let Some(value) = non_empty(&instance.public_ip_address) {
+        addresses.push(Address {
+            kind: AddressKind::Public,
+            value,
+        });
+    }
+    addresses
+}
+
+fn labels(instance: &EC2Instance) -> Vec<Label> {
+    instance
+        .tags
+        .iter()
+        .map(|tag| Label {
+            key: tag.key.clone(),
+            value: Some(tag.value.clone()),
+        })
+        .collect()
+}
+
+fn extras(instance: &EC2Instance) -> Vec<ExtrasSection> {
+    vec![
+        ExtrasSection {
+            title: "Instance".to_string(),
+            entries: vec![
+                entry("AMI", &instance.image_id),
+                entry("Key pair", &instance.key_name),
+                entry("IAM instance profile", &instance.iam_instance_profile_arn),
+            ],
+        },
+        ExtrasSection {
+            title: "Network".to_string(),
+            entries: vec![
+                entry("Private DNS", &instance.private_dns_name),
+                entry("VPC", &instance.vpc_id),
+                entry("Subnet", &instance.subnet_id),
+                entry("Public DNS", &instance.public_dns_name),
+            ],
+        },
+        ExtrasSection {
+            title: "Security groups".to_string(),
+            entries: instance
+                .security_groups
+                .iter()
+                .map(|group| {
+                    (
+                        group.group_name.clone().unwrap_or_default(),
+                        group.group_id.clone().unwrap_or_default(),
+                    )
+                })
+                .collect(),
+        },
+    ]
 }
 
 fn non_empty(value: &Option<String>) -> Option<String> {

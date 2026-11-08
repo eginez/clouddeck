@@ -25,7 +25,7 @@ use clouddeck_provider_kit::{
 use sha1::{Digest, Sha1};
 use std::{
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, MutexGuard},
     time::{Duration, SystemTime},
 };
 use tokio::time::Instant;
@@ -221,7 +221,7 @@ impl PendingSsoSignIn {
     /// `home`, `false` while still pending, and errors once the device code
     /// lifetime or the poll ceiling has passed.
     pub(crate) async fn try_complete_into(&self, home: &Path) -> Result<bool, BoxError> {
-        let next_poll = self.pacing.lock().expect("pacing lock").next_poll;
+        let next_poll = self.pacing()?.next_poll;
         tokio::time::sleep_until(next_poll).await;
         let slow_down = match self
             .provider
@@ -245,6 +245,14 @@ impl PendingSsoSignIn {
         Ok(false)
     }
 
+    fn pacing(&self) -> Result<MutexGuard<'_, Pacing>, BoxError> {
+        self.pacing.lock().map_err(|_| {
+            BoxError::from(std::io::Error::other(
+                "Browser sign-in state is unavailable.",
+            ))
+        })
+    }
+
     fn schedule_next_poll(&self, slow_down: bool) -> Result<(), BoxError> {
         if Instant::now() >= self.deadline {
             return Err(std::io::Error::other(
@@ -252,7 +260,7 @@ impl PendingSsoSignIn {
             )
             .into());
         }
-        let mut pacing = self.pacing.lock().expect("pacing lock");
+        let mut pacing = self.pacing()?;
         if slow_down {
             pacing.interval += Duration::from_secs(5);
         }

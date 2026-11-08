@@ -170,18 +170,16 @@ fn multi_setup(state: State) -> Option<MultiSetup> {
             vec![aws(), fixture_fleet::gcp_provider(gcp_instances(), None)],
             us_east,
         )),
-        State::MainAllProvidersFailedGroup | State::MainAllProvidersFailedGroupDark => {
-            Some(all(
-                vec![
-                    aws(),
-                    fixture_fleet::gcp_provider(
-                        Vec::new(),
-                        Some("Simulated Google Cloud outage".to_string()),
-                    ),
-                ],
-                us_east,
-            ))
-        }
+        State::MainAllProvidersFailedGroup | State::MainAllProvidersFailedGroupDark => Some(all(
+            vec![
+                aws(),
+                fixture_fleet::gcp_provider(
+                    Vec::new(),
+                    Some("Simulated Google Cloud outage".to_string()),
+                ),
+            ],
+            us_east,
+        )),
         State::MainAllProvidersGrouped | State::MainAllProvidersGroupedDark => Some(all(
             vec![aws(), fixture_fleet::gcp_provider(gcp_instances(), None)],
             us_east,

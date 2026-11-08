@@ -2,12 +2,11 @@ use crate::{FieldDef, FieldKind, FieldSource, MatchMode};
 
 pub fn aws_fields() -> Vec<FieldDef> {
     vec![
-        field("vpc", "VPC", "VPC id", true, true, extra("Network", "VPC")),
+        field("vpc", "VPC", "VPC id", true, extra("Network", "VPC")),
         field(
             "subnet",
             "Subnet",
             "subnet id",
-            true,
             true,
             extra("Network", "Subnet"),
         ),
@@ -16,24 +15,15 @@ pub fn aws_fields() -> Vec<FieldDef> {
             "Security groups",
             "security group",
             true,
-            true,
             FieldSource::Section {
                 section: "Security groups".to_string(),
             },
         ),
-        field(
-            "ami",
-            "AMI",
-            "image id",
-            true,
-            true,
-            extra("Instance", "AMI"),
-        ),
+        field("ami", "AMI", "image id", true, extra("Instance", "AMI")),
         field(
             "key",
             "Key pair",
             "key pair",
-            true,
             true,
             extra("Instance", "Key pair"),
         ),
@@ -42,14 +32,12 @@ pub fn aws_fields() -> Vec<FieldDef> {
             "IAM instance profile",
             "IAM instance profile",
             false,
-            false,
             extra("Instance", "IAM instance profile"),
         ),
         field(
             "dns",
             "DNS",
             "private or public DNS",
-            false,
             false,
             FieldSource::Concat(vec![
                 extra("Network", "Private DNS"),
@@ -59,22 +47,15 @@ pub fn aws_fields() -> Vec<FieldDef> {
     ]
 }
 
-fn field(
-    name: &str,
-    label: &str,
-    hint: &str,
-    query: bool,
-    search: bool,
-    source: FieldSource,
-) -> FieldDef {
+fn field(name: &str, label: &str, hint: &str, searchable: bool, source: FieldSource) -> FieldDef {
     FieldDef {
         name: name.to_string(),
         label: label.to_string(),
         hint: hint.to_string(),
         kind: FieldKind::Text,
         match_mode: MatchMode::Contains,
-        query,
-        search,
+        query: searchable,
+        search: searchable,
         facet: false,
         column: false,
         source,

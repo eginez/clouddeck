@@ -129,59 +129,79 @@ fn parse_sections(text: &str, file: AwsConfigFile) -> Result<Sections, AwsConfig
     let mut sections = Sections::new();
     let mut current: Option<String> = None;
     for (index, raw_line) in text.trim_start_matches('\u{feff}').lines().enumerate() {
-        let error = |message: &'static str| AwsConfigParseError {
-            file,
-            line: index + 1,
-            message,
-        };
-        let line = raw_line.trim();
-        if line.is_empty() || line.starts_with(['#', ';']) {
-            continue;
-        }
-        if let Some(header) = line.strip_prefix('[') {
-            let Some(header) = header.strip_suffix(']') else {
-                return Err(error("section header is missing its closing ']'"));
-            };
-            let header = header.trim();
-            if header.is_empty() {
-                return Err(error("section header has no name"));
-            }
-            current = section_key(header, file);
-            if let Some(name) = current.as_ref() {
-                sections.entry(name.clone()).or_default();
-            }
-            continue;
-        }
-        let Some((key, value)) = line.split_once('=') else {
-            // Indented lines continue the previous setting's multi-line value.
-            if raw_line.starts_with(char::is_whitespace) {
-                continue;
-            }
-            return Err(error("expected `key = value` or a [section] header"));
-        };
-        let key = key.trim();
-        if key.is_empty() {
-            return Err(error("setting has no name before '='"));
-        }
-        let Some(name) = current.as_ref() else {
-            continue;
-        };
-        let value = value
-            .split_once('#')
-            .map_or(value, |(value, _)| value)
-            .trim()
-            .trim_matches('"')
-            .trim_matches('\'')
-            .trim();
-        if !value.is_empty() {
-            sections
-                .entry(name.clone())
-                .or_default()
-                .values
-                .insert(key.to_ascii_lowercase(), value.to_owned());
-        }
+        parse_line(raw_line, index + 1, file, &mut sections, &mut current)?;
     }
     Ok(sections)
+}
+
+fn parse_line(
+    raw_line: &str,
+    number: usize,
+    file: AwsConfigFile,
+    sections: &mut Sections,
+    current: &mut Option<String>,
+) -> Result<(), AwsConfigParseError> {
+    let error = |message: &'static str| AwsConfigParseError {
+        file,
+        line: number,
+        message,
+    };
+    let line = raw_line.trim();
+    if line.is_empty() || line.starts_with(['#', ';']) {
+        return Ok(());
+    }
+    if let Some(header) = line.strip_prefix('[') {
+        let name = parse_header(header, file).map_err(&error)?;
+        if let Some(name) = name.as_ref() {
+            sections.entry(name.clone()).or_default();
+        }
+        *current = name;
+        return Ok(());
+    }
+    let Some((key, value)) = line.split_once('=') else {
+        // Indented lines continue the previous setting's multi-line value.
+        if raw_line.starts_with(char::is_whitespace) {
+            return Ok(());
+        }
+        return Err(error("expected `key = value` or a [section] header"));
+    };
+    let key = key.trim();
+    if key.is_empty() {
+        return Err(error("setting has no name before '='"));
+    }
+    let Some(name) = current.as_ref() else {
+        return Ok(());
+    };
+    let value = clean_value(value);
+    if !value.is_empty() {
+        sections
+            .entry(name.clone())
+            .or_default()
+            .values
+            .insert(key.to_ascii_lowercase(), value.to_owned());
+    }
+    Ok(())
+}
+
+fn parse_header(header: &str, file: AwsConfigFile) -> Result<Option<String>, &'static str> {
+    let Some(header) = header.strip_suffix(']') else {
+        return Err("section header is missing its closing ']'");
+    };
+    let header = header.trim();
+    if header.is_empty() {
+        return Err("section header has no name");
+    }
+    Ok(section_key(header, file))
+}
+
+fn clean_value(value: &str) -> &str {
+    value
+        .split_once('#')
+        .map_or(value, |(value, _)| value)
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .trim()
 }
 
 struct ProfileDraft {

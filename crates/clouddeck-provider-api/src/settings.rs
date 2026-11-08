@@ -113,51 +113,9 @@ pub fn settings_mismatches(in_code: &[SettingDef], declared: &[SettingDef]) -> V
 impl SettingDef {
     /// Checks the declaration itself, including that its default is a valid value.
     pub fn check(&self) -> Result<(), SettingError> {
-        let fail = |reason: &str| Err(SettingError(format!("setting {}: {reason}", self.key)));
-        if !is_valid_setting_key(&self.key) {
-            return Err(SettingError(format!(
-                "setting key {:?} may only contain lowercase letters, digits, '.', '_' and '-', and may not start with clouddeck.",
-                self.key
-            )));
-        }
-        if self.label.trim().is_empty() {
-            return fail("needs a label");
-        }
-        for text in [&self.description, &self.group].into_iter().flatten() {
-            if text.contains('\n') {
-                return fail("description and group must be one line");
-            }
-        }
-        match &self.kind {
-            SettingKind::Number { min, max } => {
-                if min.is_some_and(|v| !v.is_finite()) || max.is_some_and(|v| !v.is_finite()) {
-                    return fail("min and max must be finite");
-                }
-                check_bounds(&self.key, min.as_ref(), max.as_ref())?;
-            }
-            SettingKind::DurationSecs { min, max } => {
-                check_bounds(&self.key, min.as_ref(), max.as_ref())?;
-            }
-            SettingKind::Choice(options) => {
-                if options.is_empty() {
-                    return fail("a choice needs at least one option");
-                }
-                for (index, option) in options.iter().enumerate() {
-                    if options[..index].iter().any(|o| o.value == option.value) {
-                        return fail(&format!("option {:?} is listed twice", option.value));
-                    }
-                }
-            }
-            SettingKind::Text | SettingKind::Path | SettingKind::Bool => {}
-        }
-        if self.secret {
-            if !matches!(self.kind, SettingKind::Text) {
-                return fail("a secret must have kind text");
-            }
-            if self.default.is_some() {
-                return fail("a secret cannot have a default, since defaults live in the manifest");
-            }
-        }
+        self.check_declaration()?;
+        self.check_kind()?;
+        self.check_secret()?;
         if let Some(default) = &self.default {
             self.validate(default)
                 .map_err(|error| SettingError(format!("default: {error}")))?;
@@ -165,23 +123,84 @@ impl SettingDef {
         Ok(())
     }
 
+    fn reject<T>(&self, reason: &str) -> Result<T, SettingError> {
+        Err(SettingError(format!("setting {}: {reason}", self.key)))
+    }
+
+    fn check_declaration(&self) -> Result<(), SettingError> {
+        if !is_valid_setting_key(&self.key) {
+            return Err(SettingError(format!(
+                "setting key {:?} may only contain lowercase letters, digits, '.', '_' and '-', and may not start with clouddeck.",
+                self.key
+            )));
+        }
+        if self.label.trim().is_empty() {
+            return self.reject("needs a label");
+        }
+        for text in [&self.description, &self.group].into_iter().flatten() {
+            if text.contains('\n') {
+                return self.reject("description and group must be one line");
+            }
+        }
+        Ok(())
+    }
+
+    fn check_kind(&self) -> Result<(), SettingError> {
+        match &self.kind {
+            SettingKind::Number { min, max } => {
+                if min.is_some_and(|v| !v.is_finite()) || max.is_some_and(|v| !v.is_finite()) {
+                    return self.reject("min and max must be finite");
+                }
+                check_bounds(&self.key, min.as_ref(), max.as_ref())
+            }
+            SettingKind::DurationSecs { min, max } => {
+                check_bounds(&self.key, min.as_ref(), max.as_ref())
+            }
+            SettingKind::Choice(options) => {
+                if options.is_empty() {
+                    return self.reject("a choice needs at least one option");
+                }
+                for (index, option) in options.iter().enumerate() {
+                    if options[..index].iter().any(|o| o.value == option.value) {
+                        return self.reject(&format!("option {:?} is listed twice", option.value));
+                    }
+                }
+                Ok(())
+            }
+            SettingKind::Text | SettingKind::Path | SettingKind::Bool => Ok(()),
+        }
+    }
+
+    fn check_secret(&self) -> Result<(), SettingError> {
+        if !self.secret {
+            return Ok(());
+        }
+        if !matches!(self.kind, SettingKind::Text) {
+            return self.reject("a secret must have kind text");
+        }
+        if self.default.is_some() {
+            return self
+                .reject("a secret cannot have a default, since defaults live in the manifest");
+        }
+        Ok(())
+    }
+
     pub fn validate(&self, value: &SettingValue) -> Result<(), SettingError> {
-        let fail = |reason: String| Err(SettingError(format!("setting {}: {reason}", self.key)));
         match (&self.kind, value) {
             (SettingKind::Text | SettingKind::Path, SettingValue::Text(_))
             | (SettingKind::Bool, SettingValue::Bool(_)) => Ok(()),
             (SettingKind::Number { min, max }, SettingValue::Number(number)) => {
                 if !number.is_finite() {
-                    return fail(format!("{number} is not a finite number"));
+                    return self.reject(&format!("{number} is not a finite number"));
                 }
                 if min.is_some_and(|min| *number < min) || max.is_some_and(|max| *number > max) {
-                    return fail(format!("{number} is outside the allowed range"));
+                    return self.reject(&format!("{number} is outside the allowed range"));
                 }
                 Ok(())
             }
             (SettingKind::DurationSecs { min, max }, SettingValue::DurationSecs(seconds)) => {
                 if min.is_some_and(|min| *seconds < min) || max.is_some_and(|max| *seconds > max) {
-                    return fail(format!("{seconds} seconds is outside the allowed range"));
+                    return self.reject(&format!("{seconds} seconds is outside the allowed range"));
                 }
                 Ok(())
             }
@@ -189,16 +208,15 @@ impl SettingDef {
                 if options.iter().any(|option| option.value == *text) {
                     Ok(())
                 } else {
-                    fail(format!("{text:?} is not one of the options"))
+                    self.reject(&format!("{text:?} is not one of the options"))
                 }
             }
-            _ => fail(format!("{value:?} does not match kind {:?}", self.kind)),
+            _ => self.reject(&format!("{value:?} does not match kind {:?}", self.kind)),
         }
     }
 
     /// Reads host text (as passed to extensions or typed by a user) into a value of this kind, then validates it.
     pub fn parse(&self, text: &str) -> Result<SettingValue, SettingError> {
-        let fail = |reason: &str| Err(SettingError(format!("setting {}: {reason}", self.key)));
         let value = match &self.kind {
             SettingKind::Text | SettingKind::Path | SettingKind::Choice(_) => {
                 SettingValue::Text(text.to_string())
@@ -206,15 +224,17 @@ impl SettingDef {
             SettingKind::Bool => match text {
                 "true" => SettingValue::Bool(true),
                 "false" => SettingValue::Bool(false),
-                _ => return fail(&format!("{text:?} is not true or false")),
+                _ => return self.reject(&format!("{text:?} is not true or false")),
             },
             SettingKind::Number { .. } => match text.parse::<f64>() {
                 Ok(number) => SettingValue::Number(number),
-                Err(_) => return fail(&format!("{text:?} is not a number")),
+                Err(_) => return self.reject(&format!("{text:?} is not a number")),
             },
             SettingKind::DurationSecs { .. } => match text.parse::<u64>() {
                 Ok(seconds) => SettingValue::DurationSecs(seconds),
-                Err(_) => return fail(&format!("{text:?} is not a whole number of seconds")),
+                Err(_) => {
+                    return self.reject(&format!("{text:?} is not a whole number of seconds"));
+                }
             },
         };
         self.validate(&value)?;

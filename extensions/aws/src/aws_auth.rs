@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::SystemTime;
 
 use clouddeck_provider_api::{
@@ -57,6 +57,12 @@ impl AwsAuth {
             flows: Mutex::new(HashMap::new()),
             next_flow: AtomicU64::new(0),
         }
+    }
+
+    fn flows(&self) -> Result<MutexGuard<'_, HashMap<FlowId, Arc<Flow>>>, ProviderError> {
+        self.flows
+            .lock()
+            .map_err(|_| ProviderError::new(ErrorKind::Other, "The sign-in state is unavailable."))
     }
 
     fn methods(&self) -> Vec<AuthMethod> {
@@ -115,7 +121,7 @@ impl AwsAuth {
             self.next_flow.fetch_add(1, Ordering::Relaxed)
         ));
         let step = device_code_step(flow.clone(), &authorization);
-        self.flows.lock().expect("flows lock").insert(
+        self.flows()?.insert(
             flow,
             Arc::new(Flow {
                 authorization,
@@ -137,7 +143,7 @@ impl AwsAuth {
         let flow = self.find_flow(flow_id)?;
         let completed = block_on(flow.pending.try_complete_into(&self.home)).map_err(sso_error)?;
         if completed {
-            self.flows.lock().expect("flows lock").remove(flow_id);
+            self.flows()?.remove(flow_id);
             return Ok(AuthStep::Done);
         }
         Ok(device_code_step(flow_id.clone(), &flow.authorization))
@@ -145,7 +151,7 @@ impl AwsAuth {
 
     fn cancel(&self, flow_id: &FlowId) -> Result<AuthStep, ProviderError> {
         self.find_flow(flow_id)?;
-        self.flows.lock().expect("flows lock").remove(flow_id);
+        self.flows()?.remove(flow_id);
         Err(ProviderError::new(
             ErrorKind::Other,
             "Browser sign-in was cancelled.",
@@ -153,17 +159,12 @@ impl AwsAuth {
     }
 
     fn find_flow(&self, flow_id: &FlowId) -> Result<Arc<Flow>, ProviderError> {
-        self.flows
-            .lock()
-            .expect("flows lock")
-            .get(flow_id)
-            .cloned()
-            .ok_or_else(|| {
-                ProviderError::new(
-                    ErrorKind::Auth,
-                    "This sign-in is no longer active. Choose Sign in again to get a new code.",
-                )
-            })
+        self.flows()?.get(flow_id).cloned().ok_or_else(|| {
+            ProviderError::new(
+                ErrorKind::Auth,
+                "This sign-in is no longer active. Choose Sign in again to get a new code.",
+            )
+        })
     }
 
     fn status(&self, config: &Path, connection: Option<&ConnectionId>) -> AuthStatus {

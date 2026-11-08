@@ -65,6 +65,7 @@ impl Default for FaultInjectionBehavior {
 
 impl FaultInjectionBehavior {
     /// Set the injected delay applied before the outcome (consumes self).
+    #[cfg(test)]
     pub fn with_delay(mut self, delay: Option<Duration>) -> Self {
         self.delay = delay;
         self
