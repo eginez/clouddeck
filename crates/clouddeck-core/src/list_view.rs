@@ -16,13 +16,13 @@ use crate::{
 
 /// The instance list for the active provider, or for every signed-in provider at once.
 pub enum ListView {
-    Single(InstanceListViewModel),
+    Single(Box<InstanceListViewModel>),
     All(MergedListViewModel),
 }
 
 impl From<InstanceListViewModel> for ListView {
     fn from(view_model: InstanceListViewModel) -> Self {
-        Self::Single(view_model)
+        Self::Single(Box::new(view_model))
     }
 }
 
@@ -34,7 +34,7 @@ impl ListView {
     /// The single-provider list, for operations that load one provider directly.
     pub fn single_mut(&mut self) -> Option<&mut InstanceListViewModel> {
         match self {
-            Self::Single(view_model) => Some(view_model),
+            Self::Single(view_model) => Some(&mut **view_model),
             Self::All(_) => None,
         }
     }
