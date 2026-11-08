@@ -151,7 +151,7 @@ fn parse_line(
         return Ok(());
     }
     if let Some(header) = line.strip_prefix('[') {
-        let name = parse_header(header, file).map_err(&error)?;
+        let name = parse_header(header, file).map_err(error)?;
         if let Some(name) = name.as_ref() {
             sections.entry(name.clone()).or_default();
         }

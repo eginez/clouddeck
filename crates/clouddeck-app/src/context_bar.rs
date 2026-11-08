@@ -113,30 +113,34 @@ impl Render for ContextBar {
             record(cx, "bar.region", text_in(self.region_label.clone(), "text"));
             left = left
                 .child(picker_button(
-                    "bar.profile",
-                    AppIcon::User,
-                    profile,
-                    if all_providers {
-                        PICK_PROVIDER_TOOLTIP.to_string()
-                    } else {
-                        connection_tooltip(&self.connection_label, "⌘P")
+                    PickerButton {
+                        id: "bar.profile",
+                        icon: AppIcon::User,
+                        label: profile,
+                        tooltip: if all_providers {
+                            PICK_PROVIDER_TOOLTIP.to_string()
+                        } else {
+                            connection_tooltip(&self.connection_label, "⌘P")
+                        },
+                        event: ContextBarEvent::OpenProfilePicker,
+                        enabled: !all_providers,
                     },
-                    ContextBarEvent::OpenProfilePicker,
-                    !all_providers,
                     &palette,
                     cx,
                 ))
                 .child(picker_button(
-                    "bar.region",
-                    AppIcon::Globe,
-                    self.region_label.clone(),
-                    if all_providers {
-                        PICK_PROVIDER_TOOLTIP.to_string()
-                    } else {
-                        "Switch region  ⌘⇧R".to_string()
+                    PickerButton {
+                        id: "bar.region",
+                        icon: AppIcon::Globe,
+                        label: self.region_label.clone(),
+                        tooltip: if all_providers {
+                            PICK_PROVIDER_TOOLTIP.to_string()
+                        } else {
+                            "Switch region  ⌘⇧R".to_string()
+                        },
+                        event: ContextBarEvent::OpenRegionPicker,
+                        enabled: !all_providers,
                     },
-                    ContextBarEvent::OpenRegionPicker,
-                    !all_providers,
                     &palette,
                     cx,
                 ));
@@ -286,16 +290,28 @@ fn sign_in_button(palette: &Palette, cx: &Context<ContextBar>) -> impl IntoEleme
         .child("Sign in")
 }
 
-fn picker_button(
+struct PickerButton {
     id: &'static str,
     icon: AppIcon,
     label: String,
     tooltip: String,
     event: ContextBarEvent,
     enabled: bool,
+}
+
+fn picker_button(
+    button: PickerButton,
     palette: &Palette,
     cx: &Context<ContextBar>,
 ) -> impl IntoElement {
+    let PickerButton {
+        id,
+        icon,
+        label,
+        tooltip,
+        event,
+        enabled,
+    } = button;
     let text = if enabled { palette.text } else { palette.faint };
     div()
         .id(id)
