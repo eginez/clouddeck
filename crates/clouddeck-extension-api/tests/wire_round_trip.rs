@@ -354,3 +354,25 @@ fn provider_metadata_and_identifiers_round_trip() {
     round_trip(vec![UNICODE.to_string(), String::new()]);
     round_trip(Ok::<Vec<Connection>, ProviderError>(Vec::new()));
 }
+
+#[test]
+fn unset_plural_label_is_left_out_of_the_messagepack_map() {
+    let dimension = |plural_label: Option<&str>| Dimension {
+        id: "d".into(),
+        label: "Region".into(),
+        plural_label: plural_label.map(str::to_string),
+        multi: true,
+        optional: false,
+        values: Vec::new(),
+    };
+    let unset = rmp_serde::to_vec_named(&dimension(None)).unwrap();
+    assert!(!contains(&unset, b"plural_label"));
+    let set = rmp_serde::to_vec_named(&dimension(Some("Regions"))).unwrap();
+    assert!(contains(&set, b"plural_label"));
+}
+
+fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack
+        .windows(needle.len())
+        .any(|window| window == needle)
+}

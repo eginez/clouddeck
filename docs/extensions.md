@@ -30,14 +30,13 @@ clouddeck-extension-api = { git = "https://github.com/eginez/clouddeck", tag = "
 
 ## Boundary format
 
-- Requests and responses cross `clouddeck_call` as postcard. Each buffer starts with one format
-  byte (`1` for postcard). A buffer with any other first byte is refused with a "rebuild" message
-  instead of being decoded.
-- Postcard writes fields by position, so every field of a boundary type is always written. Do not
-  add `skip_serializing_if`, `#[serde(flatten)]`, `#[serde(untagged)]`, internally tagged enums or
-  `serde_json::Value` fields to types that cross the boundary. An absent value is an `Option` field,
-  which is written as `None`.
-- Host and extension are built against the same `API_VERSION`, which moved to 5 with this format.
+- Requests and responses cross `clouddeck_call` as MessagePack in the map form with field names
+  (`rmp_serde::to_vec_named`). Each buffer starts with one format byte (`1` for MessagePack). A
+  buffer with any other first byte is refused with a "rebuild" message instead of being decoded.
+- Fields are named on the wire, so unknown fields are ignored and missing fields take their serde
+  default. `#[serde(skip_serializing_if)]`, `#[serde(flatten)]`, `#[serde(untagged)]` and tagged
+  enums all work on types that cross the boundary.
+- Host and extension are built against the same `API_VERSION`, which is 5 for this format.
   Manifests and host state files are still JSON and TOML and are unaffected.
 
 ## Loading

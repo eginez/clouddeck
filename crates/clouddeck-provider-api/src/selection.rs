@@ -17,7 +17,7 @@ pub struct DimValue {
 pub struct Dimension {
     pub id: DimensionId,
     pub label: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plural_label: Option<String>,
     pub multi: bool,
     pub optional: bool,

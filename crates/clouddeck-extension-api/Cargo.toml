@@ -8,4 +8,4 @@ repository.workspace = true
 [dependencies]
 clouddeck-provider-api = { path = "../clouddeck-provider-api" }
 serde = { version = "1", features = ["derive"] }
-postcard = { version = "1", features = ["use-std"] }
+rmp-serde = "1"

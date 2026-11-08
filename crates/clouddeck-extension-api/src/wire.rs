@@ -1,6 +1,6 @@
-//! Requests and responses crossing `clouddeck_call` are postcard, each buffer prefixed by one
-//! format byte. Postcard writes fields by position, so boundary types must write every field:
-//! no `skip_serializing_if`, `flatten`, `untagged`, internally tagged enums or `serde_json::Value`.
+//! Requests and responses crossing `clouddeck_call` are MessagePack in the map form with field
+//! names, each buffer prefixed by one format byte. Unknown and missing fields are tolerated by
+//! serde defaults, so `skip_serializing_if`, `flatten` and `untagged` all work across the boundary.
 //!
 //! Changing the wire format is a boundary break and must bump API_VERSION in lib.rs.
 
@@ -15,15 +15,17 @@ use serde::{Deserialize, Serialize};
 
 use crate::Extension;
 
-const POSTCARD: u8 = 1;
+const MSGPACK: u8 = 1;
 
 pub fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>, String> {
-    postcard::to_extend(value, vec![POSTCARD]).map_err(|error| error.to_string())
+    let mut bytes = vec![MSGPACK];
+    rmp_serde::encode::write_named(&mut bytes, value).map_err(|error| error.to_string())?;
+    Ok(bytes)
 }
 
 pub fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, String> {
     match bytes.split_first() {
-        Some((&POSTCARD, body)) => postcard::from_bytes(body).map_err(|error| error.to_string()),
+        Some((&MSGPACK, body)) => rmp_serde::from_slice(body).map_err(|error| error.to_string()),
         Some((format, _)) => Err(format!(
             "boundary format {format} is not supported; rebuild the extension for this CloudDeck"
         )),
