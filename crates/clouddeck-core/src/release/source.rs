@@ -10,8 +10,6 @@ pub const RELEASE_OWNER: &str = "eginez";
 pub const RELEASE_REPO: &str = "clouddeck";
 /// The only host the GitHub token is ever sent to.
 const TOKEN_HOST: &str = "api.github.com";
-/// Shown when no GitHub token can be found for the private repository.
-pub const NO_TOKEN_MESSAGE: &str = "Updates need GitHub access while the repository is private: run gh auth login or set CLOUDDECK_UPDATE_TOKEN";
 
 /// Manifest bytes, their detached base64 ed25519 signature, and the tag of the release they came from.
 #[derive(Debug)]
@@ -83,25 +81,36 @@ fn non_empty(value: Option<String>) -> Option<String> {
 }
 
 pub struct GithubSource {
-    token: String,
+    token: Option<String>,
     agent: ureq::Agent,
 }
 
 impl GithubSource {
-    fn new(token: String) -> Self {
+    fn new(token: Option<String>) -> Self {
         let agent = ureq::AgentBuilder::new().redirects(0).build();
         Self { token, agent }
     }
 
+    fn get(&self, url: &str, accept: &str) -> ureq::Request {
+        let request = self
+            .agent
+            .get(url)
+            .set("Accept", accept)
+            .set("User-Agent", "clouddeck");
+        match authorization_value(self.token.as_deref()) {
+            Some(value) => request.set("Authorization", &value),
+            None => request,
+        }
+    }
+
     fn release_json(&self) -> Result<Vec<u8>, String> {
         let response = self
-            .agent
-            .get(&latest_release_url(RELEASE_OWNER, RELEASE_REPO))
-            .set("Authorization", &format!("Bearer {}", self.token))
-            .set("Accept", "application/vnd.github+json")
-            .set("User-Agent", "clouddeck")
+            .get(
+                &latest_release_url(RELEASE_OWNER, RELEASE_REPO),
+                "application/vnd.github+json",
+            )
             .call()
-            .map_err(latest_release_error)?;
+            .map_err(|error| latest_release_error(error, self.token.is_some()))?;
         read_body(response, SMALL_BODY_LIMIT, &mut |_, _| {})
     }
 
@@ -113,13 +122,9 @@ impl GithubSource {
         progress: &mut dyn FnMut(u64, u64),
     ) -> Result<Vec<u8>, String> {
         let url = asset_api_url(release_json, name)?;
-        ensure_token_host(&url)?;
+        ensure_asset_host(&url)?;
         let response = self
-            .agent
-            .get(&url)
-            .set("Authorization", &format!("Bearer {}", self.token))
-            .set("Accept", "application/octet-stream")
-            .set("User-Agent", "clouddeck")
+            .get(&url, "application/octet-stream")
             .call()
             .map_err(http_error)?;
         let response = if (300..400).contains(&response.status()) {
@@ -209,7 +214,11 @@ pub(crate) fn read_body(
     Ok(body)
 }
 
-fn ensure_token_host(asset_url: &str) -> Result<(), String> {
+fn authorization_value(token: Option<&str>) -> Option<String> {
+    token.map(|token| format!("Bearer {token}"))
+}
+
+fn ensure_asset_host(asset_url: &str) -> Result<(), String> {
     let parsed = url::Url::parse(asset_url)
         .map_err(|error| format!("release asset url is invalid: {error}"))?;
     if parsed.scheme() == "https"
@@ -219,7 +228,7 @@ fn ensure_token_host(asset_url: &str) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!(
-            "refusing to send the update token to {}",
+            "refusing to fetch release assets from {}",
             parsed.host_str().unwrap_or("an unknown host")
         ))
     }
@@ -232,35 +241,40 @@ pub(crate) fn http_error(error: ureq::Error) -> String {
     }
 }
 
-fn latest_release_error(error: ureq::Error) -> String {
+fn latest_release_error(error: ureq::Error, authenticated: bool) -> String {
     match error {
-        ureq::Error::Status(code, _) => latest_release_status_message(code)
+        ureq::Error::Status(code, _) => latest_release_status_message(code, authenticated)
             .map(str::to_string)
             .unwrap_or_else(|| format!("GitHub request failed with HTTP {code}")),
         ureq::Error::Transport(transport) => format!("GitHub request failed: {transport}"),
     }
 }
 
-fn latest_release_status_message(code: u16) -> Option<&'static str> {
-    match code {
-        401 => Some(
-            "GitHub rejected the update token (bad or expired): run gh auth login or set a valid CLOUDDECK_UPDATE_TOKEN",
+fn latest_release_status_message(code: u16, authenticated: bool) -> Option<&'static str> {
+    match (code, authenticated) {
+        (401, true) => Some(
+            "GitHub rejected the update token (bad or expired): run gh auth login or set a valid CLOUDDECK_UPDATE_TOKEN, or unset it to update without one",
         ),
-        403 => Some(
-            "GitHub refused the request (rate limit reached, or the token lacks access): try again later or check that CLOUDDECK_UPDATE_TOKEN has scope repo",
+        (403 | 429, false) => {
+            Some("GitHub refused the request (rate limit reached): try again later")
+        }
+        (403 | 429, true) => Some(
+            "GitHub refused the request (rate limit reached, or the token lacks access): try again later, or unset CLOUDDECK_UPDATE_TOKEN to update without one",
         ),
-        404 => Some(
-            "No release has been published yet, or your GitHub token cannot see the private repository (check gh auth status or CLOUDDECK_UPDATE_TOKEN scope: repo)",
+        (404, false) => Some("No release has been published yet."),
+        (404, true) => Some(
+            "No release has been published yet, or the update token cannot see the repository.",
         ),
         _ => None,
     }
 }
 
-/// Builds a GitHub source using the update token from the environment or the gh CLI.
-pub fn github_source_from_env() -> Result<GithubSource, String> {
-    let token = resolve_token(std::env::var("CLOUDDECK_UPDATE_TOKEN").ok(), gh_auth_token)
-        .ok_or_else(|| NO_TOKEN_MESSAGE.to_string())?;
-    Ok(GithubSource::new(token))
+/// Builds a GitHub source that authenticates only when the environment or the gh CLI provides a token.
+pub fn github_source_from_env() -> GithubSource {
+    GithubSource::new(resolve_token(
+        std::env::var("CLOUDDECK_UPDATE_TOKEN").ok(),
+        gh_auth_token,
+    ))
 }
 
 fn gh_auth_token() -> Option<String> {
@@ -303,31 +317,31 @@ mod tests {
     }
 
     #[test]
-    fn token_host_accepts_https_github_api() {
+    fn asset_host_accepts_https_github_api() {
         assert!(
-            ensure_token_host("https://api.github.com/repos/eginez/clouddeck/releases/assets/1")
+            ensure_asset_host("https://api.github.com/repos/eginez/clouddeck/releases/assets/1")
                 .is_ok()
         );
     }
 
     #[test]
-    fn token_host_rejects_foreign_host() {
-        let error = ensure_token_host("https://evil.example.com/asset").unwrap_err();
+    fn asset_host_rejects_foreign_host() {
+        let error = ensure_asset_host("https://evil.example.com/asset").unwrap_err();
         assert_eq!(
             error,
-            "refusing to send the update token to evil.example.com"
+            "refusing to fetch release assets from evil.example.com"
         );
     }
 
     #[test]
-    fn token_host_rejects_userinfo_trick() {
-        assert!(ensure_token_host("https://api.github.com@evil.example.com/asset").is_err());
+    fn asset_host_rejects_userinfo_trick() {
+        assert!(ensure_asset_host("https://api.github.com@evil.example.com/asset").is_err());
     }
 
     #[test]
-    fn token_host_rejects_non_default_port() {
+    fn asset_host_rejects_non_default_port() {
         assert!(
-            ensure_token_host(
+            ensure_asset_host(
                 "https://api.github.com:8443/repos/eginez/clouddeck/releases/assets/1"
             )
             .is_err()
@@ -335,23 +349,45 @@ mod tests {
     }
 
     #[test]
-    fn token_host_rejects_plain_http() {
+    fn asset_host_rejects_plain_http() {
         assert!(
-            ensure_token_host("http://api.github.com/repos/eginez/clouddeck/releases/assets/1")
+            ensure_asset_host("http://api.github.com/repos/eginez/clouddeck/releases/assets/1")
                 .is_err()
         );
     }
 
     #[test]
-    fn asset_refuses_foreign_host_before_sending_token() {
+    fn asset_refuses_foreign_host_with_token() {
         let release = br#"{"tag_name":"v0.2.0","assets":[{"name":"manifest.json","url":"https://evil.example.com/asset"}]}"#;
-        let source = GithubSource::new("secret-token".to_string());
+        let source = GithubSource::new(Some("secret-token".to_string()));
         let error = source
             .asset(release, "manifest.json", SMALL_BODY_LIMIT, &mut |_, _| {})
             .unwrap_err();
         assert_eq!(
             error,
-            "refusing to send the update token to evil.example.com"
+            "refusing to fetch release assets from evil.example.com"
+        );
+    }
+
+    #[test]
+    fn asset_refuses_foreign_host_without_token() {
+        let release = br#"{"tag_name":"v0.2.0","assets":[{"name":"manifest.json","url":"https://evil.example.com/asset"}]}"#;
+        let source = GithubSource::new(None);
+        let error = source
+            .asset(release, "manifest.json", SMALL_BODY_LIMIT, &mut |_, _| {})
+            .unwrap_err();
+        assert_eq!(
+            error,
+            "refusing to fetch release assets from evil.example.com"
+        );
+    }
+
+    #[test]
+    fn authorization_is_sent_only_when_token_present() {
+        assert_eq!(authorization_value(None), None);
+        assert_eq!(
+            authorization_value(Some("abc")),
+            Some("Bearer abc".to_string())
         );
     }
 
@@ -417,36 +453,49 @@ mod tests {
     }
 
     #[test]
-    fn no_token_message_is_exact() {
+    fn latest_release_404_without_token_reports_no_release() {
         assert_eq!(
-            NO_TOKEN_MESSAGE,
-            "Updates need GitHub access while the repository is private: run gh auth login or set CLOUDDECK_UPDATE_TOKEN"
+            latest_release_status_message(404, false),
+            Some("No release has been published yet.")
         );
     }
 
     #[test]
-    fn latest_release_404_explains_missing_release_or_token_access() {
-        let message = latest_release_status_message(404).unwrap();
+    fn latest_release_404_with_token_also_mentions_token_access() {
+        let message = latest_release_status_message(404, true).unwrap();
         assert!(message.contains("No release has been published yet"));
-        assert!(message.contains("cannot see the private repository"));
+        assert!(message.contains("cannot see the repository"));
     }
 
     #[test]
-    fn latest_release_401_names_the_token() {
-        let message = latest_release_status_message(401).unwrap();
+    fn latest_release_401_names_the_token_only_when_sent() {
+        let message = latest_release_status_message(401, true).unwrap();
         assert!(message.contains("rejected the update token"));
+        assert!(message.contains("unset it to update without one"));
+        assert_eq!(latest_release_status_message(401, false), None);
     }
 
     #[test]
-    fn latest_release_403_is_distinct_from_401() {
-        let forbidden = latest_release_status_message(403).unwrap();
+    fn latest_release_rate_limit_without_token_asks_to_retry() {
+        for code in [403, 429] {
+            assert_eq!(
+                latest_release_status_message(code, false),
+                Some("GitHub refused the request (rate limit reached): try again later")
+            );
+        }
+    }
+
+    #[test]
+    fn latest_release_403_with_token_is_distinct_from_401() {
+        let forbidden = latest_release_status_message(403, true).unwrap();
         assert!(forbidden.contains("rate limit"));
-        assert_ne!(forbidden, latest_release_status_message(401).unwrap());
+        assert_ne!(forbidden, latest_release_status_message(401, true).unwrap());
     }
 
     #[test]
     fn latest_release_other_statuses_have_no_special_message() {
-        assert_eq!(latest_release_status_message(500), None);
+        assert_eq!(latest_release_status_message(500, false), None);
+        assert_eq!(latest_release_status_message(500, true), None);
     }
 
     fn response(body: &str) -> ureq::Response {

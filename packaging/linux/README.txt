@@ -25,5 +25,6 @@ Runtime requirements
 Updates
 -------
 Choose "Check for Updates..." in the app menu to download and install a newer
-release. While the repository is private, updates need GitHub access: run
-"gh auth login" once, or set the CLOUDDECK_UPDATE_TOKEN environment variable.
+release. Updates work without any GitHub login. If GitHub rate-limits the
+update check, either wait and try again, or run "gh auth login" once, or set
+the CLOUDDECK_UPDATE_TOKEN environment variable to use an authenticated request.
