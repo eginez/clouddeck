@@ -2,7 +2,7 @@
 
 use std::time::SystemTime;
 
-use chrono::{DateTime, FixedOffset, Utc};
+use chrono::{DateTime, FixedOffset, Offset, Utc};
 
 /// Instance total label, singular for exactly one.
 pub fn instance_count_text(total: usize) -> String {
@@ -21,7 +21,7 @@ pub fn shown_count_text(shown: usize) -> String {
 /// Wall-clock `HH:MM` (24-hour) for a time shifted by a UTC offset in minutes.
 pub fn clock_text(at: SystemTime, utc_offset_minutes: i32) -> String {
     let offset = FixedOffset::east_opt(utc_offset_minutes * 60)
-        .unwrap_or_else(|| FixedOffset::east_opt(0).expect("zero offset is valid"));
+        .unwrap_or_else(|| Utc.fix());
     DateTime::<Utc>::from(at)
         .with_timezone(&offset)
         .format("%H:%M")
