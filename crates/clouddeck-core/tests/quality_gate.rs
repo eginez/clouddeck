@@ -1,6 +1,8 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+use serde_json::Value;
+
 const PINNED_VERSION: &str = "1.8.3";
 const INSTALL_HINT: &str = "cargo install rustqual --version 1.8.3 --locked";
 
@@ -65,6 +67,35 @@ fn architecture_findings(findings: &str) -> Vec<&str> {
         .collect()
 }
 
+fn baseline_iosp_violations(root: &Path) -> u64 {
+    let text = std::fs::read_to_string(root.join(".rustqual-baseline.json"))
+        .expect("read .rustqual-baseline.json");
+    let baseline: Value = serde_json::from_str(&text).expect("parse .rustqual-baseline.json");
+    baseline["violations"]
+        .as_u64()
+        .expect("baseline `violations` count")
+}
+
+fn iosp_violation_sites(report: &Value) -> Vec<String> {
+    report["functions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|f| f["classification"] == "violation")
+        .map(|f| {
+            let name = match f["parent_type"].as_str() {
+                Some(parent) => format!("{parent}::{}", f["name"].as_str().unwrap_or("?")),
+                None => f["name"].as_str().unwrap_or("?").to_string(),
+            };
+            format!(
+                "  {name} at {}:{}",
+                f["file"].as_str().unwrap_or("?"),
+                f["line"]
+            )
+        })
+        .collect()
+}
+
 #[test]
 fn rustqual_gate_holds_against_baseline() {
     if std::env::var("CLOUDDECK_SKIP_QUALITY").as_deref() == Ok("1") {
@@ -111,5 +142,23 @@ fn rustqual_gate_holds_against_baseline() {
         violations.is_empty(),
         "architecture violations found (zero tolerance):\n{}",
         violations.join("\n")
+    );
+
+    let baseline = baseline_iosp_violations(&root);
+    let report = run(&bin, &root, &[".", "--json", "--no-fail"]);
+    assert!(
+        report.status.success(),
+        "rustqual --json failed\n{}",
+        tail(&report, 60)
+    );
+    let report: Value =
+        serde_json::from_slice(&report.stdout).expect("rustqual --json output is valid JSON");
+    let current = report["summary"]["violations"]
+        .as_u64()
+        .expect("rustqual summary `violations` count");
+    assert!(
+        current <= baseline,
+        "IOSP violations rose from {baseline} (.rustqual-baseline.json) to {current}; split the new functions into logic and call-only parts:\n{}",
+        iosp_violation_sites(&report).join("\n")
     );
 }
