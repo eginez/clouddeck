@@ -1,11 +1,6 @@
-//! Requests and responses crossing `clouddeck_call` are JSON (serde_json).
-//!
-//! JSON is used because both sides are built against the same API_VERSION, payloads are
-//! debuggable, and no second codec crate is needed.
-//!
-//! Revisit trigger: switch to a compact binary format (e.g. postcard) if payload size or
-//! per-call latency becomes a measured problem, and decide before any second-party
-//! (out-of-repo) extension ships.
+//! Requests and responses crossing `clouddeck_call` are MessagePack in the map form with field
+//! names, each buffer prefixed by one format byte. Unknown and missing fields are tolerated by
+//! serde defaults, so `skip_serializing_if`, `flatten` and `untagged` all work across the boundary.
 //!
 //! Changing the wire format is a boundary break and must bump API_VERSION in lib.rs.
 
@@ -19,6 +14,24 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::Extension;
+
+const MSGPACK: u8 = 1;
+
+pub fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>, String> {
+    let mut bytes = vec![MSGPACK];
+    rmp_serde::encode::write_named(&mut bytes, value).map_err(|error| error.to_string())?;
+    Ok(bytes)
+}
+
+pub fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, String> {
+    match bytes.split_first() {
+        Some((&MSGPACK, body)) => rmp_serde::from_slice(body).map_err(|error| error.to_string()),
+        Some((format, _)) => Err(format!(
+            "boundary format {format} is not supported; rebuild the extension for this CloudDeck"
+        )),
+        None => Err("empty message".into()),
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
@@ -217,7 +230,7 @@ where
     A: DeserializeOwned,
     R: Serialize,
 {
-    let outcome = serde_json::from_slice::<Request<A>>(request)
+    let outcome = decode::<Request<A>>(request)
         .map_err(|error| {
             ProviderError::new(ErrorKind::Other, format!("malformed request: {error}"))
         })
@@ -241,11 +254,11 @@ where
             let cx = Call { deadline, host };
             handle(provider.as_ref(), &cx, request.args)
         });
-    encode(outcome)
+    respond(outcome)
 }
 
-fn encode<T: Serialize>(outcome: Result<T, ProviderError>) -> Vec<u8> {
-    serde_json::to_vec(&outcome).unwrap_or_else(|error| {
+fn respond<T: Serialize>(outcome: Result<T, ProviderError>) -> Vec<u8> {
+    encode(&outcome).unwrap_or_else(|error| {
         error_response(
             ErrorKind::Other,
             format!("response could not be encoded: {error}"),
@@ -254,7 +267,7 @@ fn encode<T: Serialize>(outcome: Result<T, ProviderError>) -> Vec<u8> {
 }
 
 pub fn error_response(kind: ErrorKind, message: impl Into<String>) -> Vec<u8> {
-    serde_json::to_vec(&Err::<(), _>(ProviderError::new(kind, message))).unwrap_or_default()
+    encode(&Err::<(), _>(ProviderError::new(kind, message))).unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -269,5 +282,13 @@ mod tests {
         }
         assert_eq!(Method::from_code(0), None);
         assert_eq!(Method::from_code(19), None);
+    }
+
+    #[test]
+    fn buffers_in_another_format_are_refused_with_a_rebuild_message() {
+        let json = br#"["a"]"#;
+        let error = decode::<Vec<String>>(json).unwrap_err();
+        assert!(error.contains("rebuild the extension"), "{error}");
+        assert_eq!(decode::<Vec<String>>(&[]).unwrap_err(), "empty message");
     }
 }

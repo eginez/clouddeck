@@ -1909,7 +1909,7 @@ pub(crate) fn provider_fixture(dir: &Path) -> ProviderRegistry {
 name = "Sample"
 version = "0.1.0"
 schema_version = 1
-api_version = 4
+api_version = 5
 
 [providers.sample]
 name = "Sample"
@@ -1970,7 +1970,7 @@ kind = "secret"
 name = "Toy"
 version = "0.1.0"
 schema_version = 1
-api_version = 4
+api_version = 5
 
 [providers.toy]
 name = "Toy"
@@ -1985,7 +1985,7 @@ default = "Default"
 name = "Plain"
 version = "0.1.0"
 schema_version = 1
-api_version = 4
+api_version = 5
 
 [providers.plain]
 name = "Plain"

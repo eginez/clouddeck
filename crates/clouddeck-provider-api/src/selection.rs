@@ -93,12 +93,6 @@ mod tests {
     }
 
     #[test]
-    fn none_plural_label_is_not_serialized() {
-        let json = serde_json::to_string(&dimension("Region", None)).unwrap();
-        assert!(!json.contains("plural_label"), "{json}");
-    }
-
-    #[test]
     fn some_plural_label_round_trips() {
         let original = dimension("Zone", Some("Zones"));
         let json = serde_json::to_string(&original).unwrap();

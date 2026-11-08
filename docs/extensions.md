@@ -28,6 +28,17 @@ clouddeck-extension-api = { git = "https://github.com/eginez/clouddeck", tag = "
   calls (a token cache, a client, a session) belongs in the `Extension` struct, which is shared by all
   calls and must be `Send + Sync`.
 
+## Boundary format
+
+- Requests and responses cross `clouddeck_call` as MessagePack in the map form with field names
+  (`rmp_serde::to_vec_named`). Each buffer starts with one format byte (`1` for MessagePack). A
+  buffer with any other first byte is refused with a "rebuild" message instead of being decoded.
+- Fields are named on the wire, so unknown fields are ignored and missing fields take their serde
+  default. `#[serde(skip_serializing_if)]`, `#[serde(flatten)]`, `#[serde(untagged)]` and tagged
+  enums all work on types that cross the boundary.
+- Host and extension are built against the same `API_VERSION`, which is 5 for this format.
+  Manifests and host state files are still JSON and TOML and are unaffected.
+
 ## Loading
 
 - Discovery reads `extension.toml` and the host state file only. Host state (enabled, grants,

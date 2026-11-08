@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use clouddeck_extension_api::wire::{Method, Request};
+use clouddeck_extension_api::wire::{self, Method, Request};
 use clouddeck_provider_api::{
     AuthAnswer, AuthInput, AuthMethod, AuthStatus, AuthStep, Call, CellFailure, Connection,
     ConnectionId, Dimension, ErrorKind, ExtrasSection, FieldDef, FlowId, InspectorSectionDef,
@@ -130,7 +130,7 @@ impl Plugin {
     /// The library's settings must match the manifest's copy. On a mismatch the manifest is trusted.
     fn check_settings(&self, library: &Library) {
         for provider in self.manifest.providers.keys() {
-            let Ok(body) = serde_json::to_vec(&Request {
+            let Ok(body) = wire::encode(&Request {
                 provider: provider.clone(),
                 deadline_ms: None,
                 args: (),
@@ -140,10 +140,7 @@ impl Plugin {
             let in_code = library
                 .call(Method::Settings as u32, &body)
                 .map_err(|error| error.to_string())
-                .and_then(|bytes| {
-                    serde_json::from_slice::<Result<Vec<SettingDef>, ProviderError>>(&bytes)
-                        .map_err(|error| error.to_string())
-                });
+                .and_then(|bytes| wire::decode::<Result<Vec<SettingDef>, ProviderError>>(&bytes));
             let in_code = match in_code {
                 Ok(Ok(defs)) => defs,
                 Ok(Err(error)) if error.kind == ErrorKind::Unsupported => Vec::new(),
@@ -186,7 +183,7 @@ impl Plugin {
         if !self.loaded.load(Ordering::Acquire) {
             return;
         }
-        let Ok(body) = serde_json::to_vec(&Request {
+        let Ok(body) = wire::encode(&Request {
             provider: provider.to_string(),
             deadline_ms: None,
             args: changed.to_vec(),
@@ -355,7 +352,7 @@ impl RemoteProvider {
             deadline_ms: deadline.map(|_| budget.as_millis() as u64),
             args,
         };
-        let body = serde_json::to_vec(&request).map_err(|error| {
+        let body = wire::encode(&request).map_err(|error| {
             ProviderError::new(
                 ErrorKind::Other,
                 format!("request could not be encoded: {error}"),
@@ -363,13 +360,12 @@ impl RemoteProvider {
         })?;
         let sign_in = matches!(method, Method::BeginAuth | Method::ContinueAuth);
         let response = self.plugin.run(method as u32, body, budget, sign_in)?;
-        let outcome: Result<R, ProviderError> =
-            serde_json::from_slice(&response).map_err(|error| {
-                ProviderError::new(
-                    ErrorKind::Other,
-                    format!("{} sent a malformed response: {error}", self.plugin.id()),
-                )
-            })?;
+        let outcome: Result<R, ProviderError> = wire::decode(&response).map_err(|error| {
+            ProviderError::new(
+                ErrorKind::Other,
+                format!("{} sent a malformed response: {error}", self.plugin.id()),
+            )
+        })?;
         outcome
     }
 

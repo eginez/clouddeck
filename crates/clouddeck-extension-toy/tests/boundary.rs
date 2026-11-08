@@ -2,13 +2,15 @@ use std::ffi::c_void;
 use std::sync::Once;
 
 use clouddeck_extension_api::abi::{Buffer, HostTable, INIT_OK, Slice};
-use clouddeck_extension_api::wire::Method;
+use clouddeck_extension_api::wire::{Method, Request, decode, encode};
 use clouddeck_extension_api::{
-    API_VERSION, Connection, ConnectionId, ErrorKind, KindId, ListResult, ProviderError, Selection,
+    API_VERSION, Connection, ConnectionId, ErrorKind, KindId, ListResult, ProviderError,
+    ProviderInfo, Selection,
 };
 use clouddeck_extension_toy::{
     clouddeck_api_version, clouddeck_build_info, clouddeck_call, clouddeck_free, clouddeck_init,
 };
+use serde::Serialize;
 
 extern "C" fn log(_: *mut c_void, _: u32, _: Slice) {}
 
@@ -66,12 +68,12 @@ fn raw_call(code: u32, request: &[u8]) -> Vec<u8> {
     bytes
 }
 
-fn request(args: serde_json::Value) -> Vec<u8> {
-    serde_json::to_vec(&serde_json::json!({
-        "provider": "toy",
-        "deadline_ms": null,
-        "args": args,
-    }))
+fn request<A: Serialize>(args: A) -> Vec<u8> {
+    encode(&Request {
+        provider: "toy".into(),
+        deadline_ms: None,
+        args,
+    })
     .unwrap()
 }
 
@@ -86,41 +88,49 @@ fn boundary_round_trips_through_exported_symbols() {
         String::from_utf8_lossy(info)
     );
 
-    let list = request(serde_json::json!([
-        serde_json::to_value(ConnectionId::from("default")).unwrap(),
-        serde_json::to_value(KindId::instances()).unwrap(),
-        serde_json::to_value(Selection::new()).unwrap(),
-    ]));
-    let listed: Result<ListResult, ProviderError> =
-        serde_json::from_slice(&call(Method::List, &list)).unwrap();
+    let list = request((
+        ConnectionId::from("default"),
+        KindId::instances(),
+        Selection::new(),
+    ));
+    let listed: Result<ListResult, ProviderError> = decode(&call(Method::List, &list)).unwrap();
     assert_eq!(listed.unwrap().resources.len(), 2);
 
-    let connections = request(serde_json::json!(null));
     let connections: Result<Vec<Connection>, ProviderError> =
-        serde_json::from_slice(&call(Method::Connections, &connections)).unwrap();
+        decode(&call(Method::Connections, &request(()))).unwrap();
     assert_eq!(connections.unwrap()[0].id.as_str(), "default");
 }
 
 #[test]
 fn unknown_method_and_malformed_request_return_errors() {
-    let unknown: Result<serde_json::Value, ProviderError> =
-        serde_json::from_slice(&raw_call(9999, b"{}")).unwrap();
+    let unknown: Result<(), ProviderError> = decode(&raw_call(9999, &request(()))).unwrap();
     assert_eq!(unknown.unwrap_err().kind, ErrorKind::Unsupported);
 
-    let malformed: Result<serde_json::Value, ProviderError> =
-        serde_json::from_slice(&call(Method::List, b"not json")).unwrap();
+    let malformed: Result<(), ProviderError> = decode(&call(Method::List, b"")).unwrap();
     assert_eq!(malformed.unwrap_err().kind, ErrorKind::Other);
 }
 
 #[test]
+fn json_request_from_the_previous_format_is_refused_with_a_rebuild_message() {
+    let old = br#"{"provider":"toy","deadline_ms":null,"args":null}"#;
+    let outcome: Result<ProviderInfo, ProviderError> = decode(&call(Method::Info, old)).unwrap();
+    let error = outcome.unwrap_err();
+    assert_eq!(error.kind, ErrorKind::Other);
+    assert!(
+        error.message.contains("rebuild the extension"),
+        "{}",
+        error.message
+    );
+}
+
+#[test]
 fn unknown_provider_id_is_not_found() {
-    let body = serde_json::to_vec(&serde_json::json!({
-        "provider": "missing",
-        "deadline_ms": null,
-        "args": null,
-    }))
+    let body = encode(&Request {
+        provider: "missing".into(),
+        deadline_ms: None,
+        args: (),
+    })
     .unwrap();
-    let outcome: Result<serde_json::Value, ProviderError> =
-        serde_json::from_slice(&call(Method::Info, &body)).unwrap();
+    let outcome: Result<ProviderInfo, ProviderError> = decode(&call(Method::Info, &body)).unwrap();
     assert_eq!(outcome.unwrap_err().kind, ErrorKind::NotFound);
 }

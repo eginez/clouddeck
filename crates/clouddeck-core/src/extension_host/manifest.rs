@@ -324,6 +324,8 @@ fn default_library_file(id: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use clouddeck_extension_api::API_VERSION;
+
     use super::*;
 
     const MANIFEST: &str = r#"
@@ -331,7 +333,7 @@ id = "toy"
 name = "Toy"
 version = "0.1.0"
 schema_version = 1
-api_version = 4
+api_version = 5
 authors = ["Esteban"]
 
 [providers.toy]
@@ -371,6 +373,20 @@ kind = "secrets"
     fn api_mismatch_asks_for_rebuild() {
         let manifest = Manifest::parse(MANIFEST).unwrap();
         let message = manifest.check_api(1, "0.3.0").unwrap_err();
+        assert!(
+            message.contains("Rebuild toy for CloudDeck 0.3.0"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn previous_api_version_is_refused_with_rebuild_message() {
+        let text = MANIFEST.replace(
+            &format!("api_version = {API_VERSION}"),
+            &format!("api_version = {}", API_VERSION - 1),
+        );
+        let manifest = Manifest::parse(&text).unwrap();
+        let message = manifest.check_api(API_VERSION, "0.3.0").unwrap_err();
         assert!(
             message.contains("Rebuild toy for CloudDeck 0.3.0"),
             "{message}"
