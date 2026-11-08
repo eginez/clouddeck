@@ -2616,4 +2616,13 @@ mod tests {
         assert_eq!(std::fs::read(&path).unwrap(), b"{not json");
         let _ = std::fs::remove_file(path);
     }
+
+    #[test]
+    fn duration_settings_show_seconds_unit() {
+        let kind = SettingKind::DurationSecs {
+            min: None,
+            max: None,
+        };
+        assert_eq!(unit_suffix(&kind), Some("seconds"));
+    }
 }

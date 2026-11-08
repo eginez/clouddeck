@@ -403,4 +403,14 @@ mod tests {
             .expect("disabled row records");
         assert_eq!(disabled.fg, Some("faint"));
     }
+
+    #[test]
+    fn current_platform_matches_build_target() {
+        let expected = if cfg!(target_os = "macos") {
+            Platform::Mac
+        } else {
+            Platform::Linux
+        };
+        assert_eq!(current_platform(), expected);
+    }
 }

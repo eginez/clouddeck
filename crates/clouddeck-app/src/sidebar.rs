@@ -642,4 +642,11 @@ mod tests {
             assert_eq!(state.selected.as_deref(), Some("us-east-1:i-3"));
         });
     }
+
+    #[test]
+    fn is_value_matches_selection_ignoring_case() {
+        assert!(is_value(Some("Running"), "running"));
+        assert!(!is_value(Some("stopped"), "running"));
+        assert!(!is_value(None, "running"));
+    }
 }

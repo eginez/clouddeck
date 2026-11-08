@@ -1279,4 +1279,86 @@ mod tests {
         });
         assert!(cx.debug_bounds("account-connection-error").is_some());
     }
+
+    #[test]
+    fn only_in_flight_states_are_busy() {
+        assert!(AccountConnectionState::Connecting.is_busy());
+        assert!(AccountConnectionState::AwaitingBrowserLogin.is_busy());
+        assert!(
+            AccountConnectionState::CheckingFleetAccess {
+                account_id: "123".into()
+            }
+            .is_busy()
+        );
+        assert!(!AccountConnectionState::Idle.is_busy());
+        assert!(
+            !AccountConnectionState::Connected {
+                account_id: "123".into()
+            }
+            .is_busy()
+        );
+        assert!(!AccountConnectionState::Failed(AccountConnectionError::MissingProfile).is_busy());
+    }
+
+    #[test]
+    fn connect_requires_profile_region_and_no_connection_in_flight() {
+        assert!(configured_view().can_connect());
+
+        let busy = AccountWindowView {
+            connection_state: AccountConnectionState::Connecting,
+            ..configured_view()
+        };
+        assert!(!busy.can_connect());
+
+        let fleet_region = AccountWindowView {
+            selected_region: "fleet".into(),
+            ..configured_view()
+        };
+        assert!(!fleet_region.can_connect());
+
+        let blank_profile = AccountWindowView {
+            selected_profile: Some("   ".into()),
+            ..configured_view()
+        };
+        assert!(!blank_profile.can_connect());
+    }
+
+    #[test]
+    fn connection_status_labels_follow_state() {
+        let label = |connection_state| {
+            AccountWindowView {
+                connection_state,
+                ..Default::default()
+            }
+            .connection_status()
+            .0
+        };
+        assert_eq!(label(AccountConnectionState::Idle), "Ready to connect");
+        assert_eq!(
+            label(AccountConnectionState::Connecting),
+            "Checking AWS identity…"
+        );
+        assert_eq!(
+            label(AccountConnectionState::AwaitingBrowserLogin),
+            "Waiting for browser sign in…"
+        );
+        assert_eq!(
+            label(AccountConnectionState::CheckingFleetAccess {
+                account_id: "123".into()
+            }),
+            "Checking EC2 access…"
+        );
+        assert_eq!(
+            label(AccountConnectionState::Connected {
+                account_id: "123".into()
+            }),
+            "Connected"
+        );
+        assert_eq!(
+            label(AccountConnectionState::Failed(
+                AccountConnectionError::MissingProfile
+            )),
+            "Action needed"
+        );
+    }
 }
