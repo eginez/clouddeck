@@ -26,7 +26,8 @@ const AWS_REGIONS: &[&str] = &[
 ];
 
 const ALLOWED_FILES: &[&str] = &["fixture_fleet.rs"];
-const ALLOWED_LINE_MARKERS: &[(&str, &str)] = &[("scenario_service.rs", "MULTI_REGION_FAILING_REGION")];
+const ALLOWED_LINE_MARKERS: &[(&str, &str)] =
+    &[("scenario_service.rs", "MULTI_REGION_FAILING_REGION")];
 
 fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
     for entry in fs::read_dir(dir).unwrap() {
@@ -48,33 +49,48 @@ fn brace_delta(line: &str) -> i32 {
 }
 
 fn production_lines(text: &str) -> Vec<(usize, &str)> {
-    let mut lines = Vec::new();
-    let mut pending_cfg_test = false;
-    let mut skipped_depth: Option<i32> = None;
-    for (index, line) in text.lines().enumerate() {
-        if let Some(depth) = skipped_depth.as_mut() {
+    let mut scanner = TestItemScanner::default();
+    text.lines()
+        .enumerate()
+        .filter(|(_, line)| !scanner.consumes(line))
+        .map(|(index, line)| (index + 1, line))
+        .collect()
+}
+
+#[derive(Default)]
+struct TestItemScanner {
+    pending_cfg_test: bool,
+    skipped_depth: Option<i32>,
+}
+
+impl TestItemScanner {
+    fn consumes(&mut self, line: &str) -> bool {
+        if let Some(depth) = self.skipped_depth.as_mut() {
             *depth += brace_delta(line);
             if *depth <= 0 {
-                skipped_depth = None;
+                self.skipped_depth = None;
             }
-            continue;
+            return true;
         }
         if line.trim_start().starts_with("#[cfg(test)]") {
-            pending_cfg_test = true;
-            continue;
+            self.pending_cfg_test = true;
+            return true;
         }
-        if pending_cfg_test {
-            if line.contains('{') {
-                skipped_depth = Some(brace_delta(line));
-                pending_cfg_test = false;
-            } else if line.trim_end().ends_with(';') {
-                pending_cfg_test = false;
-            }
-            continue;
+        if self.pending_cfg_test {
+            self.start_item(line);
+            return true;
         }
-        lines.push((index + 1, line));
+        false
     }
-    lines
+
+    fn start_item(&mut self, line: &str) {
+        if line.contains('{') {
+            self.skipped_depth = Some(brace_delta(line));
+            self.pending_cfg_test = false;
+        } else if line.trim_end().ends_with(';') {
+            self.pending_cfg_test = false;
+        }
+    }
 }
 
 fn is_allowed_file(name: &str) -> bool {
