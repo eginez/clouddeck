@@ -502,6 +502,7 @@ fn copy_button(
 mod tests {
     use super::*;
     use crate::layout_check::states::{self, State};
+    use crate::test_support::load_fleet;
     use crate::ui_record::recorded;
     use crate::view_models::InstanceListViewModel;
     use clouddeck_core::fixture_fleet as fleet;
@@ -509,31 +510,14 @@ mod tests {
         Bounds, TestAppContext, VisualTestContext, WindowBounds, WindowOptions, point, size,
     };
     use gpui_component::Root;
-    use std::time::Duration;
 
     const RUNNING_KEY: &str = "us-east-1:i-0123456789abcdef0";
     const UNTAGGED_KEY: &str = "us-east-1:i-0d2fc5662eb309e50";
 
-    fn wait_until(cx: &mut TestAppContext, mut condition: impl FnMut(&mut TestAppContext) -> bool) {
-        for _ in 0..200 {
-            cx.run_until_parked();
-            if condition(cx) {
-                return;
-            }
-            std::thread::sleep(Duration::from_millis(5));
-        }
-        panic!("condition was not satisfied within the timeout");
-    }
-
     fn loaded_state(cx: &mut TestAppContext) -> Entity<FleetState> {
         let vm = InstanceListViewModel::new(fleet::static_provider(fleet::inspector_instances()));
         let state = cx.new(|_| FleetState::new(vm, "prod-readonly".to_string(), true));
-        state.update(cx, |state, cx| state.refresh(cx));
-        wait_until(cx, |cx| {
-            state.read_with(cx, |state, _| {
-                !state.view_model.instances().is_empty() && !state.view_model.is_loading()
-            })
-        });
+        load_fleet(cx, &state);
         state
     }
 

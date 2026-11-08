@@ -464,6 +464,7 @@ impl FleetState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::{load_fleet, wait_until};
     use clouddeck_core::{
         InstanceListViewModel, fixture_fleet as fleet, native_id, sort_instances,
     };
@@ -476,29 +477,17 @@ mod tests {
             ("i-3", "worker", "stopped", "t3.medium"),
             ("i-4", "cache", "running", "t3.medium"),
         ])));
+        fresh_state(cx, vm)
+    }
+
+    fn fresh_state(cx: &mut TestAppContext, vm: InstanceListViewModel) -> Entity<FleetState> {
         cx.new(|_| FleetState::new(vm, "default".to_string(), true))
     }
 
     fn loaded_state(cx: &mut TestAppContext) -> Entity<FleetState> {
         let state = new_state(cx);
-        state.update(cx, |state, cx| state.refresh(cx));
-        wait_until(cx, |cx| {
-            state.read_with(cx, |state, _| {
-                !state.view_model.instances().is_empty() && !state.view_model.is_loading()
-            })
-        });
+        load_fleet(cx, &state);
         state
-    }
-
-    fn wait_until(cx: &mut TestAppContext, mut condition: impl FnMut(&mut TestAppContext) -> bool) {
-        for _ in 0..200 {
-            cx.run_until_parked();
-            if condition(cx) {
-                return;
-            }
-            std::thread::sleep(Duration::from_millis(5));
-        }
-        panic!("condition was not satisfied within the timeout");
     }
 
     fn visible_ids(state: &Entity<FleetState>, cx: &mut TestAppContext) -> Vec<String> {
@@ -665,13 +654,8 @@ mod tests {
 
     fn huge_loaded_state(cx: &mut TestAppContext) -> Entity<FleetState> {
         let vm = InstanceListViewModel::new(fleet::static_provider(fleet::huge_fleet()));
-        let state = cx.new(|_| FleetState::new(vm, "default".to_string(), true));
-        state.update(cx, |state, cx| state.refresh(cx));
-        wait_until(cx, |cx| {
-            state.read_with(cx, |state, _| {
-                !state.view_model.instances().is_empty() && !state.view_model.is_loading()
-            })
-        });
+        let state = fresh_state(cx, vm);
+        load_fleet(cx, &state);
         state
     }
 
