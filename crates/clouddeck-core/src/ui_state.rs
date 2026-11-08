@@ -13,6 +13,9 @@ pub const SIDEBAR_WIDTH_RANGE: (f32, f32) = (180.0, 320.0);
 /// Narrowest main window in logical pixels; narrower saved frames are dropped on restore.
 /// Name, Instance ID, State and Type are always shown and sum to 527pt.
 pub const MAIN_WINDOW_MIN_WIDTH: f32 = 528.0;
+/// `hidden_columns` entry that flips the Provider column in single-provider views; the Column::Provider
+/// entry flips it in the All view.
+pub const PROVIDER_SINGLE_COLUMN_KEY: &str = "provider_single";
 
 /// Window position and size in logical pixels.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -95,7 +98,8 @@ impl UiState {
         });
         let mut hidden_columns: Vec<String> = Vec::new();
         for key in self.hidden_columns.iter() {
-            let hideable = Column::from_key(key).is_some_and(|column| column != Column::Name);
+            let hideable = key == PROVIDER_SINGLE_COLUMN_KEY
+                || Column::from_key(key).is_some_and(|column| column != Column::Name);
             if hideable && !hidden_columns.contains(key) {
                 hidden_columns.push(key.clone());
             }
@@ -392,6 +396,24 @@ mod tests {
         assert_eq!(
             state.hidden_columns,
             vec!["az".to_string(), "provider".to_string()]
+        );
+    }
+
+    #[test]
+    fn normalized_keeps_the_single_provider_column_key() {
+        let state = UiState {
+            hidden_columns: [PROVIDER_SINGLE_COLUMN_KEY, "provider"]
+                .map(String::from)
+                .to_vec(),
+            ..UiState::default()
+        }
+        .normalized();
+        assert_eq!(
+            state.hidden_columns,
+            vec![
+                PROVIDER_SINGLE_COLUMN_KEY.to_string(),
+                "provider".to_string()
+            ]
         );
     }
 

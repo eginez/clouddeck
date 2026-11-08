@@ -8,9 +8,10 @@ use crate::{
 };
 use clouddeck_core::{
     ALL_PROVIDERS, Call, Column, ContextModel, DemoFleet, FLEET_REGIONS, InstanceListViewModel,
-    ListView, LoadHost, ProfileInput, Provider, ProviderEntry, REGION, RegionScope, Settings,
-    UiState, ValueId, WindowFrame, WorkspaceContext, all_providers_view, demo_profiles,
-    demo_region_names, settings_path, short_name, switch_active_provider, workspace_provider_for,
+    ListView, LoadHost, PROVIDER_SINGLE_COLUMN_KEY, ProfileInput, Provider, ProviderEntry, REGION,
+    RegionScope, Settings, UiState, ValueId, WindowFrame, WorkspaceContext, all_providers_view,
+    demo_profiles, demo_region_names, settings_path, short_name, switch_active_provider,
+    workspace_provider_for,
 };
 use gpui::{
     AnyWindowHandle, App, Bounds, Context, Entity, IntoElement, KeyBinding, ParentElement, Render,
@@ -658,6 +659,10 @@ impl AppShell {
             .iter()
             .filter_map(|key| Column::from_key(key))
             .collect();
+        fleet_state.single_provider_column_flipped = ui_state
+            .hidden_columns
+            .iter()
+            .any(|key| key == PROVIDER_SINGLE_COLUMN_KEY);
         let fleet = cx.new(|_| fleet_state);
         let profile_inputs: Vec<ProfileInput> = profiles
             .iter()
@@ -805,6 +810,11 @@ impl AppShell {
                 .hidden_columns
                 .iter()
                 .map(|column| column.key().to_string())
+                .chain(
+                    fleet
+                        .single_provider_column_flipped
+                        .then(|| PROVIDER_SINGLE_COLUMN_KEY.to_string()),
+                )
                 .collect(),
         }
         .normalized()
@@ -1059,6 +1069,7 @@ impl AppShell {
             previous.inspector_open,
         );
         let hidden_columns = previous.hidden_columns.clone();
+        let single_provider_column_flipped = previous.single_provider_column_flipped;
         // A fresh fleet and window, not an in-place reset: the previous load
         // holds only a weak handle to the old fleet, so it cannot write into
         // the new context once that entity is dropped.
@@ -1070,6 +1081,7 @@ impl AppShell {
             fleet.sidebar_open = sidebar_open;
             fleet.inspector_open = inspector_open;
             fleet.hidden_columns = hidden_columns;
+            fleet.single_provider_column_flipped = single_provider_column_flipped;
             fleet
         });
         self.main_window = Self::new_main_window(

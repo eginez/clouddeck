@@ -49,8 +49,11 @@ pub struct FleetState {
     /// Keys of the groups the user has collapsed.
     pub collapsed_groups: BTreeSet<String>,
     /// Columns the column chooser has flipped from their default. Name is never hidden, and the
-    /// Provider column is shown by default only in the All view.
+    /// Provider column is shown by default only in the All view. Its All-view flip lives here;
+    /// its single-provider flip is `single_provider_column_flipped`.
     pub hidden_columns: Vec<Column>,
+    /// Whether the chooser has flipped the Provider column in single-provider views.
+    pub single_provider_column_flipped: bool,
     /// Whether the column chooser menu is open.
     pub column_menu_open: bool,
     /// Index into `Column::ALL` of the item the keyboard is on in the column chooser.
@@ -85,6 +88,7 @@ impl FleetState {
             group_by: GroupBy::None,
             collapsed_groups: BTreeSet::new(),
             hidden_columns: Vec::new(),
+            single_provider_column_flipped: false,
             column_menu_open: false,
             column_menu_focus: 0,
             retry_in_seconds: None,
@@ -194,9 +198,15 @@ impl FleetState {
 
     /// Whether the Provider column is shown: its default in the current view, flipped by the chooser.
     pub fn provider_column_shown(&self) -> bool {
-        let default = self.view_model.is_all()
-            && provider_column_default_visible(self.view_model.provider_names().len());
-        default != self.hidden_columns.contains(&Column::Provider)
+        let all = self.view_model.is_all();
+        let default =
+            all && provider_column_default_visible(self.view_model.provider_names().len());
+        let flipped = if all {
+            self.hidden_columns.contains(&Column::Provider)
+        } else {
+            self.single_provider_column_flipped
+        };
+        default != flipped
     }
 
     pub fn column_shown(&self, column: Column) -> bool {
@@ -214,7 +224,8 @@ impl FleetState {
         } else {
             pane_width
         };
-        let mut columns = visible_columns_fit_hidden(window_width, pane_width, &self.hidden_columns);
+        let mut columns =
+            visible_columns_fit_hidden(window_width, pane_width, &self.hidden_columns);
         if provider {
             columns.insert(0, Column::Provider);
         }
@@ -271,6 +282,11 @@ impl FleetState {
     /// Shows or hides `column`; Name cannot be hidden.
     pub fn toggle_column(&mut self, column: Column, cx: &mut Context<Self>) {
         if column == Column::Name {
+            return;
+        }
+        if column == Column::Provider && !self.view_model.is_all() {
+            self.single_provider_column_flipped = !self.single_provider_column_flipped;
+            cx.notify();
             return;
         }
         if let Some(index) = self
@@ -566,6 +582,21 @@ mod tests {
                 "us-east-1:i-1"
             ]
         );
+    }
+
+    #[gpui::test]
+    fn provider_column_toggle_in_single_view_leaves_the_all_view_flip_alone(
+        cx: &mut TestAppContext,
+    ) {
+        let state = new_state(cx);
+
+        state.update(cx, |state, cx| state.toggle_column(Column::Provider, cx));
+
+        state.read_with(cx, |state, _| {
+            assert!(state.single_provider_column_flipped);
+            assert!(state.hidden_columns.is_empty());
+            assert!(state.provider_column_shown());
+        });
     }
 
     #[gpui::test]
