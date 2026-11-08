@@ -90,6 +90,9 @@ fn layout_rules_hold(cx: &mut TestAppContext) {
                 }
             }
         }
+        // A window left open keeps redrawing (its table wipes the shared `table.*` recordings
+        // on every render), so a later state would read whichever window drew last.
+        vcx.borrow_mut().update(|window, _| window.remove_window());
     }
 
     assert!(problems.is_empty(), "\n{}", problems.join("\n"));
