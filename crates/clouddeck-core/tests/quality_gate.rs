@@ -97,6 +97,39 @@ fn iosp_violation_sites(report: &Value) -> Vec<String> {
 }
 
 #[test]
+fn clippy_gate_holds() {
+    if std::env::var("CLOUDDECK_SKIP_CLIPPY").as_deref() == Ok("1") {
+        assert!(
+            std::env::var_os("CI").is_none(),
+            "CLOUDDECK_SKIP_CLIPPY=1 is local use only and is refused under CI"
+        );
+        eprintln!("clippy gate skipped: CLOUDDECK_SKIP_CLIPPY=1 (local use only)");
+        return;
+    }
+
+    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
+    // The child inherits the environment, so it targets the same CARGO_TARGET_DIR as this test run.
+    let output = Command::new(cargo)
+        .current_dir(workspace_root())
+        .args([
+            "clippy",
+            "--workspace",
+            "--all-targets",
+            "--locked",
+            "--",
+            "-D",
+            "warnings",
+        ])
+        .output()
+        .expect("failed to run cargo clippy");
+    assert!(
+        output.status.success(),
+        "cargo clippy --workspace --all-targets --locked -- -D warnings failed\n{}",
+        tail(&output, 60)
+    );
+}
+
+#[test]
 fn rustqual_gate_holds_against_baseline() {
     if std::env::var("CLOUDDECK_SKIP_QUALITY").as_deref() == Ok("1") {
         assert!(
