@@ -188,6 +188,47 @@ fn setup_mode(profile: &str) -> crate::account_window::AccountWindowMode {
     }
 }
 
+fn accepts_provider(id: &str, known: bool) -> Option<()> {
+    if id == ALL_PROVIDERS || known {
+        Some(())
+    } else {
+        None
+    }
+}
+
+fn keeps_switch(switched: bool, needs_sign_in: bool) -> Option<()> {
+    if switched || needs_sign_in {
+        Some(())
+    } else {
+        None
+    }
+}
+
+fn record_save_failure(message: &mut Option<String>, saved: Option<std::io::Result<()>>) {
+    if let Some(Err(error)) = saved {
+        *message = Some(format!("Could not remember this provider: {error}"));
+    }
+}
+
+fn reload_target(
+    shows_all: bool,
+    needs_sign_in: bool,
+    current: WorkspaceContext,
+    first_profile: Option<String>,
+) -> Option<WorkspaceContext> {
+    if shows_all {
+        return Some(current);
+    }
+    match first_profile {
+        Some(profile) if !needs_sign_in => Some(WorkspaceContext { profile }),
+        _ => None,
+    }
+}
+
+fn should_remember_context(demo: bool, usable: bool) -> bool {
+    !demo && usable
+}
+
 fn restore_ui_state(
     path: PathBuf,
     loaded: std::io::Result<UiState>,
@@ -933,20 +974,19 @@ impl AppShell {
         settings_file: &Path,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Option<()> {
         let providers = app_providers::providers(cx);
-        if id != ALL_PROVIDERS && !providers.iter().any(|provider| provider.info().id == id) {
-            return;
-        }
+        let known = providers.iter().any(|provider| provider.info().id == id);
+        accepts_provider(id, known)?;
         let mut settings = Settings::load(settings_file);
         let switched = switch_active_provider(&mut self.context_model, &mut settings, id);
-        if !switched && !self.context_model.needs_sign_in() {
-            return;
-        }
-        if switched && let Err(error) = settings.save(settings_file) {
-            self.message = Some(format!("Could not remember this provider: {error}"));
-        }
+        keeps_switch(switched, self.context_model.needs_sign_in())?;
+        record_save_failure(
+            &mut self.message,
+            switched.then(|| settings.save(settings_file)),
+        );
         self.reload_active_provider(&providers, window, cx);
+        Some(())
     }
 
     fn reload_active_provider(
@@ -961,21 +1001,19 @@ impl AppShell {
         let available = Self::available_regions(self.demo, self.demo_scenario);
         ensure_region_dimension(&mut self.context_model, &available);
         set_region_values(&mut self.context_model, &regions);
-        if self.context_model.shows_all_providers() {
-            let context = self.context.clone();
-            self.apply_context(context, window, cx);
-            return;
-        }
-        let profile = self
+        let first_profile = self
             .context_model
             .connections()
             .first()
             .map(|connection| connection.id.as_str().to_string());
-        let Some(profile) = profile.filter(|_| !self.context_model.needs_sign_in()) else {
-            Self::sync_provider_view(&self.main_window, &self.context_model, cx);
-            return;
-        };
-        self.apply_context(WorkspaceContext { profile }, window, cx);
+        reload_target(
+            self.context_model.shows_all_providers(),
+            self.context_model.needs_sign_in(),
+            self.context.clone(),
+            first_profile,
+        )
+        .map(|context| self.apply_context(context, window, cx))
+        .unwrap_or_else(|| Self::sync_provider_view(&self.main_window, &self.context_model, cx));
     }
 
     fn open_settings(&mut self, cx: &mut Context<Self>) {
@@ -1006,37 +1044,7 @@ impl AppShell {
         let fleet_regions = Self::fleet_regions_for(&self.context_model);
         self.remembered_regions = Some(Self::remembered_regions_for(&self.context_model));
         let providers = app_providers::providers(cx);
-        let view: ListView = if self.context_model.shows_all_providers() {
-            all_providers_view(
-                &providers,
-                self.demo.then_some(self.demo_scenario),
-                self.request_timeout,
-            )
-        } else {
-            #[cfg(test)]
-            let provider = self.test_service_override.clone().unwrap_or_else(|| {
-                Self::provider_for_id(
-                    self.context_model.active_provider(),
-                    &providers,
-                    &self.context,
-                    self.demo,
-                    self.demo_scenario,
-                    &fleet_regions,
-                    self.request_timeout,
-                )
-            });
-            #[cfg(not(test))]
-            let provider = Self::provider_for_id(
-                self.context_model.active_provider(),
-                &providers,
-                &self.context,
-                self.demo,
-                self.demo_scenario,
-                &fleet_regions,
-                self.request_timeout,
-            );
-            InstanceListViewModel::new(provider).into()
-        };
+        let view = self.list_view(&providers, &fleet_regions);
         let profile = self.context.profile.clone();
         let demo = self.demo;
         let previous = self.fleet.read(cx);
@@ -1074,7 +1082,7 @@ impl AppShell {
         Self::sync_provider_view(&self.main_window, &self.context_model, cx);
         self.fleet = fleet;
         self.fleet.update(cx, |fleet, cx| fleet.refresh(cx));
-        (!self.demo && self.context.is_usable()).then(|| {
+        should_remember_context(self.demo, self.context.is_usable()).then(|| {
             self.message = self
                 .context
                 .save(&clouddeck_core::context_path())
@@ -1083,6 +1091,53 @@ impl AppShell {
         });
         self.schedule_ui_state_save(cx);
         cx.notify();
+    }
+
+    fn list_view(
+        &self,
+        providers: &[std::sync::Arc<dyn Provider>],
+        fleet_regions: &[String],
+    ) -> ListView {
+        self.context_model
+            .shows_all_providers()
+            .then(|| {
+                all_providers_view(
+                    providers,
+                    self.demo.then_some(self.demo_scenario),
+                    self.request_timeout,
+                )
+            })
+            .unwrap_or_else(|| self.active_provider_view(providers, fleet_regions))
+    }
+
+    fn active_provider_view(
+        &self,
+        providers: &[std::sync::Arc<dyn Provider>],
+        fleet_regions: &[String],
+    ) -> ListView {
+        #[cfg(test)]
+        let provider = self.test_service_override.clone().unwrap_or_else(|| {
+            Self::provider_for_id(
+                self.context_model.active_provider(),
+                providers,
+                &self.context,
+                self.demo,
+                self.demo_scenario,
+                fleet_regions,
+                self.request_timeout,
+            )
+        });
+        #[cfg(not(test))]
+        let provider = Self::provider_for_id(
+            self.context_model.active_provider(),
+            providers,
+            &self.context,
+            self.demo,
+            self.demo_scenario,
+            fleet_regions,
+            self.request_timeout,
+        );
+        InstanceListViewModel::new(provider).into()
     }
 
     fn refresh(&mut self, cx: &mut Context<Self>) {
