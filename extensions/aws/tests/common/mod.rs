@@ -48,9 +48,8 @@ pub fn happy_provider(providers: &[Arc<dyn Provider>], region: &str) -> Arc<dyn 
     workspace_provider(
         providers,
         "scenario-default",
-        region,
+        &[region.to_string()],
         Some(DemoFleet::Happy),
-        &[],
         Duration::from_secs(5),
     )
 }

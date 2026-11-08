@@ -1,29 +1,8 @@
 //! Pure text helpers for the bottom status bar.
 
-use std::collections::BTreeSet;
 use std::time::SystemTime;
 
 use chrono::{DateTime, FixedOffset, Utc};
-
-/// Label for the selected region scope.
-pub fn region_scope_label(selected: &[String], available: &[String]) -> String {
-    let distinct: BTreeSet<&str> = selected.iter().map(String::as_str).collect();
-    if distinct.is_empty() {
-        return "All regions".to_string();
-    }
-    if !available.is_empty()
-        && available
-            .iter()
-            .all(|region| distinct.contains(region.as_str()))
-    {
-        return "All regions".to_string();
-    }
-    if distinct.len() == 1 {
-        let only = distinct.into_iter().next().unwrap_or_default();
-        return only.to_string();
-    }
-    format!("{} regions", distinct.len())
-}
 
 /// Instance total label, singular for exactly one.
 pub fn instance_count_text(total: usize) -> String {
@@ -200,30 +179,6 @@ mod tests {
 
     fn regions(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| value.to_string()).collect()
-    }
-
-    #[test]
-    fn region_scope_label_covers_all_and_specific_scopes() {
-        let ab = regions(&["a", "b"]);
-        let abc = regions(&["a", "b", "c"]);
-        let abcd = regions(&["a", "b", "c", "d"]);
-
-        assert_eq!(region_scope_label(&[], &ab), "All regions");
-        assert_eq!(region_scope_label(&ab, &ab), "All regions");
-        assert_eq!(
-            region_scope_label(&regions(&["b", "a"]), &ab),
-            "All regions"
-        );
-        assert_eq!(region_scope_label(&regions(&["a"]), &ab), "a");
-        assert_eq!(
-            region_scope_label(&regions(&["a", "c"]), &abcd),
-            "2 regions"
-        );
-        assert_eq!(region_scope_label(&regions(&["a"]), &[]), "a");
-        assert_eq!(
-            region_scope_label(&regions(&["a", "b", "a"]), &abc),
-            "2 regions"
-        );
     }
 
     #[test]

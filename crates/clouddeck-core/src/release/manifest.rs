@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use semver::Version;
 use serde::{Deserialize, Serialize};
 
-use super::target::{is_newer, Target};
+use super::target::{Target, is_newer};
 
 /// The manifest.json published with every release.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -75,7 +75,11 @@ pub fn update_for(m: &Manifest, current: &Version, target: Target) -> Option<Ava
     }
     let asset = m.assets.get(target.id())?.clone();
     Some(AvailableUpdate {
-        version: m.version.strip_prefix('v').unwrap_or(&m.version).to_string(),
+        version: m
+            .version
+            .strip_prefix('v')
+            .unwrap_or(&m.version)
+            .to_string(),
         notes: m.notes.clone(),
         asset,
     })

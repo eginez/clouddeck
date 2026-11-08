@@ -1,6 +1,8 @@
 use std::ffi::c_void;
 
-use clouddeck_extension_api::abi::{Buffer, HostTable, INIT_ALREADY, INIT_NULL_HOST, INIT_OK, Slice};
+use clouddeck_extension_api::abi::{
+    Buffer, HostTable, INIT_ALREADY, INIT_NULL_HOST, INIT_OK, Slice,
+};
 use clouddeck_extension_api::wire::Method;
 use clouddeck_extension_api::{ErrorKind, ProviderError};
 use clouddeck_extension_toy::{clouddeck_call, clouddeck_free, clouddeck_init};

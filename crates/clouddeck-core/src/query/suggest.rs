@@ -969,7 +969,10 @@ mod tests {
             let mut instance = base.clone();
             instance.labels = tags
                 .into_iter()
-                .map(|(key, value)| Label { key: key.to_string(), value: Some(value.to_string()) })
+                .map(|(key, value)| Label {
+                    key: key.to_string(),
+                    value: Some(value.to_string()),
+                })
                 .collect();
             instance
         })
@@ -1018,7 +1021,10 @@ mod tests {
     #[test]
     fn tag_key_with_double_quote_is_not_suggested() {
         let mut instances = spaced_fleet();
-        instances[2].labels = vec![Label { key: "Bo\"b".to_string(), value: Some("x".to_string()) }];
+        instances[2].labels = vec![Label {
+            key: "Bo\"b".to_string(),
+            value: Some("x".to_string()),
+        }];
         let keys = ["Bo\"b", "Team"].map(String::from);
         let s = suggest("tag:", &instances, &keys);
         assert_eq!(
@@ -1035,8 +1041,14 @@ mod tests {
     fn tag_key_with_comma_or_equals_is_not_suggested() {
         let mut instances = spaced_fleet();
         instances[2].labels = vec![
-            Label { key: "Cost,Center".to_string(), value: Some("x".to_string()) },
-            Label { key: "a=b".to_string(), value: Some("y".to_string()) },
+            Label {
+                key: "Cost,Center".to_string(),
+                value: Some("x".to_string()),
+            },
+            Label {
+                key: "a=b".to_string(),
+                value: Some("y".to_string()),
+            },
         ];
         let keys = ["Cost,Center", "a=b", "Team"].map(String::from);
         let s = suggest("tag:", &instances, &keys);
@@ -1049,7 +1061,10 @@ mod tests {
     #[test]
     fn tag_value_with_double_quote_is_not_suggested() {
         let mut instances = spaced_fleet();
-        instances[2].labels = vec![Label { key: "Team".to_string(), value: Some("Bob \"B\" Smith".to_string()) }];
+        instances[2].labels = vec![Label {
+            key: "Team".to_string(),
+            value: Some("Bob \"B\" Smith".to_string()),
+        }];
         let s = suggest("tag:team=", &instances, &known_tag_keys(&instances));
         assert_eq!(
             s.items.iter().map(|i| i.label.as_str()).collect::<Vec<_>>(),
@@ -1062,7 +1077,10 @@ mod tests {
     #[test]
     fn tag_value_with_comma_is_not_suggested() {
         let mut instances = spaced_fleet();
-        instances[2].labels = vec![Label { key: "Team".to_string(), value: Some("Ops,Tier1".to_string()) }];
+        instances[2].labels = vec![Label {
+            key: "Team".to_string(),
+            value: Some("Ops,Tier1".to_string()),
+        }];
         let s = suggest("tag:team=", &instances, &known_tag_keys(&instances));
         assert_eq!(
             s.items.iter().map(|i| i.label.as_str()).collect::<Vec<_>>(),

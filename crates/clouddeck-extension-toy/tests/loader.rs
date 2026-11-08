@@ -21,5 +21,9 @@ fn built_toy_library() -> PathBuf {
 #[test]
 fn host_loads_the_toy_cdylib() {
     let loaded = load_extension(&built_toy_library()).expect("toy extension should load");
-    assert!(loaded.path().ends_with(built_toy_library().file_name().unwrap()));
+    assert!(
+        loaded
+            .path()
+            .ends_with(built_toy_library().file_name().unwrap())
+    );
 }

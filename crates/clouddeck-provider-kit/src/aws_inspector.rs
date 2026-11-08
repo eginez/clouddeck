@@ -26,12 +26,7 @@ pub fn aws_inspector() -> Vec<InspectorSectionDef> {
     ]
 }
 
-fn field(
-    label: &str,
-    value: InspectorValue,
-    monospace: bool,
-    copyable: bool,
-) -> InspectorRowDef {
+fn field(label: &str, value: InspectorValue, monospace: bool, copyable: bool) -> InspectorRowDef {
     InspectorRowDef {
         label: label.to_string(),
         value,

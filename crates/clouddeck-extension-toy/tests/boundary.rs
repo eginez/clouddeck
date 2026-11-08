@@ -20,13 +20,7 @@ extern "C" fn lookup(_: *mut c_void, _: Slice, _: *mut Buffer) -> bool {
     false
 }
 
-extern "C" fn set_secret(
-    _: *mut c_void,
-    _: Slice,
-    _: Slice,
-    _: bool,
-    _: *mut Buffer,
-) -> bool {
+extern "C" fn set_secret(_: *mut c_void, _: Slice, _: Slice, _: bool, _: *mut Buffer) -> bool {
     true
 }
 

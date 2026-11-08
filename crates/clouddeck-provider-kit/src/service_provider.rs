@@ -234,8 +234,8 @@ impl Provider for ServiceProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mock::MockComputeService;
     use crate::fixtures::bare_ec2;
+    use crate::mock::MockComputeService;
     use crate::{ComputeInstanceFilters, ComputeInstanceLoadResult, ComputeServicePartialFailure};
 
     fn with_call<T>(f: impl FnOnce(&Call<'_>) -> T) -> T {

@@ -7,7 +7,7 @@ use crate::service_provider::{LoadHost, REGION, cloud_deck_error, join_failure};
 use crate::{
     Call, CellFailure, CloudDeckError, CompiledQuery, ComputeServicePartialFailure, ConnectionId,
     KindId, ListResult, Provider, ProviderError, ProviderFacet, ProviderInfo, QueryError,
-    Selection, SearchIndex, StateFacetCounts, merge_with_previous, provider_facet_counts,
+    SearchIndex, Selection, StateFacetCounts, merge_with_previous, provider_facet_counts,
     state_facet_counts_indexed, type_facet_counts_indexed,
 };
 
@@ -206,7 +206,11 @@ impl InstanceListViewModel {
 
         let mut filtered: Vec<Instance> = self
             .search_index
-            .matching(Some(provider_id.as_str()), &self.compile_search(), &self.instances)
+            .matching(
+                Some(provider_id.as_str()),
+                &self.compile_search(),
+                &self.instances,
+            )
             .into_iter()
             .filter(|instance| {
                 states.is_empty() || states.contains(&instance.state.raw.to_lowercase())
@@ -488,13 +492,16 @@ mod tests {
     use crate::ComputeService;
     use crate::query::fixtures::bare_ec2;
     use crate::service_provider::{service_provider, whole_load_failure};
-    use clouddeck_provider_api::{ErrorKind, ValueId};
     use crate::{
         ComputeInstanceFilters, DirectoryScenarioCatalog, ScenarioService, TestScenarioKind,
     };
+    use clouddeck_provider_api::{ErrorKind, ValueId};
     use std::time::{Duration, UNIX_EPOCH};
 
-    const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../clouddeck-provider-kit/testdata/ec2-scenarios");
+    const FIXTURES: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../clouddeck-provider-kit/testdata/ec2-scenarios"
+    );
 
     fn catalog() -> DirectoryScenarioCatalog {
         DirectoryScenarioCatalog::new(FIXTURES)

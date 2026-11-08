@@ -72,9 +72,7 @@ impl EC2Instance {
     /// alongside the state (or gate it on `state == running`).
     pub fn uptime(&self) -> Option<Duration> {
         let launch_time = self.launch_time?;
-        SystemTime::now()
-            .duration_since(launch_time)
-            .ok()
+        SystemTime::now().duration_since(launch_time).ok()
     }
 
     /// Human-readable uptime like "3d 4h 5m" (zero higher units omitted),
@@ -343,9 +341,8 @@ mod tests {
     #[test]
     fn uptime_description_omits_zero_higher_units() {
         let mut inst = instance("i-1", "t3.micro", "running", "api");
-        inst.launch_time = Some(
-            SystemTime::now() - Duration::from_secs(86_400 * 3 + 3_600 * 4 + 60 * 5),
-        );
+        inst.launch_time =
+            Some(SystemTime::now() - Duration::from_secs(86_400 * 3 + 3_600 * 4 + 60 * 5));
         assert_eq!(inst.uptime_description(), "3d 4h 5m");
     }
 

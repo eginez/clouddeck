@@ -230,7 +230,10 @@ fn has_matches(instance: &Instance, value: &str) -> bool {
             .address(AddressKind::Public)
             .is_some_and(|ip| !ip.is_empty()),
         "tags" => !instance.labels.is_empty(),
-        "name" => instance.name.as_deref().is_some_and(|name| !name.is_empty()),
+        "name" => instance
+            .name
+            .as_deref()
+            .is_some_and(|name| !name.is_empty()),
         _ => false,
     }
 }
@@ -264,9 +267,7 @@ fn field_matches(field: QueryField, instance: &Instance, value: &str) -> bool {
         QueryField::Region => field_text(instance.region.as_deref()).starts_with(value),
         QueryField::Type => prefix_or_glob(instance.instance_type.as_deref()),
         QueryField::Az => prefix_or_glob(instance.location.as_deref()),
-        QueryField::Ip => {
-            field_text(private).contains(value) || field_text(public).contains(value)
-        }
+        QueryField::Ip => field_text(private).contains(value) || field_text(public).contains(value),
         QueryField::Private => field_text(private).contains(value),
         QueryField::Public => field_text(public).contains(value),
         QueryField::Provider(name) => provider_field(name).is_some_and(|def| {
@@ -312,7 +313,12 @@ fn tag_field_matches(instance: &Instance, spec: &str) -> bool {
     instance.labels.iter().any(|label| {
         label.key.to_lowercase() == key
             && wanted.is_none_or(|wanted| {
-                label.value.as_deref().unwrap_or("").to_lowercase().contains(wanted)
+                label
+                    .value
+                    .as_deref()
+                    .unwrap_or("")
+                    .to_lowercase()
+                    .contains(wanted)
             })
     })
 }

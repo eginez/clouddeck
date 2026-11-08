@@ -10,7 +10,7 @@ use clouddeck_core::extension_host::{
     ProviderRegistry, SettingsCategory, search_provider_settings,
 };
 use clouddeck_core::{
-    DEFAULT_AWS_CONFIG_FILE, DefaultSort, Density, FLEET_REGIONS, KEYMAP, LaunchBehavior, Platform,
+    DEFAULT_AWS_CONFIG_FILE, DefaultSort, Density, KEYMAP, LaunchBehavior, Platform,
     RECENT_SEARCH_LIMITS, REFRESH_INTERVALS, SETTINGS_CATEGORIES, SettingDef, SettingId,
     SettingKind, SettingValue, Settings, SettingsSearchResults, Theme, UiState, aws_config_setting,
     changed_categories, context_path, search_settings, settings_no_match_text, settings_path,
@@ -22,7 +22,6 @@ use gpui::{
     Subscription, TitlebarOptions, Window, WindowBounds, WindowHandle, WindowOptions, div, img,
     point, prelude::*, px, size, white,
 };
-use gpui_component::checkbox::Checkbox;
 use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::select::{Select, SelectEvent, SelectItem, SelectState};
 use gpui_component::tooltip::Tooltip;
@@ -864,23 +863,6 @@ impl SettingsWindow {
         self.change(cx, |settings| pick.apply(settings));
     }
 
-    fn toggle_region(&mut self, region: &str, cx: &mut Context<Self>) {
-        self.change(cx, |settings| {
-            let visible = settings
-                .regions
-                .iter()
-                .filter(|name| FLEET_REGIONS.contains(&name.as_str()))
-                .count();
-            match settings.regions.iter().position(|name| name == region) {
-                Some(index) if visible > 1 => {
-                    settings.regions.remove(index);
-                }
-                Some(_) => {}
-                None => settings.regions.push(region.to_owned()),
-            }
-        });
-    }
-
     fn reset(&mut self, id: SettingId, window: &mut Window, cx: &mut Context<Self>) {
         if id.is_disabled(&self.settings) {
             return;
@@ -1073,39 +1055,10 @@ impl SettingsWindow {
             .into_any_element()
     }
 
-    fn regions_control(&self, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
-        let view = cx.entity();
-        div()
-            .debug_selector(|| "settings.control.Regions".into())
-            .flex()
-            .flex_col()
-            .gap(px(6.))
-            .children(FLEET_REGIONS.iter().map(|region| {
-                let name = region.to_string();
-                let view = view.clone();
-                let checked = self
-                    .settings
-                    .regions
-                    .iter()
-                    .any(|selected| selected.as_str() == *region);
-                Checkbox::new(*region)
-                    .label(*region)
-                    .checked(checked)
-                    .on_click(move |_, _, cx| {
-                        view.update(cx, |this, cx| this.toggle_region(&name, cx));
-                    })
-            }))
-            .text_color(palette.text)
-            .into_any_element()
-    }
-
     fn control(&self, id: SettingId, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
-        match id {
-            SettingId::Regions => self.regions_control(palette, cx),
-            _ => match flag(&self.settings, id) {
-                Some(on) => self.switch(id, on, palette, cx),
-                None => self.select_control(id, palette),
-            },
+        match flag(&self.settings, id) {
+            Some(on) => self.switch(id, on, palette, cx),
+            None => self.select_control(id, palette),
         }
     }
 
@@ -1459,7 +1412,7 @@ impl SettingsWindow {
                             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                                 if this.edit_ui_state(
                                     "Remembered scope forgotten",
-                                    |state| state.selected_regions.clear(),
+                                    |state| state.dimension_selections.clear(),
                                     cx,
                                 ) {
                                     cx.emit(SettingsEvent::RememberedScopeForgotten);
@@ -2427,40 +2380,6 @@ mod tests {
             5
         );
         assert!(events.borrow().is_empty());
-    }
-
-    #[gpui::test]
-    fn the_last_region_cannot_be_removed(cx: &mut TestAppContext) {
-        let settings = Settings {
-            regions: vec!["us-east-1".into()],
-            ..Settings::default()
-        };
-        let (view, cx) = rooted(cx, settings);
-        let events = recorded_events(&view, cx);
-
-        view.update(cx, |view, cx| view.toggle_region("us-east-1", cx));
-
-        assert_eq!(
-            view.read_with(cx, |view, _| view.settings.regions.clone()),
-            vec!["us-east-1".to_string()]
-        );
-        assert!(events.borrow().is_empty());
-    }
-
-    #[gpui::test]
-    fn an_unchecked_region_is_added(cx: &mut TestAppContext) {
-        let settings = Settings {
-            regions: vec!["us-east-1".into()],
-            ..Settings::default()
-        };
-        let (view, cx) = rooted(cx, settings);
-
-        view.update(cx, |view, cx| view.toggle_region("eu-west-1", cx));
-
-        assert_eq!(
-            view.read_with(cx, |view, _| view.settings.regions.clone()),
-            vec!["us-east-1".to_string(), "eu-west-1".to_string()]
-        );
     }
 
     #[gpui::test]

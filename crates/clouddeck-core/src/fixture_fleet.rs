@@ -380,7 +380,12 @@ mod tests {
             deadline: None,
             host: &host,
         };
-        provider.list(&cx, &ConnectionId::from("default"), &KindId::instances(), selection)
+        provider.list(
+            &cx,
+            &ConnectionId::from("default"),
+            &KindId::instances(),
+            selection,
+        )
     }
 
     #[test]
@@ -398,7 +403,10 @@ mod tests {
 
     #[test]
     fn huge_fleet_has_exact_shape_and_counts() {
-        use crate::{StateFacetCounts, compile, known_tag_keys, native_id, state_facet_counts, type_facet_counts};
+        use crate::{
+            StateFacetCounts, compile, known_tag_keys, native_id, state_facet_counts,
+            type_facet_counts,
+        };
         use std::time::SystemTime;
 
         let fleet = huge_fleet();
@@ -431,7 +439,13 @@ mod tests {
         stopped_types.sort();
         assert_eq!(
             stopped_types,
-            vec!["c6i.large", "m6i.large", "r6i.large", "t3.medium", "t3.micro"]
+            vec![
+                "c6i.large",
+                "m6i.large",
+                "r6i.large",
+                "t3.medium",
+                "t3.micro"
+            ]
         );
         assert!(stopped.iter().all(|(_, count)| *count == 250));
 

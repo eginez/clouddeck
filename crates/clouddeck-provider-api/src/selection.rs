@@ -77,7 +77,10 @@ mod tests {
 
     #[test]
     fn plural_uses_override() {
-        assert_eq!(dimension("Compartment", Some("Compartments")).plural(), "Compartments");
+        assert_eq!(
+            dimension("Compartment", Some("Compartments")).plural(),
+            "Compartments"
+        );
         assert_eq!(dimension("Child", Some("Children")).plural(), "Children");
     }
 

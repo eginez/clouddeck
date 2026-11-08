@@ -7,11 +7,11 @@ use clouddeck_provider_api::{
     KindInfo, ListResult, LogLevel, Provider, ProviderError, ProviderInfo, Selection, ValueId,
 };
 
-use clouddeck_provider_kit::console_url::console_url_for_instance;
-use clouddeck_provider_kit::scoped_provider::{ScopeHost, ScopeSettings};
 use crate::{
     DemoFleet, FLEET_REGIONS, bound_provider, builtin_providers, demo_provider, workspace_provider,
 };
+use clouddeck_provider_kit::console_url::console_url_for_instance;
+use clouddeck_provider_kit::scoped_provider::{ScopeHost, ScopeSettings};
 
 struct NullHost;
 
@@ -62,7 +62,10 @@ fn call_with_deadline() -> Call<'static> {
 fn region_selection(regions: &[&str]) -> Selection {
     Selection::new().with(
         "region",
-        regions.iter().map(|region| ValueId::from(*region)).collect(),
+        regions
+            .iter()
+            .map(|region| ValueId::from(*region))
+            .collect(),
     )
 }
 
@@ -70,9 +73,8 @@ fn happy_provider(providers: &[Arc<dyn Provider>], region: &str) -> Arc<dyn Prov
     workspace_provider(
         providers,
         "scenario-default",
-        region,
+        &[region.to_string()],
         Some(DemoFleet::Happy),
-        &[],
         Duration::from_secs(5),
     )
 }
@@ -155,9 +157,8 @@ fn other_demo_paths_list_through_the_demo_entry() {
     let fleet = workspace_provider(
         &providers,
         "scenario-default",
-        "fleet",
+        &["us-east-1".to_string(), "eu-west-1".to_string()],
         Some(DemoFleet::Happy),
-        &["us-east-1".to_string()],
         Duration::from_secs(5),
     );
     assert_eq!(fleet.info().id, "demo");
@@ -171,9 +172,8 @@ fn other_demo_paths_list_through_the_demo_entry() {
         let provider = workspace_provider(
             &providers,
             "scenario-default",
-            "us-east-1",
+            &["us-east-1".to_string()],
             Some(scenario),
-            &[],
             Duration::from_secs(5),
         );
         assert_eq!(provider.info().id, "demo", "{scenario:?}");
@@ -333,14 +333,13 @@ fn scope_token_is_stable_within_the_process() {
     );
 }
 
-fn list_demo(demo: DemoFleet, region: &str, fleet_regions: &[String]) -> ListResult {
+fn list_demo(demo: DemoFleet, regions: &[String]) -> ListResult {
     let providers = builtin_providers(true);
     workspace_provider(
         &providers,
         "scenario-default",
-        region,
+        regions,
         Some(demo),
-        fleet_regions,
         Duration::from_secs(5),
     )
     .list(
@@ -354,10 +353,7 @@ fn list_demo(demo: DemoFleet, region: &str, fleet_regions: &[String]) -> ListRes
 #[test]
 fn huge_demo_scenario_lists_five_thousand_resources() {
     assert_eq!(DemoFleet::from_key("huge"), Some(DemoFleet::Huge));
-    assert_eq!(
-        list_demo(DemoFleet::Huge, "fleet", &[]).resources.len(),
-        5000
-    );
+    assert_eq!(list_demo(DemoFleet::Huge, &[]).resources.len(), 5000);
 }
 
 #[test]
@@ -365,21 +361,18 @@ fn demo_scenarios_list_their_expected_shapes() {
     let fleet_regions: Vec<String> = FLEET_REGIONS.iter().map(|r| r.to_string()).collect();
 
     assert_eq!(
-        list_demo(DemoFleet::Empty, "fleet", &fleet_regions),
+        list_demo(DemoFleet::Empty, &fleet_regions),
         ListResult::default()
     );
 
-    let failure = list_demo(DemoFleet::Failure, "fleet", &fleet_regions);
+    let failure = list_demo(DemoFleet::Failure, &fleet_regions);
     assert!(failure.resources.is_empty());
     assert_eq!(failure.failures.len(), 1);
     assert_eq!(failure.failures[0].cell, Selection::new());
 
-    assert_eq!(
-        list_demo(DemoFleet::Large, "fleet", &[]).resources.len(),
-        120
-    );
+    assert_eq!(list_demo(DemoFleet::Large, &[]).resources.len(), 120);
 
-    let partial = list_demo(DemoFleet::Partial, "fleet", &fleet_regions);
+    let partial = list_demo(DemoFleet::Partial, &fleet_regions);
     assert_eq!(
         instance_ids(&partial),
         [
@@ -401,11 +394,11 @@ fn demo_scenarios_list_their_expected_shapes() {
         ]
     );
 
-    let partial_single = list_demo(DemoFleet::Partial, "us-east-1", &[]);
+    let partial_single = list_demo(DemoFleet::Partial, &["us-east-1".to_string()]);
     assert_eq!(instance_ids(&partial_single).len(), 3);
     assert!(partial_single.failures.is_empty());
 
-    let happy_fleet = list_demo(DemoFleet::Happy, "fleet", &fleet_regions);
+    let happy_fleet = list_demo(DemoFleet::Happy, &fleet_regions);
     assert_eq!(instance_ids(&happy_fleet).len(), 3);
     assert!(happy_fleet.failures.is_empty());
 }
@@ -517,9 +510,8 @@ fn listing_goes_through_the_registry_entry() {
     workspace_provider(
         &providers,
         "prof",
-        "fleet",
-        None,
         &fleet_regions,
+        None,
         Duration::from_secs(7),
     )
     .list(
@@ -531,9 +523,8 @@ fn listing_goes_through_the_registry_entry() {
     workspace_provider(
         &providers,
         "prof",
-        "us-west-2",
+        &["us-west-2".to_string()],
         None,
-        &[],
         Duration::from_secs(7),
     )
     .list(
@@ -597,4 +588,3 @@ fn extension_shaped_demo_entry_lists_from_connection_and_selection() {
         }]
     );
 }
-

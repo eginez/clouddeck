@@ -145,25 +145,22 @@ mod tests {
     fn plain_words_with_offsets() {
         let tokens = tokenize("web  state:stopped");
         assert_eq!(
-            tokens
-                .iter()
-                .map(|t| t.raw.as_str())
-                .collect::<Vec<_>>(),
+            tokens.iter().map(|t| t.raw.as_str()).collect::<Vec<_>>(),
             ["web", "state:stopped"]
         );
         assert_eq!((tokens[0].start, tokens[0].end), (0, 3));
         assert_eq!((tokens[1].start, tokens[1].end), (5, 18));
-        assert_eq!(&"web  state:stopped"[tokens[1].start..tokens[1].end], tokens[1].raw);
+        assert_eq!(
+            &"web  state:stopped"[tokens[1].start..tokens[1].end],
+            tokens[1].raw
+        );
     }
 
     #[test]
     fn quoted_text_does_not_split_on_whitespace() {
         let tokens = tokenize(r#"state:stopped "api gateway" x"#);
         assert_eq!(
-            tokens
-                .iter()
-                .map(|t| t.raw.as_str())
-                .collect::<Vec<_>>(),
+            tokens.iter().map(|t| t.raw.as_str()).collect::<Vec<_>>(),
             ["state:stopped", "\"api gateway\"", "x"]
         );
         for t in &tokens {

@@ -1,4 +1,4 @@
-use crate::{FLEET_REGIONS, context_path};
+use crate::context_path;
 use clouddeck_provider_api::SettingValue;
 pub use clouddeck_provider_kit::fleet_region_timeout;
 use serde::{Deserialize, Serialize};
@@ -96,8 +96,6 @@ pub struct Settings {
     pub refresh_on_focus: bool,
     /// What happens when CloudDeck launches.
     pub on_launch: LaunchBehavior,
-    /// Regions shown in the fleet.
-    pub regions: Vec<String>,
     /// Provider shown at launch, unset until the user picks one.
     pub active_provider: Option<String>,
     /// Default ordering of instance lists.
@@ -129,10 +127,6 @@ impl Default for Settings {
             refresh_interval_minutes: 5,
             refresh_on_focus: true,
             on_launch: LaunchBehavior::RememberLast,
-            regions: FLEET_REGIONS
-                .iter()
-                .map(|region| (*region).to_owned())
-                .collect(),
             active_provider: None,
             default_sort: DefaultSort::Name,
             show_unnamed_label: true,
@@ -154,7 +148,7 @@ fn allowed_or(value: u32, allowed: &[u32], default: u32) -> u32 {
 }
 
 impl Settings {
-    /// Replaces out-of-range values with defaults and blank values with `None` or the default regions.
+    /// Replaces out-of-range values with defaults.
     pub fn normalized(self) -> Self {
         let defaults = Self::default();
         Self {
@@ -168,11 +162,6 @@ impl Settings {
                 &RECENT_SEARCH_LIMITS,
                 defaults.recent_search_limit,
             ),
-            regions: if self.regions.is_empty() {
-                defaults.regions
-            } else {
-                self.regions
-            },
             ..self
         }
     }
@@ -284,9 +273,8 @@ pub fn migrate_aws_settings(path: &Path) -> std::io::Result<()> {
     if !raw.contains_key("aws_config_file") && !raw.contains_key("request_timeout_seconds") {
         return Ok(());
     }
-    let invalid = |message: &str| {
-        std::io::Error::new(std::io::ErrorKind::InvalidData, message.to_owned())
-    };
+    let invalid =
+        |message: &str| std::io::Error::new(std::io::ErrorKind::InvalidData, message.to_owned());
     let file = match raw.remove("aws_config_file") {
         Some(serde_json::Value::String(file)) => Some(file),
         Some(_) => return Err(invalid("aws_config_file must be a string")),
@@ -347,8 +335,6 @@ pub enum SettingId {
     RefreshOnFocus,
     /// What happens at launch.
     OnLaunch,
-    /// Regions to load.
-    Regions,
     /// Default table sort.
     DefaultSort,
     /// Label instances without a Name tag as unnamed.
@@ -365,7 +351,7 @@ pub enum SettingId {
 
 impl SettingId {
     /// Every setting in display order.
-    pub const ALL: [SettingId; 16] = [
+    pub const ALL: [SettingId; 15] = [
         Self::Theme,
         Self::Density,
         Self::ShowSidebarOnLaunch,
@@ -375,7 +361,6 @@ impl SettingId {
         Self::RefreshInterval,
         Self::RefreshOnFocus,
         Self::OnLaunch,
-        Self::Regions,
         Self::DefaultSort,
         Self::ShowUnnamedLabel,
         Self::RecentSearchLimit,
@@ -392,11 +377,9 @@ impl SettingId {
             | Self::ShowSidebarOnLaunch
             | Self::OpenInspectorOnSelect
             | Self::ShowUpdatedTime => "Appearance",
-            Self::AutoRefresh
-            | Self::RefreshInterval
-            | Self::RefreshOnFocus
-            | Self::OnLaunch
-            | Self::Regions => "Fleet",
+            Self::AutoRefresh | Self::RefreshInterval | Self::RefreshOnFocus | Self::OnLaunch => {
+                "Fleet"
+            }
             Self::DefaultSort | Self::ShowUnnamedLabel => "Table",
             Self::RecentSearchLimit | Self::MatchTags => "Search",
             Self::CheckForUpdates | Self::DemoMode => "Advanced",
@@ -411,7 +394,7 @@ impl SettingId {
                 "Panels"
             }
             Self::AutoRefresh | Self::RefreshInterval | Self::RefreshOnFocus => "Loading",
-            Self::OnLaunch | Self::Regions => "Scope",
+            Self::OnLaunch => "Scope",
             Self::DefaultSort | Self::ShowUnnamedLabel => "Display",
             Self::RecentSearchLimit | Self::MatchTags => "Behaviour",
             Self::CheckForUpdates => "Updates",
@@ -458,11 +441,7 @@ impl SettingId {
                 "Refresh when the window regains focus",
                 "After more than one interval away.",
             ),
-            Self::OnLaunch => ("On launch", "Reopen into your last profile and regions."),
-            Self::Regions => (
-                "Regions to load",
-                "Region list the picker offers. At least one.",
-            ),
+            Self::OnLaunch => ("On launch", "Reopen into your last profile and scope."),
             Self::DefaultSort => ("Default sort", "Applied until you click a column header."),
             Self::ShowUnnamedLabel => (
                 "Show instances without a Name tag as “unnamed”",
@@ -532,7 +511,6 @@ fn reset_fleet(id: SettingId, settings: &mut Settings, defaults: &Settings) {
         }
         SettingId::RefreshOnFocus => settings.refresh_on_focus = defaults.refresh_on_focus,
         SettingId::OnLaunch => settings.on_launch = defaults.on_launch,
-        SettingId::Regions => settings.regions = defaults.regions.clone(),
         _ => {}
     }
 }
@@ -708,10 +686,6 @@ mod tests {
         assert_eq!(settings.refresh_interval_minutes, 5);
         assert!(settings.refresh_on_focus);
         assert_eq!(settings.on_launch, LaunchBehavior::RememberLast);
-        assert_eq!(
-            settings.regions,
-            vec!["us-east-1", "us-west-2", "eu-west-1", "eu-central-1"]
-        );
         assert_eq!(settings.default_sort, DefaultSort::Name);
         assert!(settings.show_unnamed_label);
         assert_eq!(settings.recent_search_limit, 10);
@@ -834,16 +808,6 @@ mod tests {
         .normalized();
         assert_eq!(settings.refresh_interval_minutes, 5);
         assert_eq!(settings.recent_search_limit, 10);
-    }
-
-    #[test]
-    fn normalized_restores_default_regions_when_empty() {
-        let settings = Settings {
-            regions: Vec::new(),
-            ..Settings::default()
-        }
-        .normalized();
-        assert_eq!(settings.regions, Settings::default().regions);
     }
 
     #[test]
@@ -972,8 +936,8 @@ mod tests {
     }
 
     #[test]
-    fn catalog_has_sixteen_labels_in_display_order() {
-        assert_eq!(SettingId::ALL.len(), 16);
+    fn catalog_has_fifteen_labels_in_display_order() {
+        assert_eq!(SettingId::ALL.len(), 15);
         let labels: Vec<&str> = SettingId::ALL.iter().map(|id| id.label()).collect();
         assert_eq!(
             labels,
@@ -987,7 +951,6 @@ mod tests {
                 "Refresh interval",
                 "Refresh when the window regains focus",
                 "On launch",
-                "Regions to load",
                 "Default sort",
                 "Show instances without a Name tag as “unnamed”",
                 "Remember recent searches",
@@ -1056,18 +1019,6 @@ mod tests {
     }
 
     #[test]
-    fn regions_reset_restores_default_regions() {
-        let mut settings = Settings {
-            regions: vec!["us-east-1".into()],
-            ..Settings::default()
-        };
-        assert!(SettingId::Regions.is_changed(&settings));
-        SettingId::Regions.reset(&mut settings);
-        assert_eq!(settings.regions, Settings::default().regions);
-        assert_eq!(settings.regions.len(), 4);
-    }
-
-    #[test]
     fn every_setting_resets_only_its_own_field() {
         let changed = Settings {
             theme: Theme::Dark,
@@ -1079,7 +1030,6 @@ mod tests {
             refresh_interval_minutes: 15,
             refresh_on_focus: false,
             on_launch: LaunchBehavior::AlwaysAsk,
-            regions: vec!["us-east-1".into()],
             active_provider: None,
             default_sort: DefaultSort::State,
             show_unnamed_label: false,

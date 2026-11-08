@@ -55,7 +55,9 @@ pub enum AuthStep {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AuthStatus {
     SignedOut,
-    SignedIn { expires: Option<SystemTime> },
+    SignedIn {
+        expires: Option<SystemTime>,
+    },
     Expired,
     /// The check itself failed (for example a network error), so the sign-in state is not known.
     Unknown,

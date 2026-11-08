@@ -64,7 +64,13 @@ impl Buffer {
     /// # Safety
     /// As for [`Slice::bytes`].
     pub unsafe fn bytes<'a>(self) -> &'a [u8] {
-        unsafe { Slice { ptr: self.ptr, len: self.len }.bytes() }
+        unsafe {
+            Slice {
+                ptr: self.ptr,
+                len: self.len,
+            }
+            .bytes()
+        }
     }
 }
 

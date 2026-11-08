@@ -52,9 +52,9 @@ impl Term {
     /// Error message for unknown fields; `None` for every other kind.
     pub fn error(&self) -> Option<String> {
         match &self.kind {
-            TermKind::Unknown { name, .. } => {
-                Some(format!("No field named “{name}”. Searching for the text instead."))
-            }
+            TermKind::Unknown { name, .. } => Some(format!(
+                "No field named “{name}”. Searching for the text instead."
+            )),
             _ => None,
         }
     }
@@ -180,9 +180,7 @@ mod tests {
                     end: 3
                 },
                 negated: false,
-                kind: TermKind::Word {
-                    text: "web".into()
-                }
+                kind: TermKind::Word { text: "web".into() }
             }
         );
     }
@@ -206,9 +204,7 @@ mod tests {
     fn lone_dash_is_word() {
         let t = k("-");
         assert!(!t.negated);
-        assert_eq!(t.kind, TermKind::Word {
-            text: "-".into()
-        });
+        assert_eq!(t.kind, TermKind::Word { text: "-".into() });
     }
 
     #[test]
@@ -324,9 +320,12 @@ mod tests {
 
     #[test]
     fn name_must_start_with_letter() {
-        assert_eq!(k("1x:y").kind, TermKind::Word {
-            text: "1x:y".into()
-        });
+        assert_eq!(
+            k("1x:y").kind,
+            TermKind::Word {
+                text: "1x:y".into()
+            }
+        );
     }
 
     #[test]

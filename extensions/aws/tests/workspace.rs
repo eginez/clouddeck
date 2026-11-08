@@ -20,9 +20,8 @@ fn demo_scenarios_stay_demo_data_without_a_demo_entry() {
         workspace_provider(
             &providers,
             "scenario-default",
-            "us-east-1",
+            &["us-east-1".to_string()],
             Some(demo),
-            &[],
             Duration::from_secs(5),
         )
         .list(

@@ -64,13 +64,21 @@ impl Host for TableHost {
             has_value,
             &mut error,
         );
-        if stored { Ok(()) } else { Err(self.failure(error)) }
+        if stored {
+            Ok(())
+        } else {
+            Err(self.failure(error))
+        }
     }
 
     fn open_url(&self, url: &str) -> Result<(), ProviderError> {
         let mut error = Buffer::EMPTY;
         let opened = (self.0.open_url)(self.0.ctx, Slice::of(url.as_bytes()), &mut error);
-        if opened { Ok(()) } else { Err(self.failure(error)) }
+        if opened {
+            Ok(())
+        } else {
+            Err(self.failure(error))
+        }
     }
 
     fn cancelled(&self) -> bool {

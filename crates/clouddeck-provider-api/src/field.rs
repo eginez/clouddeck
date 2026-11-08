@@ -35,13 +35,8 @@ pub enum CoreField {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FieldSource {
     Core(CoreField),
-    Extra {
-        section: String,
-        key: String,
-    },
-    Section {
-        section: String,
-    },
+    Extra { section: String, key: String },
+    Section { section: String },
     Labels,
     Concat(Vec<FieldSource>),
 }
@@ -257,9 +252,12 @@ mod tests {
             }),
             ["web", "sg-1"]
         );
-        assert!(values(FieldSource::Section {
-            section: "Nope".into(),
-        }).is_empty());
+        assert!(
+            values(FieldSource::Section {
+                section: "Nope".into(),
+            })
+            .is_empty()
+        );
     }
 
     #[test]

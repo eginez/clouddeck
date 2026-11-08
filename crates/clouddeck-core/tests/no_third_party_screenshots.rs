@@ -50,8 +50,8 @@ fn no_reference_files_in_product_tree() {
 fn design_readmes_do_not_link_reference_images() {
     let root = workspace_root();
     for readme in ["design/README.md", "design/images/README.md"] {
-        let text = fs::read_to_string(root.join(readme))
-            .unwrap_or_else(|e| panic!("read {readme}: {e}"));
+        let text =
+            fs::read_to_string(root.join(readme)).unwrap_or_else(|e| panic!("read {readme}: {e}"));
         assert!(
             !text.contains("reference-"),
             "{readme} mentions a reference- image; remove the link, third-party screenshots belong on the ops side"

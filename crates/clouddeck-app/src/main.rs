@@ -14,6 +14,7 @@ mod context_bar;
 // provider-selection step added nothing) folded profile/region selection
 // directly into `account_window::AccountWindowView`. Nothing outside their
 // own files referenced them.
+mod dimension_picker_view;
 mod failure_popover;
 mod fleet_state;
 mod icons;
@@ -27,7 +28,6 @@ mod plugins_window;
 mod profile_picker_view;
 mod provider_picker_view;
 mod provider_sign_in;
-mod dimension_picker_view;
 mod render_state;
 mod row_context_menu;
 mod runtime;

@@ -746,10 +746,7 @@ mod tests {
     #[test]
     fn provider_cell_uses_short_name() {
         assert_eq!(provider_cell_text("aws", "AWS").text, "AWS");
-        assert_eq!(
-            provider_cell_text("gcp", "Google Cloud").text,
-            "GCP"
-        );
+        assert_eq!(provider_cell_text("gcp", "Google Cloud").text, "GCP");
     }
 
     #[test]

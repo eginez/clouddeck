@@ -1,36 +1,36 @@
-pub(crate) use clouddeck_provider_kit::{
-    aws_inspector, context, demo_scenarios, fault_injecting, fleet_compute, instance, mock, models,
-    scenario, service,
+pub use clouddeck_provider_api::{
+    AuthAnswer, AuthInput, AuthMethod, AuthStep, Call, CellFailure, Connection, ConnectionId,
+    CoreField, DimValue, Dimension, DimensionId, ErrorKind, FieldDef, FieldKind, FieldSource,
+    FlowId, Host, InspectorRowDef, InspectorSectionDef, InspectorValue, KindId, KindInfo,
+    ListResult, LogLevel, MatchMode, Provider, ProviderError, ProviderInfo, ResourceId, Selection,
+    SettingDef, SettingKind, SettingValue, ValueId,
 };
+pub use clouddeck_provider_kit::ComputeServiceProvider;
 pub use clouddeck_provider_kit::service_provider;
 pub use clouddeck_provider_kit::{
     Address, AddressKind, ExtrasSection, Instance, Label, State, StateKind, native_id,
 };
-pub use clouddeck_provider_api::{
-    AuthAnswer, AuthInput, AuthMethod, AuthStep, Call, CellFailure, Connection, ConnectionId, CoreField,
-    DimValue, Dimension, DimensionId, ErrorKind, FieldDef, FieldKind, FieldSource, FlowId, Host,
-    InspectorRowDef, InspectorSectionDef, InspectorValue, KindId, KindInfo, ListResult, LogLevel,
-    MatchMode, Provider, ProviderError, ProviderInfo, ResourceId, Selection, SettingDef, SettingKind,
-    SettingValue, ValueId,
+pub(crate) use clouddeck_provider_kit::{
+    aws_inspector, context, demo_scenarios, fault_injecting, fleet_compute, instance, mock, models,
+    scenario, service,
 };
-pub use clouddeck_provider_kit::ComputeServiceProvider;
 mod query;
 mod scenario_service;
 
+pub use clouddeck_provider_kit::aws_fields::aws_fields;
 pub use clouddeck_provider_kit::{
     AwsConfigFile, AwsConfigParseError, AwsCredentialKind, AwsProfile, AwsProfileAuth,
-    AwsSsoConfiguration, CloudDeckError, ComputeInstanceFilters, ComputeInstanceLoadResult,
-    ComputeServicePartialFailure, ComputeService, BoxError, ConsoleUrlError,
-    DEFAULT_AWS_CONFIG_FILE, DefaultSleep, DirectoryScenarioCatalog, EC2Instance, EC2InstanceTag, EC2Scenario, EC2ScenarioCatalog,
-    EC2ScenarioProfile, EC2ScenarioRegion, EC2SecurityGroup, FLEET_REGIONS,
-    FaultInjectingComputeService, FaultInjectionBehavior, FaultInjectionOutcome,
+    AwsSsoConfiguration, BoxError, CloudDeckError, ComputeInstanceFilters,
+    ComputeInstanceLoadResult, ComputeService, ComputeServicePartialFailure, ConsoleUrlError,
+    DEFAULT_AWS_CONFIG_FILE, DefaultSleep, DirectoryScenarioCatalog, EC2Instance, EC2InstanceTag,
+    EC2Scenario, EC2ScenarioCatalog, EC2ScenarioProfile, EC2ScenarioRegion, EC2SecurityGroup,
+    FLEET_REGIONS, FaultInjectingComputeService, FaultInjectionBehavior, FaultInjectionOutcome,
     FleetComputeService, LoadHost, LoginGuidance, MockComputeService, Partition, REGION, REGIONS,
     ScopeSettings, Sleep, WorkspaceContext, aws_file_paths, aws_file_paths_for, cloud_deck_error,
     console_url_for, console_url_for_instance, context_path, custom_aws_config_file, join_failure,
     list_scenario, load_profile_auth_for, load_profiles_for, login_guidance, parse_profile_auth,
     parse_profiles, parse_scenario, partition_for_region, read_profile_auth, whole_load_failure,
 };
-pub use clouddeck_provider_kit::aws_fields::aws_fields;
 pub use query::*;
 pub use scenario_service::{
     DEFAULT_FAILURE_MESSAGE, ScenarioFailureError, ScenarioService, TestScenarioKind,
@@ -78,8 +78,6 @@ mod table;
 pub use table::*;
 mod display_rows;
 pub use display_rows::*;
-mod region_scope;
-pub use region_scope::*;
 mod profile_picker;
 pub use profile_picker::*;
 mod recents;
@@ -98,5 +96,5 @@ pub use selection::*;
 mod stale;
 pub use layout::*;
 pub use stale::*;
-pub mod release;
 pub mod about;
+pub mod release;

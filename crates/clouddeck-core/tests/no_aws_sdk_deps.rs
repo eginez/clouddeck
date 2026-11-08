@@ -19,7 +19,10 @@ fn dependency_key(line: &str) -> Option<&str> {
 #[test]
 fn core_and_app_manifests_have_no_aws_sdk_deps() {
     let root = workspace_root();
-    for manifest in ["crates/clouddeck-core/Cargo.toml", "crates/clouddeck-app/Cargo.toml"] {
+    for manifest in [
+        "crates/clouddeck-core/Cargo.toml",
+        "crates/clouddeck-app/Cargo.toml",
+    ] {
         let path = root.join(manifest);
         let text = std::fs::read_to_string(&path).expect("read manifest");
         for line in text.lines() {

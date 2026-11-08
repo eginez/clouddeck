@@ -2,6 +2,7 @@ use crate::context_path;
 use crate::table::Column;
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::BTreeMap,
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
 };
@@ -46,8 +47,11 @@ impl Default for WindowFrame {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct UiState {
-    /// Selected region codes.
-    pub selected_regions: Vec<String>,
+    /// Selected value ids per dimension id.
+    pub dimension_selections: BTreeMap<String, Vec<String>>,
+    /// Pre-dimension region selection, read once on first start and never written back.
+    #[serde(default, skip_serializing)]
+    pub selected_regions: Option<Vec<String>>,
     /// Pinned search queries, in pin order.
     pub pinned_searches: Vec<String>,
     /// Recent search queries, most recent first.
@@ -71,7 +75,8 @@ pub struct UiState {
 impl Default for UiState {
     fn default() -> Self {
         Self {
-            selected_regions: Vec::new(),
+            dimension_selections: BTreeMap::new(),
+            selected_regions: None,
             pinned_searches: Vec::new(),
             recent_searches: Vec::new(),
             recent_instances: Vec::new(),
@@ -119,6 +124,11 @@ impl UiState {
             hidden_columns,
             ..self
         }
+    }
+
+    /// Takes the legacy region selection, if the file still carries one.
+    pub fn take_legacy_regions(&mut self) -> Option<Vec<String>> {
+        self.selected_regions.take()
     }
 
     /// Loads the saved state; a missing file yields defaults, other failures are errors.
@@ -193,7 +203,8 @@ mod tests {
     #[test]
     fn default_state_has_empty_lists_open_panes_and_no_window() {
         let state = UiState::default();
-        assert!(state.selected_regions.is_empty());
+        assert!(state.dimension_selections.is_empty());
+        assert_eq!(state.selected_regions, None);
         assert!(state.pinned_searches.is_empty());
         assert!(state.recent_searches.is_empty());
         assert!(state.recent_instances.is_empty());
@@ -208,7 +219,10 @@ mod tests {
     fn save_then_load_round_trips_state() {
         let path = temp_path("round-trip");
         let state = UiState {
-            selected_regions: vec!["us-east-1".into(), "eu-west-1".into()],
+            dimension_selections: BTreeMap::from([(
+                "region".to_string(),
+                vec!["us-east-1".to_string(), "eu-west-1".to_string()],
+            )]),
             pinned_searches: vec!["state:stopped".into()],
             recent_searches: vec!["owner:esteban".into()],
             recent_instances: vec!["us-east-1:i-1".into()],
@@ -246,6 +260,22 @@ mod tests {
         assert_eq!(loaded.sidebar_width, 210.0);
         assert_eq!(loaded.inspector_width, 420.0);
         assert_eq!(loaded.window, None);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn legacy_selected_regions_is_read_once_and_never_written() {
+        let path = temp_path("legacy-regions");
+        std::fs::write(&path, br#"{"selected_regions":["us-east-1"]}"#).unwrap();
+        let mut state = UiState::load(&path);
+        assert_eq!(
+            state.take_legacy_regions(),
+            Some(vec!["us-east-1".to_string()])
+        );
+        state.save(&path).unwrap();
+        let saved = std::fs::read_to_string(&path).unwrap();
+        assert!(!saved.contains("selected_regions"));
+        assert_eq!(UiState::load(&path).take_legacy_regions(), None);
         let _ = std::fs::remove_file(path);
     }
 

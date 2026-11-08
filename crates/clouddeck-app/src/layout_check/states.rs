@@ -9,7 +9,7 @@ use std::time::Duration;
 use clouddeck_core::about::{AboutInfo, PluginOrigin, PluginRow, PluginStatus};
 use clouddeck_core::{
     ALL_PROVIDERS, Connection, ContextModel, Dimension, ErrorKind, Instance, ListView,
-    ProfileInput, Provider, ProviderEntry, ProviderError, RegionScope, Settings, TestScenarioKind,
+    ProfileInput, Provider, ProviderEntry, ProviderError, Settings, TestScenarioKind,
     all_providers_view, fixture_fleet,
 };
 use gpui::{AppContext, Bounds, Entity, TestAppContext, VisualTestContext, point, px, size};
@@ -552,9 +552,7 @@ pub(crate) fn build(
     let window = cx.update(|cx| {
         cx.open_window(window_options(bounds), move |window, cx| {
             gpui_component::init(cx);
-            let scope = RegionScope::all(&regions);
-            let main =
-                cx.new(|cx| MainWindow::new(fleet_for_window.clone(), regions, scope, window, cx));
+            let main = cx.new(|cx| MainWindow::new(fleet_for_window.clone(), regions, window, cx));
             if before_first_frame {
                 apply_render_state(
                     state,

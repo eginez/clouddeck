@@ -80,8 +80,12 @@ pub enum AccountConnectionState {
     Idle,
     Connecting,
     AwaitingBrowserLogin,
-    CheckingFleetAccess { account_id: String },
-    Connected { account_id: String },
+    CheckingFleetAccess {
+        account_id: String,
+    },
+    Connected {
+        account_id: String,
+    },
     Failed(AccountConnectionError),
 }
 

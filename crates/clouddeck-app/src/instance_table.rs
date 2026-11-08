@@ -290,14 +290,9 @@ impl Render for InstanceTable {
             .bg(palette.chrome)
             .border_b_1()
             .border_color(palette.line)
-            .children(
-                columns
-                    .iter()
-                    .enumerate()
-                    .map(|(ix, column)| {
-                        header_cell(ix, *column, mixed, sort, palette, entity.clone())
-                    }),
-            );
+            .children(columns.iter().enumerate().map(|(ix, column)| {
+                header_cell(ix, *column, mixed, sort, palette, entity.clone())
+            }));
 
         let toolbar = group_by_toolbar(group_by, palette, entity.clone(), columns_button);
         let row_entity = entity.clone();
@@ -579,7 +574,16 @@ fn row(
     }
     let (cells, records): (Vec<Div>, Vec<Option<(String, Recorded)>>) = columns
         .iter()
-        .map(|column| cell(instance, provider_text, *column, &row_key, palette, flags.stale))
+        .map(|column| {
+            cell(
+                instance,
+                provider_text,
+                *column,
+                &row_key,
+                palette,
+                flags.stale,
+            )
+        })
         .unzip();
     (row.children(cells), records.into_iter().flatten().collect())
 }

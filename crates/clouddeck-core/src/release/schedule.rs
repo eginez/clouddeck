@@ -21,7 +21,11 @@ pub enum UpdateState {
     /// A newer version is available to install.
     Available(AvailableUpdate),
     /// An update is being downloaded.
-    Downloading { version: String, received: u64, total: u64 },
+    Downloading {
+        version: String,
+        received: u64,
+        total: u64,
+    },
     /// The downloaded update is being installed.
     Installing { version: String },
     /// The new version is installed and waiting for a relaunch.
@@ -37,7 +41,9 @@ pub fn should_auto_check(enabled: bool, last_check: Option<SystemTime>, now: Sys
     }
     match last_check {
         None => true,
-        Some(last) => now.duration_since(last).is_ok_and(|elapsed| elapsed >= CHECK_INTERVAL),
+        Some(last) => now
+            .duration_since(last)
+            .is_ok_and(|elapsed| elapsed >= CHECK_INTERVAL),
     }
 }
 
@@ -58,9 +64,9 @@ pub fn state_after_check(
 /// The download progress in 0..=1, when the total size is known.
 pub fn progress_fraction(state: &UpdateState) -> Option<f32> {
     match state {
-        UpdateState::Downloading { received, total, .. } if *total > 0 => {
-            Some((*received as f32 / *total as f32).clamp(0.0, 1.0))
-        }
+        UpdateState::Downloading {
+            received, total, ..
+        } if *total > 0 => Some((*received as f32 / *total as f32).clamp(0.0, 1.0)),
         _ => None,
     }
 }
@@ -72,7 +78,10 @@ pub fn headline(state: &UpdateState, current: &str) -> String {
         UpdateState::Checking => "Checking for updates…".to_string(),
         UpdateState::UpToDate { version } => format!("CloudDeck is up to date ({version})"),
         UpdateState::Available(update) => {
-            format!("CloudDeck {} is available — you have {current}", update.version)
+            format!(
+                "CloudDeck {} is available — you have {current}",
+                update.version
+            )
         }
         UpdateState::Downloading { version, .. } => format!("Downloading CloudDeck {version}…"),
         UpdateState::Installing { version } => format!("Installing CloudDeck {version}…"),

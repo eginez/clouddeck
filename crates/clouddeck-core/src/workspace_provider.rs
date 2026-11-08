@@ -2,57 +2,42 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use clouddeck_provider_api::{ConnectionId, Provider, Selection, ValueId};
+use clouddeck_provider_kit::MockComputeService;
 use clouddeck_provider_kit::scoped_provider::{ScopeSettings, scoped_provider};
 use clouddeck_provider_kit::service_provider::{REGION, service_provider};
-use clouddeck_provider_kit::MockComputeService;
 
 pub use clouddeck_provider_kit::demo_fleet::{DemoFleet, demo_profiles, demo_region_names};
 
 pub fn workspace_provider(
     providers: &[Arc<dyn Provider>],
     profile: &str,
-    region: &str,
+    regions: &[String],
     demo: Option<DemoFleet>,
-    fleet_regions: &[String],
     request_timeout: Duration,
 ) -> Arc<dyn Provider> {
-    workspace_provider_for(
-        "aws",
-        providers,
-        profile,
-        region,
-        demo,
-        fleet_regions,
-        request_timeout,
-    )
+    workspace_provider_for("aws", providers, profile, regions, demo, request_timeout)
 }
 
 pub fn workspace_provider_for(
     provider_id: &str,
     providers: &[Arc<dyn Provider>],
     profile: &str,
-    region: &str,
+    regions: &[String],
     demo: Option<DemoFleet>,
-    fleet_regions: &[String],
     request_timeout: Duration,
 ) -> Arc<dyn Provider> {
-    let fleet = region == "fleet";
     let settings = ScopeSettings {
         request_timeout,
-        fleet,
+        fleet: regions.len() != 1,
         demo,
     };
-    let selection = if fleet {
-        Selection::new().with(
-            REGION,
-            fleet_regions
-                .iter()
-                .map(|region| ValueId::from(region.as_str()))
-                .collect(),
-        )
-    } else {
-        Selection::new().with(REGION, vec![ValueId::from(region)])
-    };
+    let selection = Selection::new().with(
+        REGION,
+        regions
+            .iter()
+            .map(|region| ValueId::from(region.as_str()))
+            .collect(),
+    );
     scoped_provider(
         registry_entry(provider_id, providers, demo),
         ConnectionId::from(profile),
