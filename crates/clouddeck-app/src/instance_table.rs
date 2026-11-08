@@ -694,9 +694,9 @@ mod tests {
         size,
     };
     use gpui_component::Root;
-    use std::time::Duration;
 
     use crate::layout_check::states::{State, build};
+    use crate::test_support::load_fleet;
     use crate::ui_record::recorded;
 
     fn loaded_state(cx: &mut TestAppContext) -> Entity<FleetState> {
@@ -708,24 +708,8 @@ mod tests {
         records[1].labels.clear();
         let vm = InstanceListViewModel::new(fleet::static_provider(records));
         let state = cx.new(|_| FleetState::new(vm, "default".to_string(), true));
-        state.update(cx, |state, cx| state.refresh(cx));
-        wait_until(cx, |cx| {
-            state.read_with(cx, |state, _| {
-                !state.view_model.instances().is_empty() && !state.view_model.is_loading()
-            })
-        });
+        load_fleet(cx, &state);
         state
-    }
-
-    fn wait_until(cx: &mut TestAppContext, mut condition: impl FnMut(&mut TestAppContext) -> bool) {
-        for _ in 0..200 {
-            cx.run_until_parked();
-            if condition(cx) {
-                return;
-            }
-            std::thread::sleep(Duration::from_millis(5));
-        }
-        panic!("condition was not satisfied within the timeout");
     }
 
     /// Opens the table in a window of the given width. Opening at the final width avoids
@@ -841,12 +825,7 @@ mod tests {
     fn huge_fleet_renders_only_a_window_of_rows(cx: &mut TestAppContext) {
         let vm = InstanceListViewModel::new(fleet::static_provider(fleet::huge_fleet()));
         let state = cx.new(|_| FleetState::new(vm, "default".to_string(), true));
-        state.update(cx, |state, cx| state.refresh(cx));
-        wait_until(cx, |cx| {
-            state.read_with(cx, |state, _| {
-                !state.view_model.instances().is_empty() && !state.view_model.is_loading()
-            })
-        });
+        load_fleet(cx, &state);
         let keys: Vec<String> = state.read_with(cx, |state, _| {
             state.visible_rows().iter().map(|i| i.id.clone()).collect()
         });

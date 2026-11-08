@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc, time::Duration};
+use std::{cell::RefCell, rc::Rc};
 
 use clouddeck_core::fixture_fleet as fleet;
 use gpui::{
@@ -9,6 +9,7 @@ use gpui_component::Root;
 
 use crate::context_bar::{ContextBar, ContextBarEvent};
 use crate::fleet_state::FleetState;
+use crate::test_support::load_fleet;
 use crate::ui_record::recorded;
 use crate::view_models::InstanceListViewModel;
 
@@ -21,24 +22,8 @@ fn loaded_state(cx: &mut TestAppContext) -> Entity<FleetState> {
     ];
     let vm = InstanceListViewModel::new(fleet::static_provider(instances));
     let state = cx.new(|_| FleetState::new(vm, "prod-readonly".to_string(), true));
-    state.update(cx, |state, cx| state.refresh(cx));
-    wait_until(cx, |cx| {
-        state.read_with(cx, |state, _| {
-            !state.view_model.instances().is_empty() && !state.view_model.is_loading()
-        })
-    });
+    load_fleet(cx, &state);
     state
-}
-
-fn wait_until(cx: &mut TestAppContext, mut condition: impl FnMut(&mut TestAppContext) -> bool) {
-    for _ in 0..200 {
-        cx.run_until_parked();
-        if condition(cx) {
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(5));
-    }
-    panic!("condition was not satisfied within the timeout");
 }
 
 fn open_bar(
