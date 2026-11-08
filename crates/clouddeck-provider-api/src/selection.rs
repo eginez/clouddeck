@@ -17,7 +17,7 @@ pub struct DimValue {
 pub struct Dimension {
     pub id: DimensionId,
     pub label: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub plural_label: Option<String>,
     pub multi: bool,
     pub optional: bool,
@@ -90,12 +90,6 @@ mod tests {
         let parsed: Dimension = serde_json::from_str(json).unwrap();
         assert_eq!(parsed.plural_label, None);
         assert_eq!(parsed.plural(), "Regions");
-    }
-
-    #[test]
-    fn none_plural_label_is_not_serialized() {
-        let json = serde_json::to_string(&dimension("Region", None)).unwrap();
-        assert!(!json.contains("plural_label"), "{json}");
     }
 
     #[test]

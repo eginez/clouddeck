@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use clouddeck_extension_api::conformance::check_provider;
-use clouddeck_extension_api::wire::{Method, dispatch};
+use clouddeck_extension_api::wire::{Method, Request, decode, dispatch, encode};
 use clouddeck_extension_api::{
     AuthAnswer, AuthInput, AuthMethod, AuthStatus, AuthStep, Call, CellFailure, Connection,
     ConnectionId, CoreField, DimValue, Dimension, ErrorKind, Extension, ExtrasSection, FieldDef,
@@ -450,17 +450,13 @@ impl Host for NoHost {
 
 #[test]
 fn extreme_deadline_is_accepted_without_panicking() {
-    let request = format!(
-        r#"{{"provider":"fake","deadline_ms":{},"args":null}}"#,
-        u64::MAX
-    );
-    let response = dispatch(
-        &WireExtension,
-        &NoHost,
-        Method::Info as u32,
-        request.as_bytes(),
-    );
-    let outcome: Result<ProviderInfo, ProviderError> =
-        serde_json::from_slice(&response).expect("response decodes");
+    let request = encode(&Request {
+        provider: "fake".into(),
+        deadline_ms: Some(u64::MAX),
+        args: (),
+    })
+    .expect("request encodes");
+    let response = dispatch(&WireExtension, &NoHost, Method::Info as u32, &request);
+    let outcome: Result<ProviderInfo, ProviderError> = decode(&response).expect("response decodes");
     assert!(outcome.is_ok(), "{outcome:?}");
 }

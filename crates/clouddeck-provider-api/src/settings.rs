@@ -7,12 +7,12 @@ use serde::{Deserialize, Serialize};
 pub struct SettingDef {
     pub key: String,
     pub label: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub description: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub group: Option<String>,
     pub kind: SettingKind,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub default: Option<SettingValue>,
     /// Stored through host secret storage, never in the settings file. Secrets are text.
     #[serde(default)]
