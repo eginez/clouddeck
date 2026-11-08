@@ -95,6 +95,7 @@ impl InstanceListViewModel {
     }
 
     /// When the given region last returned rows in a successful load.
+    #[cfg(test)]
     pub fn region_loaded_at(&self, region: &str) -> Option<SystemTime> {
         self.region_loaded_at.get(region).copied()
     }
@@ -133,28 +134,33 @@ impl InstanceListViewModel {
         self.reconcile_selection_with_filtered_instances();
     }
 
+    #[cfg(test)]
     pub fn selected_state(&self) -> &str {
         &self.selected_state
     }
 
     /// Sets the state filter and reconciles the current selection (Swift:
     /// `selectedState`'s `didSet`).
+    #[cfg(test)]
     pub fn set_selected_state(&mut self, state: impl Into<String>) {
         self.selected_state = state.into();
         self.reconcile_selection_with_filtered_instances();
     }
 
+    #[cfg(test)]
     pub fn selected_instance_type(&self) -> &str {
         &self.selected_instance_type
     }
 
     /// Sets the instance-type filter and reconciles the current selection
     /// (Swift: `selectedInstanceType`'s `didSet`).
+    #[cfg(test)]
     pub fn set_selected_instance_type(&mut self, instance_type: impl Into<String>) {
         self.selected_instance_type = instance_type.into();
         self.reconcile_selection_with_filtered_instances();
     }
 
+    #[cfg(test)]
     pub fn selected_instance_id(&self) -> Option<&str> {
         self.selected_instance_id.as_deref()
     }
@@ -277,6 +283,7 @@ impl InstanceListViewModel {
 
     /// A user-facing summary of partial failures, or `None` if there are
     /// none (Swift: `partialFailureSummary`).
+    #[cfg(test)]
     pub fn partial_failure_summary(&self) -> Option<String> {
         if self.partial_failures.is_empty() {
             return None;

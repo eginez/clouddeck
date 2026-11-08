@@ -108,6 +108,7 @@ impl CompiledQuery {
     }
 
     /// Clones of the matching instances, in input order.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn filter_instances(&self, instances: &[Instance]) -> Vec<Instance> {
         instances
             .iter()

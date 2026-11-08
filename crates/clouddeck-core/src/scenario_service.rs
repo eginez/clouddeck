@@ -167,7 +167,7 @@ impl ScenarioService {
             TestScenarioKind::SmallHappyPath | TestScenarioKind::EmptyFleet => {
                 let name = kind
                     .fixture_name()
-                    .expect("fixture scenarios carry a fixture name");
+                    .ok_or("fixture scenarios carry a fixture name")?;
                 let scenario = catalog.scenario(name)?;
                 let service = scenario_service_for(&scenario)?;
                 (Some(scenario), SharedService(Arc::new(service)))
@@ -175,7 +175,7 @@ impl ScenarioService {
             TestScenarioKind::MultiRegionPartialFailure => {
                 let name = kind
                     .fixture_name()
-                    .expect("fixture scenarios carry a fixture name");
+                    .ok_or("fixture scenarios carry a fixture name")?;
                 let scenario = catalog.scenario(name)?;
                 let service = multi_region_service_for(&scenario)?;
                 (Some(scenario), SharedService(Arc::new(service)))

@@ -19,6 +19,7 @@ pub fn sign_bytes(bytes: &[u8], secret_b64: &str) -> Result<String, String> {
 }
 
 /// The base64 public key matching the base64 secret seed.
+#[cfg(test)]
 pub fn public_from_secret(secret_b64: &str) -> Result<String, String> {
     let signing = signing_key(secret_b64)?;
     Ok(STANDARD.encode(signing.verifying_key().to_bytes()))

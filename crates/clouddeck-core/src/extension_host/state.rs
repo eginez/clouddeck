@@ -61,6 +61,7 @@ impl State {
         self.crashes = 0;
     }
 
+    #[cfg(test)]
     pub fn grant(&mut self, capability: Capability) {
         if !self.granted.contains(&capability) {
             self.granted.push(capability);

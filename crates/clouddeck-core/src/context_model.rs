@@ -166,6 +166,7 @@ impl ContextModel {
         }
     }
 
+    #[cfg(test)]
     pub fn set_kind_label(&mut self, label: &str) {
         self.kind_label = label.to_string();
     }
@@ -209,6 +210,7 @@ impl ContextModel {
         }
     }
 
+    #[cfg(test)]
     pub fn connections_state(&self) -> &ConnectionsState {
         &self.connections_state
     }
@@ -225,6 +227,7 @@ impl ContextModel {
         self.connection.as_ref()
     }
 
+    #[cfg(test)]
     pub fn select_connection(&mut self, id: &str) -> bool {
         let listed = self.connections.iter().any(|c| c.id.as_str() == id);
         let already = self.connection.as_ref().is_some_and(|c| c.as_str() == id);
@@ -433,6 +436,7 @@ impl ContextModel {
         format!("{} {plural}", selected.len())
     }
 
+    #[cfg(test)]
     pub fn count_text(&self, total: usize) -> String {
         let noun = self.kind_label.to_lowercase();
         let noun = if total == 1 {

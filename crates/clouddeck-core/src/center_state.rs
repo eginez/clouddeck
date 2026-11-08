@@ -178,6 +178,7 @@ pub fn center_text(state: &CenterState, ctx: &CenterContext) -> CenterText {
 }
 
 /// Returns the short status-bar text for an error state, or `None` for other states.
+#[cfg(test)]
 pub fn error_strip_text(state: &CenterState, ctx: &CenterContext) -> Option<String> {
     match state {
         CenterState::Offline => Some("Offline".to_string()),

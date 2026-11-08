@@ -331,6 +331,7 @@ impl PluginsViewModel {
     }
 
     /// Ids whose changes take effect only after CloudDeck restarts.
+    #[cfg(test)]
     pub fn restart_required(&self) -> Vec<String> {
         self.restart_required.iter().cloned().collect()
     }
