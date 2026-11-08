@@ -1504,7 +1504,7 @@ impl SettingsWindow {
         };
         let version = div()
             .debug_selector(|| "about.version".into())
-            .child(env!("CARGO_PKG_VERSION"));
+            .child(clouddeck_core::about::version_short());
         let icon = img(crate::assets::APP_ICON_PATH)
             .size(px(96.))
             .debug_selector(|| "about.icon".into());
