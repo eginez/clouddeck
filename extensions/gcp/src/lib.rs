@@ -1,6 +1,7 @@
 //! Google Compute Engine provider extension for CloudDeck.
 
 mod auth;
+mod config;
 mod fields;
 mod http;
 mod map;

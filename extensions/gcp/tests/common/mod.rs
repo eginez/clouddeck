@@ -22,11 +22,22 @@ pub fn fixture(name: &str) -> String {
 }
 
 /// Serves recorded JSON by URL shape and remembers every URL it was asked for.
-#[derive(Default)]
 pub struct FakeHttp {
     pub urls: Mutex<Vec<String>>,
+    pub bearer: &'static str,
     pub fail_token: bool,
     pub network_down: bool,
+}
+
+impl Default for FakeHttp {
+    fn default() -> Self {
+        Self {
+            urls: Mutex::default(),
+            bearer: "ya29.fake-access-token",
+            fail_token: false,
+            network_down: false,
+        }
+    }
 }
 
 fn not_found(url: &str) -> HttpError {
@@ -52,7 +63,7 @@ impl FakeHttp {
     fn route(&self, url: &str) -> Result<String, HttpError> {
         let demo_prod = url.contains("/projects/demo-prod/");
         let body = match url {
-            u if u.starts_with("https://cloudresourcemanager") => fixture("projects.json"),
+            u if u.contains("/v1/projects?") => fixture("projects.json"),
             u if u.ends_with("/zones") => fixture("zones.json"),
             u if u.contains("/instances/") => return instance(u).ok_or_else(|| not_found(u)),
             u if u.ends_with("/aggregated/instances") && demo_prod => {
@@ -77,7 +88,7 @@ impl FakeHttp {
 impl Http for FakeHttp {
     fn get(&self, request: &Request<'_>) -> Result<String, HttpError> {
         self.urls.lock().unwrap().push(request.url.to_string());
-        assert_eq!(request.token, Some("ya29.fake-access-token"));
+        assert_eq!(request.token, Some(self.bearer));
         self.route(request.url)
     }
 
@@ -142,7 +153,35 @@ impl Host for TestHost {
     }
 }
 
-pub fn call(host: &TestHost) -> Call<'_> {
+/// A host that serves the given settings and nothing else.
+pub struct SettingsHost(pub Vec<(&'static str, &'static str)>);
+
+impl Host for SettingsHost {
+    fn log(&self, _: LogLevel, _: &str) {}
+    fn data_dir(&self) -> PathBuf {
+        PathBuf::new()
+    }
+    fn setting(&self, key: &str) -> Option<String> {
+        self.0
+            .iter()
+            .find(|(k, _)| *k == key)
+            .map(|(_, v)| v.to_string())
+    }
+    fn secret(&self, _: &str) -> Option<String> {
+        None
+    }
+    fn set_secret(&self, _: &str, _: Option<&str>) -> Result<(), ProviderError> {
+        Ok(())
+    }
+    fn open_url(&self, _: &str) -> Result<(), ProviderError> {
+        Ok(())
+    }
+    fn cancelled(&self) -> bool {
+        false
+    }
+}
+
+pub fn call(host: &dyn Host) -> Call<'_> {
     Call {
         deadline: None,
         host,

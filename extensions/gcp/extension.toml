@@ -9,6 +9,42 @@ repository = "https://github.com/eginez/clouddeck"
 [providers.gcp]
 name = "Google Cloud"
 
+[[settings]]
+key = "compute_endpoint"
+label = "Compute Engine endpoint"
+description = "Must be https://, or a local emulator address."
+group = "Advanced: endpoints"
+kind = "text"
+default = "https://compute.googleapis.com"
+
+[[settings]]
+key = "resource_manager_endpoint"
+label = "Resource Manager endpoint"
+description = "Must be https://, or a local emulator address."
+group = "Advanced: endpoints"
+kind = "text"
+default = "https://cloudresourcemanager.googleapis.com"
+
+[[settings]]
+key = "token_endpoint"
+label = "Token endpoint"
+description = "Must be https://, or a local emulator address."
+group = "Advanced: endpoints"
+kind = "text"
+default = "https://oauth2.googleapis.com/token"
+
+[[settings]]
+key = "auth_mode"
+label = "Authentication"
+description = "Emulator mode skips ADC and sends a fixed token."
+group = "Advanced: endpoints"
+kind = "choice"
+default = "adc"
+options = [
+    { value = "adc", label = "Application Default Credentials" },
+    { value = "emulator", label = "Local emulator (fixed token)" },
+]
+
 [[capabilities]]
 kind = "network:http"
 hosts = [

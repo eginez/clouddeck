@@ -7,18 +7,17 @@ use clouddeck_extension_api::{
     AuthAnswer, AuthInput, AuthMethod, AuthStatus, AuthStep, Call, CellFailure, Connection,
     ConnectionId, Dimension, ErrorKind, ExtrasSection, FieldDef, FlowId, INSTANCES, Instance,
     KindId, KindInfo, ListResult, Provider, ProviderError, ProviderInfo, ResourceId, Selection,
+    SettingDef,
 };
 use serde::de::DeserializeOwned;
 
 use crate::auth::{Token, TokenSource};
+use crate::config::{self, Config};
 use crate::fields::instance_fields;
 use crate::http::{Http, Request};
 use crate::map::{self, AggregatedPage, GceInstance, ProjectsPage, ZONE_DIM, ZonesPage};
 
 const MAX_CALL: Duration = Duration::from_secs(30);
-const PROJECTS_URL: &str =
-    "https://cloudresourcemanager.googleapis.com/v1/projects?filter=lifecycleState%3AACTIVE";
-const COMPUTE: &str = "https://compute.googleapis.com/compute/v1/projects";
 const ADC_METHOD: &str = "adc";
 
 trait Paged: DeserializeOwned {
@@ -114,13 +113,18 @@ impl GcpProvider {
         Self { http, tokens }
     }
 
-    fn token(&self, cx: &Call<'_>) -> Result<Token, ProviderError> {
-        self.tokens.token(call_timeout(cx)?)
+    fn token(&self, cx: &Call<'_>, config: &Config) -> Result<Token, ProviderError> {
+        self.tokens.token(call_timeout(cx)?, config)
     }
 
-    fn fetch<T: DeserializeOwned>(&self, cx: &Call<'_>, url: &str) -> Result<T, ProviderError> {
+    fn fetch<T: DeserializeOwned>(
+        &self,
+        cx: &Call<'_>,
+        config: &Config,
+        url: &str,
+    ) -> Result<T, ProviderError> {
         let timeout = call_timeout(cx)?;
-        let token = self.token(cx)?;
+        let token = self.token(cx, config)?;
         let request = Request {
             url,
             token: Some(&token.access),
@@ -132,11 +136,16 @@ impl GcpProvider {
             .map_err(|e| ProviderError::new(ErrorKind::Other, format!("unexpected response: {e}")))
     }
 
-    fn fetch_pages<T: Paged>(&self, cx: &Call<'_>, base: &str) -> Result<Vec<T>, ProviderError> {
+    fn fetch_pages<T: Paged>(
+        &self,
+        cx: &Call<'_>,
+        config: &Config,
+        base: &str,
+    ) -> Result<Vec<T>, ProviderError> {
         let mut pages = Vec::new();
         let mut token: Option<String> = None;
         loop {
-            let page: T = self.fetch(cx, &page_url(base, token.as_deref()))?;
+            let page: T = self.fetch(cx, config, &page_url(base, token.as_deref()))?;
             token = page.next_token().map(str::to_string);
             pages.push(page);
             if token.is_none() {
@@ -145,9 +154,18 @@ impl GcpProvider {
         }
     }
 
-    fn zone_dimension(&self, cx: &Call<'_>, project: &str) -> Result<Dimension, ProviderError> {
-        let url = format!("{COMPUTE}/{}/zones", safe_segment(project)?);
-        let pages = self.fetch_pages::<ZonesPage>(cx, &url)?;
+    fn zone_dimension(
+        &self,
+        cx: &Call<'_>,
+        config: &Config,
+        project: &str,
+    ) -> Result<Dimension, ProviderError> {
+        let url = format!(
+            "{}/compute/v1/projects/{}/zones",
+            config.compute,
+            safe_segment(project)?
+        );
+        let pages = self.fetch_pages::<ZonesPage>(cx, config, &url)?;
         let zones: Vec<_> = pages.into_iter().flat_map(|p| p.items).collect();
         Ok(map::zone_dimension(&zones))
     }
@@ -158,11 +176,12 @@ impl GcpProvider {
         project: &str,
         selection: &Selection,
     ) -> Result<ListResult, ProviderError> {
+        let config = Config::from_host(cx.host)?;
         let selected = selection.values(ZONE_DIM);
         let mut failures = Vec::new();
         let mut wanted = None;
         if !selected.is_empty() {
-            let dimension = self.zone_dimension(cx, project)?;
+            let dimension = self.zone_dimension(cx, &config, project)?;
             let (zones, unknown) = map::expand_selection(&dimension, selected);
             failures.extend(unknown.iter().map(|v| unknown_value(v.as_str())));
             if zones.is_empty() {
@@ -173,9 +192,13 @@ impl GcpProvider {
             }
             wanted = Some(zones);
         }
-        let url = format!("{COMPUTE}/{}/aggregated/instances", safe_segment(project)?);
+        let url = format!(
+            "{}/compute/v1/projects/{}/aggregated/instances",
+            config.compute,
+            safe_segment(project)?
+        );
         let mut resources = Vec::new();
-        for page in self.fetch_pages::<AggregatedPage>(cx, &url)? {
+        for page in self.fetch_pages::<AggregatedPage>(cx, &config, &url)? {
             let (found, failed) = map::map_scopes(page.items, wanted.as_ref());
             resources.extend(found);
             failures.extend(failed);
@@ -205,15 +228,25 @@ impl Provider for GcpProvider {
         }
     }
 
+    fn settings(&self) -> Vec<SettingDef> {
+        config::setting_defs()
+    }
+
     fn connections(&self, cx: &Call<'_>) -> Result<Vec<Connection>, ProviderError> {
-        let pages = self.fetch_pages::<ProjectsPage>(cx, PROJECTS_URL)?;
+        let config = Config::from_host(cx.host)?;
+        let url = format!(
+            "{}/v1/projects?filter=lifecycleState%3AACTIVE",
+            config.resource_manager
+        );
+        let pages = self.fetch_pages::<ProjectsPage>(cx, &config, &url)?;
         Ok(map::map_connections(
             pages.into_iter().flat_map(|p| p.projects).collect(),
         ))
     }
 
     fn dimensions(&self, cx: &Call<'_>, c: &ConnectionId) -> Result<Vec<Dimension>, ProviderError> {
-        Ok(vec![self.zone_dimension(cx, c.as_str())?])
+        let config = Config::from_host(cx.host)?;
+        Ok(vec![self.zone_dimension(cx, &config, c.as_str())?])
     }
 
     fn kinds(&self) -> Vec<KindInfo> {
@@ -242,8 +275,12 @@ impl Provider for GcpProvider {
         let (zone, name) = map::split_id(id.as_str()).ok_or_else(not_found)?;
         let project = safe_segment(c.as_str())?;
         let (zone, name) = (safe_segment(zone)?, safe_segment(name)?);
-        let url = format!("{COMPUTE}/{project}/zones/{zone}/instances/{name}");
-        let gce: GceInstance = self.fetch(cx, &url)?;
+        let config = Config::from_host(cx.host)?;
+        let url = format!(
+            "{}/compute/v1/projects/{project}/zones/{zone}/instances/{name}",
+            config.compute
+        );
+        let gce: GceInstance = self.fetch(cx, &config, &url)?;
         Ok(map::map_instance(&gce, zone).extras)
     }
 
@@ -272,7 +309,8 @@ impl Provider for GcpProvider {
         if method.id != ADC_METHOD {
             return Err(ProviderError::unsupported());
         }
-        self.token(cx).map(|_| AuthStep::Done)
+        let config = Config::from_host(cx.host)?;
+        self.token(cx, &config).map(|_| AuthStep::Done)
     }
 
     fn continue_auth(
@@ -286,7 +324,8 @@ impl Provider for GcpProvider {
 
     /// Only an auth failure counts as signed out; any other failure is unknown, not signed in.
     fn auth_status(&self, cx: &Call<'_>, _c: Option<&ConnectionId>) -> AuthStatus {
-        match self.token(cx) {
+        let token = Config::from_host(cx.host).and_then(|config| self.token(cx, &config));
+        match token {
             Ok(_) => AuthStatus::SignedIn { expires: None },
             Err(e) if e.kind == ErrorKind::Auth => AuthStatus::SignedOut,
             Err(_) => AuthStatus::Unknown,

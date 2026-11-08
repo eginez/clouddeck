@@ -7,9 +7,9 @@ use std::time::{Duration, Instant};
 use clouddeck_extension_api::{ErrorKind, ProviderError};
 use serde::Deserialize;
 
+use crate::config::{AuthMode, Config, EMULATOR_TOKEN};
 use crate::http::Http;
 
-pub const TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const ADVICE: &str = "run: gcloud auth application-default login";
 /// Refresh this long before the token really expires.
 const EXPIRY_SLACK: Duration = Duration::from_secs(60);
@@ -95,11 +95,17 @@ pub fn parse_token_response(body: &str) -> Result<(String, Duration), ProviderEr
 
 type Loader = Box<dyn Fn() -> Result<AdcCreds, ProviderError> + Send + Sync>;
 
+struct Cached {
+    token_url: String,
+    token: Token,
+    expiry: Instant,
+}
+
 /// Hands out access tokens, refreshing only when the cached one is about to expire.
 pub struct TokenSource {
     http: Arc<dyn Http>,
     load: Loader,
-    cache: Mutex<Option<(Token, Instant)>>,
+    cache: Mutex<Option<Cached>>,
 }
 
 impl TokenSource {
@@ -115,21 +121,34 @@ impl TokenSource {
         Self::new(http, Box::new(load_adc_from_env))
     }
 
-    pub fn token(&self, timeout: Duration) -> Result<Token, ProviderError> {
+    pub fn token(&self, timeout: Duration, config: &Config) -> Result<Token, ProviderError> {
+        if config.auth == AuthMode::Emulator {
+            return Ok(Token {
+                access: EMULATOR_TOKEN.to_string(),
+                quota_project: None,
+            });
+        }
         let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some((token, _)) = cache.as_ref().filter(|(_, e)| *e > Instant::now()) {
-            return Ok(token.clone());
+        if let Some(cached) = cache
+            .as_ref()
+            .filter(|c| c.token_url == config.token && c.expiry > Instant::now())
+        {
+            return Ok(cached.token.clone());
         }
         let creds = (self.load)()?;
-        let (token, lifetime) = self.refresh(&creds, timeout)?;
-        let expiry = Instant::now() + lifetime.saturating_sub(EXPIRY_SLACK);
-        *cache = Some((token.clone(), expiry));
+        let (token, lifetime) = self.refresh(&creds, &config.token, timeout)?;
+        *cache = Some(Cached {
+            token_url: config.token.clone(),
+            token: token.clone(),
+            expiry: Instant::now() + lifetime.saturating_sub(EXPIRY_SLACK),
+        });
         Ok(token)
     }
 
     fn refresh(
         &self,
         creds: &AdcCreds,
+        token_url: &str,
         timeout: Duration,
     ) -> Result<(Token, Duration), ProviderError> {
         let form = [
@@ -140,7 +159,7 @@ impl TokenSource {
         ];
         let body = self
             .http
-            .post_form(TOKEN_URL, &form, timeout)
+            .post_form(token_url, &form, timeout)
             .map_err(|e| {
                 let mut error = e.into_provider();
                 error.advice.get_or_insert_with(|| ADVICE.to_string());

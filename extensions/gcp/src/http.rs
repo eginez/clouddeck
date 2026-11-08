@@ -55,7 +55,7 @@ pub struct UreqHttp {
 impl UreqHttp {
     pub fn new() -> Self {
         Self {
-            agent: ureq::AgentBuilder::new().build(),
+            agent: ureq::AgentBuilder::new().redirects(0).build(),
         }
     }
 }
