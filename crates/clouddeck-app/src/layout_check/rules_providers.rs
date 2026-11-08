@@ -12,7 +12,9 @@ const NAME_HEADER: &str = "table.header.1";
 const AWS_ROW: &str = "table.row.us-east-1:i-scenario-001";
 const AWS_PROVIDER_CELL: &str = "table.row.us-east-1:i-scenario-001.provider";
 const GCP_ROW: &str = "table.row.us-east-1:gcp-instance-001";
+const AWS_GROUP: &str = "table.group.aws";
 const GCP_GROUP: &str = "table.group.gcp";
+const GCP_GROUP_FAILED: &str = "table.group.gcp.failed";
 const PROVIDER_BUTTON: &str = "bar.aws";
 /// Row 0 is the "All regions" row, which has no value and so no only link.
 const DIMENSION_ROOT_LABEL: &str = "dimension-picker.label.1";
@@ -45,7 +47,42 @@ pub(crate) fn rules() -> Vec<Rule> {
             "all-providers-dark-hidden-keeps-rows",
         ],
     ));
-    rules.extend(failed_group());
+    rules.extend(failed_group(
+        State::MainAllProvidersFailedGroup,
+        [
+            "all-failed-group-header",
+            "all-failed-group-marker",
+            "all-failed-group-keeps-other-rows",
+            "all-failed-group-has-no-rows",
+        ],
+    ));
+    rules.extend(failed_group(
+        State::MainAllProvidersFailedGroupDark,
+        [
+            "all-failed-group-dark-header",
+            "all-failed-group-dark-marker",
+            "all-failed-group-dark-keeps-other-rows",
+            "all-failed-group-dark-has-no-rows",
+        ],
+    ));
+    rules.extend(grouped_by_provider(
+        State::MainAllProvidersGrouped,
+        [
+            "all-grouped-header-order",
+            "all-grouped-header-height",
+            "all-grouped-no-failed-marker",
+            "all-grouped-keeps-gcp-rows",
+        ],
+    ));
+    rules.extend(grouped_by_provider(
+        State::MainAllProvidersGroupedDark,
+        [
+            "all-grouped-dark-header-order",
+            "all-grouped-dark-header-height",
+            "all-grouped-dark-no-failed-marker",
+            "all-grouped-dark-keeps-gcp-rows",
+        ],
+    ));
     rules.extend(all_providers_narrow());
     rules.extend(all_providers_compact());
     rules.extend(gcp_active());
@@ -141,11 +178,10 @@ fn all_providers_no_column(state: State, window: (f32, f32), ids: [&'static str;
     ]
 }
 
-fn failed_group() -> Vec<Rule> {
-    let state = State::MainAllProvidersFailedGroup;
+fn failed_group(state: State, ids: [&'static str; 4]) -> Vec<Rule> {
     vec![
         Rule {
-            id: "all-failed-group-header",
+            id: ids[0],
             state,
             window: MAIN,
             check: Check::Present(GCP_GROUP),
@@ -153,7 +189,15 @@ fn failed_group() -> Vec<Rule> {
             known_bug: None,
         },
         Rule {
-            id: "all-failed-group-keeps-other-rows",
+            id: ids[1],
+            state,
+            window: MAIN,
+            check: Check::Present(GCP_GROUP_FAILED),
+            why: "a failed provider's group header carries the could-not-load marker",
+            known_bug: None,
+        },
+        Rule {
+            id: ids[2],
             state,
             window: MAIN,
             check: Check::Present(AWS_ROW),
@@ -161,11 +205,51 @@ fn failed_group() -> Vec<Rule> {
             known_bug: None,
         },
         Rule {
-            id: "all-failed-group-has-no-rows",
+            id: ids[3],
             state,
             window: MAIN,
             check: Check::Absent(GCP_ROW),
             why: "a failed provider contributes no rows",
+            known_bug: None,
+        },
+    ]
+}
+
+fn grouped_by_provider(state: State, ids: [&'static str; 4]) -> Vec<Rule> {
+    vec![
+        Rule {
+            id: ids[0],
+            state,
+            window: MAIN,
+            check: Check::Above {
+                upper: AWS_GROUP,
+                lower: GCP_GROUP,
+            },
+            why: "each provider's header sits above that provider's rows, in label order",
+            known_bug: None,
+        },
+        Rule {
+            id: ids[1],
+            state,
+            window: MAIN,
+            check: Check::HeightBetween(AWS_GROUP, 26.0, 30.0),
+            why: "a provider header row is 28pt tall",
+            known_bug: None,
+        },
+        Rule {
+            id: ids[2],
+            state,
+            window: MAIN,
+            check: Check::Absent(GCP_GROUP_FAILED),
+            why: "a provider that loaded has no could-not-load marker",
+            known_bug: None,
+        },
+        Rule {
+            id: ids[3],
+            state,
+            window: MAIN,
+            check: Check::Present(GCP_ROW),
+            why: "grouping by provider keeps every loaded provider's rows",
             known_bug: None,
         },
     ]

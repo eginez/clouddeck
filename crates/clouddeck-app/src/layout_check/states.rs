@@ -75,6 +75,9 @@ fn service_for(state: State) -> (Arc<dyn Provider>, Vec<String>) {
         | State::MainAllProvidersNoColumn
         | State::MainAllProvidersNoColumnDark
         | State::MainAllProvidersFailedGroup
+        | State::MainAllProvidersFailedGroupDark
+        | State::MainAllProvidersGrouped
+        | State::MainAllProvidersGroupedDark
         | State::MainAllProvidersNarrow
         | State::MainAllProvidersCompact
         | State::MainGcpActive
@@ -167,14 +170,20 @@ fn multi_setup(state: State) -> Option<MultiSetup> {
             vec![aws(), fixture_fleet::gcp_provider(gcp_instances(), None)],
             us_east,
         )),
-        State::MainAllProvidersFailedGroup => Some(all(
-            vec![
-                aws(),
-                fixture_fleet::gcp_provider(
-                    Vec::new(),
-                    Some("Simulated Google Cloud outage".to_string()),
-                ),
-            ],
+        State::MainAllProvidersFailedGroup | State::MainAllProvidersFailedGroupDark => {
+            Some(all(
+                vec![
+                    aws(),
+                    fixture_fleet::gcp_provider(
+                        Vec::new(),
+                        Some("Simulated Google Cloud outage".to_string()),
+                    ),
+                ],
+                us_east,
+            ))
+        }
+        State::MainAllProvidersGrouped | State::MainAllProvidersGroupedDark => Some(all(
+            vec![aws(), fixture_fleet::gcp_provider(gcp_instances(), None)],
             us_east,
         )),
         State::MainGcpActive => Some(gcp_single(false, gcp_instances())),
@@ -548,6 +557,9 @@ pub(crate) fn build(
                 | State::MainAllProvidersNoColumn
                 | State::MainAllProvidersNoColumnDark
                 | State::MainAllProvidersFailedGroup
+                | State::MainAllProvidersFailedGroupDark
+                | State::MainAllProvidersGrouped
+                | State::MainAllProvidersGroupedDark
         );
     let window = cx.update(|cx| {
         cx.open_window(window_options(bounds), move |window, cx| {
@@ -640,7 +652,7 @@ mod tests {
     /// One key element per state that `apply_render_state` must produce.
     #[gpui::test]
     fn every_state_shows_its_key_element(cx: &mut TestAppContext) {
-        let key_elements: [(State, &str); 53] = [
+        let key_elements: [(State, &str); 56] = [
             (State::MainIdle, "main.root"),
             (State::MainRowSelected, "main.inspector"),
             (State::MainEmpty, "main.center-state"),
@@ -666,6 +678,9 @@ mod tests {
             (State::MainAllProvidersNoColumn, "table.header"),
             (State::MainAllProvidersNoColumnDark, "table.header"),
             (State::MainAllProvidersFailedGroup, "table.group.gcp"),
+            (State::MainAllProvidersFailedGroupDark, "table.group.gcp"),
+            (State::MainAllProvidersGrouped, "table.group.aws"),
+            (State::MainAllProvidersGroupedDark, "table.group.aws"),
             (State::MainAllProvidersNarrow, "table.header.0"),
             (State::MainAllProvidersCompact, "table.header.0"),
             (State::MainGcpActive, "table.header.0"),

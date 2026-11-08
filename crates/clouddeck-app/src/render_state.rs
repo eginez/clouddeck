@@ -62,6 +62,12 @@ pub(crate) enum State {
     MainAllProvidersNoColumnDark,
     /// The All-providers list where Google Cloud failed to load and AWS rows still show.
     MainAllProvidersFailedGroup,
+    /// The same failed Google Cloud group as `MainAllProvidersFailedGroup`, in the dark palette.
+    MainAllProvidersFailedGroupDark,
+    /// The All-providers list grouped by provider, with an AWS header and a Google Cloud header.
+    MainAllProvidersGrouped,
+    /// The same provider grouping as `MainAllProvidersGrouped`, in the dark palette.
+    MainAllProvidersGroupedDark,
     /// The All-providers list at a narrow window, where the provider button and columns compete for width.
     MainAllProvidersNarrow,
     /// The All-providers list at the most compact window the layout supports.
@@ -123,7 +129,7 @@ pub(crate) enum State {
 }
 
 impl State {
-    pub(crate) const ALL: [State; 54] = [
+    pub(crate) const ALL: [State; 57] = [
         State::MainIdle,
         State::MainRowSelected,
         State::MainEmpty,
@@ -149,6 +155,9 @@ impl State {
         State::MainAllProvidersNoColumn,
         State::MainAllProvidersNoColumnDark,
         State::MainAllProvidersFailedGroup,
+        State::MainAllProvidersFailedGroupDark,
+        State::MainAllProvidersGrouped,
+        State::MainAllProvidersGroupedDark,
         State::MainAllProvidersNarrow,
         State::MainAllProvidersCompact,
         State::MainGcpActive,
@@ -208,6 +217,9 @@ impl State {
             State::MainAllProvidersNoColumn => "MainAllProvidersNoColumn",
             State::MainAllProvidersNoColumnDark => "MainAllProvidersNoColumnDark",
             State::MainAllProvidersFailedGroup => "MainAllProvidersFailedGroup",
+            State::MainAllProvidersFailedGroupDark => "MainAllProvidersFailedGroupDark",
+            State::MainAllProvidersGrouped => "MainAllProvidersGrouped",
+            State::MainAllProvidersGroupedDark => "MainAllProvidersGroupedDark",
             State::MainAllProvidersNarrow => "MainAllProvidersNarrow",
             State::MainAllProvidersCompact => "MainAllProvidersCompact",
             State::MainGcpActive => "MainGcpActive",
@@ -262,6 +274,8 @@ impl State {
                 | State::OverlayColumnMenuDark
                 | State::MainAllProvidersDark
                 | State::MainAllProvidersNoColumnDark
+                | State::MainAllProvidersFailedGroupDark
+                | State::MainAllProvidersGroupedDark
         )
     }
 
@@ -404,7 +418,10 @@ pub(crate) fn apply_render_state(
         State::MainAllProvidersNoColumn | State::MainAllProvidersNoColumnDark => {
             fleet.update(cx, |fleet, cx| fleet.toggle_column(Column::Provider, cx));
         }
-        State::MainAllProvidersFailedGroup => {
+        State::MainAllProvidersFailedGroup
+        | State::MainAllProvidersFailedGroupDark
+        | State::MainAllProvidersGrouped
+        | State::MainAllProvidersGroupedDark => {
             fleet.update(cx, |fleet, cx| fleet.set_group_by(GroupBy::Provider, cx));
         }
         State::OverlayDimensionTree | State::OverlayDimensionSingle => {

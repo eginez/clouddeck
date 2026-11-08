@@ -470,12 +470,14 @@ fn group_header(
                 .child(header.count.to_string()),
         );
     if header.failed {
+        let marker_key = format!("{row_key}.failed");
         row = row.child(
             div()
                 .flex_shrink_0()
                 .ml(px(8.))
                 .text_color(palette.warntext)
-                .child("could not load"),
+                .child("could not load")
+                .debug_selector(move || marker_key.clone()),
         );
     }
     row
