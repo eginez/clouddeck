@@ -3,3 +3,6 @@
 
 .DS_Store
 /artifacts/render/
+
+# Local emulator state written by run.sh
+testing/emulators/*/.seeded
