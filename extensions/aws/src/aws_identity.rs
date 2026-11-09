@@ -1,8 +1,8 @@
 //! AWS account identity resolution used to verify onboarding credentials.
 
 use crate::aws_sdk::{sdk_config, sdk_error_detail};
-use clouddeck_provider_kit::{BoxError, CloudDeckError};
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use clouddeck_provider_kit::{AwsFiles, BoxError, CloudDeckError};
+use std::{sync::Arc, time::Duration};
 
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -56,7 +56,7 @@ pub struct AwsIdentityService {
     pub region: String,
     provider: Option<Arc<dyn AwsIdentityProvider>>,
     request_timeout: Duration,
-    config_file: Option<PathBuf>,
+    files: AwsFiles,
 }
 
 impl AwsIdentityService {
@@ -66,12 +66,12 @@ impl AwsIdentityService {
             region: region.into(),
             provider: None,
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
-            config_file: None,
+            files: AwsFiles::default(),
         }
     }
 
-    pub fn with_config_file(mut self, config_file: Option<PathBuf>) -> Self {
-        self.config_file = config_file;
+    pub fn with_files(mut self, files: AwsFiles) -> Self {
+        self.files = files;
         self
     }
 
@@ -86,7 +86,7 @@ impl AwsIdentityService {
             region: region.into(),
             provider: Some(provider),
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
-            config_file: None,
+            files: AwsFiles::default(),
         }
     }
 
@@ -95,8 +95,7 @@ impl AwsIdentityService {
         let provider = match self.provider.as_ref() {
             Some(provider) => Arc::clone(provider),
             None => {
-                let config =
-                    sdk_config(&self.profile, &self.region, self.config_file.as_deref()).await;
+                let config = sdk_config(&self.profile, &self.region, &self.files).await;
                 Arc::new(SdkIdentityProvider {
                     client: aws_sdk_sts::Client::new(&config),
                 })

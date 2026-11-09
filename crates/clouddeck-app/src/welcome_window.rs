@@ -1,7 +1,7 @@
 //! First-run welcome window (design/images/60).
 
 use clouddeck_core::{
-    AwsProfile, ProfileInput, ProfileRow, WorkspaceContext, aws_config_setting, context_path,
+    AwsProfile, ProfileInput, ProfileRow, WorkspaceContext, aws_files_setting, context_path,
     filter_profile_rows, load_profiles_for, move_highlight, profile_picker_empty_text,
     profile_rows,
 };
@@ -105,7 +105,7 @@ impl WelcomeWindow {
     }
 
     fn reload_profiles(&mut self, cx: &mut Context<Self>) {
-        match load_profiles_for(aws_config_setting().as_deref()) {
+        match load_profiles_for(&aws_files_setting()) {
             Ok(profiles) => {
                 self.profiles = profile_inputs(profiles);
                 self.message = None;
@@ -451,7 +451,7 @@ pub fn open_welcome_window_sized(
     cx: &mut App,
     size_override: Option<(f32, f32)>,
 ) -> Option<WindowHandle<Root>> {
-    let (profiles, message) = match load_profiles_for(aws_config_setting().as_deref()) {
+    let (profiles, message) = match load_profiles_for(&aws_files_setting()) {
         Ok(profiles) => (profile_inputs(profiles), None),
         Err(error) => (
             vec![],

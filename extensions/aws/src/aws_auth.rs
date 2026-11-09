@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 use std::future::Future;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::SystemTime;
@@ -17,10 +17,9 @@ use clouddeck_provider_api::{
 };
 
 use clouddeck_provider_kit::{
-    AwsCredentialKind, AwsSsoConfiguration, BoxError, ComputeServiceProvider,
+    AwsCredentialKind, AwsFiles, AwsSsoConfiguration, BoxError, ComputeServiceProvider,
     DEFAULT_AWS_CONFIG_FILE, Dimension, LoginGuidance, REGION, REGIONS, ScopeSettings,
-    aws_file_paths, aws_file_paths_for, custom_aws_config_file, list_scenario, load_profiles_for,
-    login_guidance, read_profile_auth,
+    aws_files_for, list_scenario, load_profiles_for, login_guidance, read_profile_auth,
 };
 
 use crate::aws_identity::AwsIdentityService;
@@ -31,7 +30,8 @@ use crate::aws_sso_login::{
 };
 use crate::routing::{routed_list, verify_instance_access};
 
-const SSO_METHOD_ID: &str = "aws-sso";
+const PROFILE_METHOD_ID: &str = "profile";
+pub(crate) const CONFIG_DIR_SETTING: &str = "config_dir";
 pub(crate) const CONFIG_FILE_SETTING: &str = "config_file";
 pub(crate) const REQUEST_TIMEOUT_SETTING: &str = "request_timeout";
 
@@ -41,7 +41,6 @@ struct Flow {
 }
 
 struct AwsAuth {
-    credentials: PathBuf,
     home: PathBuf,
     sso: AwsSsoLoginService,
     flows: Mutex<HashMap<FlowId, Arc<Flow>>>,
@@ -49,9 +48,8 @@ struct AwsAuth {
 }
 
 impl AwsAuth {
-    fn new(credentials: PathBuf, home: PathBuf, sso: AwsSsoLoginService) -> Self {
+    fn new(home: PathBuf, sso: AwsSsoLoginService) -> Self {
         Self {
-            credentials,
             home,
             sso,
             flows: Mutex::new(HashMap::new()),
@@ -66,18 +64,21 @@ impl AwsAuth {
     }
 
     fn methods(&self) -> Vec<AuthMethod> {
-        vec![AuthMethod::new(
-            SSO_METHOD_ID.to_string(),
-            "Browser sign-in (IAM Identity Center)".to_string(),
-        )]
+        let mut method = AuthMethod::new(
+            PROFILE_METHOD_ID.to_string(),
+            "Use an AWS profile".to_string(),
+        );
+        method.description = Some("Choose a profile from a config folder.".to_string());
+        method.settings = vec![CONFIG_DIR_SETTING.to_string()];
+        vec![method]
     }
 
     fn credential_kind(
         &self,
-        config: &Path,
+        files: &AwsFiles,
         profile: &str,
     ) -> Result<AwsCredentialKind, ProviderError> {
-        let profiles = read_profile_auth(config, &self.credentials)
+        let profiles = read_profile_auth(&files.config, &files.credentials)
             .map_err(|error| ProviderError::new(ErrorKind::Other, error.to_string()))?;
         Ok(profiles
             .into_iter()
@@ -89,11 +90,11 @@ impl AwsAuth {
 
     fn begin(
         &self,
-        config: &Path,
+        files: &AwsFiles,
         method: &AuthMethod,
         input: AuthInput,
     ) -> Result<AuthStep, ProviderError> {
-        if method.id != SSO_METHOD_ID {
+        if method.id != PROFILE_METHOD_ID {
             return Err(ProviderError::unsupported());
         }
         let Some(connection) = input.connection else {
@@ -102,7 +103,7 @@ impl AwsAuth {
                 "Choose a profile to sign in to.",
             ));
         };
-        let kind = self.credential_kind(config, connection.as_str())?;
+        let kind = self.credential_kind(files, connection.as_str())?;
         match login_guidance(&kind) {
             LoginGuidance::BrowserSignIn(_) => {}
             LoginGuidance::AlreadyConfigured => {
@@ -167,11 +168,11 @@ impl AwsAuth {
         })
     }
 
-    fn status(&self, config: &Path, connection: Option<&ConnectionId>) -> AuthStatus {
+    fn status(&self, files: &AwsFiles, connection: Option<&ConnectionId>) -> AuthStatus {
         let Some(connection) = connection else {
             return AuthStatus::SignedOut;
         };
-        match self.credential_kind(config, connection.as_str()) {
+        match self.credential_kind(files, connection.as_str()) {
             Ok(AwsCredentialKind::Sso(config)) => self.sso_token_status(&config),
             Ok(AwsCredentialKind::SharedCredentials) => AuthStatus::SignedIn { expires: None },
             Ok(_) => AuthStatus::SignedOut,
@@ -196,13 +197,13 @@ impl AwsAuth {
 
     fn sign_out(
         &self,
-        config: &Path,
+        files: &AwsFiles,
         connection: Option<&ConnectionId>,
     ) -> Result<(), ProviderError> {
         let Some(connection) = connection else {
             return Ok(());
         };
-        let AwsCredentialKind::Sso(sso) = self.credential_kind(config, connection.as_str())? else {
+        let AwsCredentialKind::Sso(sso) = self.credential_kind(files, connection.as_str())? else {
             return Ok(());
         };
         let path = sso_cache_path(sso_cache_identifier(&sso), &self.home);
@@ -285,16 +286,11 @@ struct AwsProvider {
     auth: AwsAuth,
 }
 
-fn config_setting(cx: &Call<'_>) -> Option<String> {
-    cx.host.setting(CONFIG_FILE_SETTING)
-}
-
-fn config_path(cx: &Call<'_>) -> PathBuf {
-    aws_file_paths_for(config_setting(cx).as_deref()).0
-}
-
-fn custom_config_file(cx: &Call<'_>) -> Option<PathBuf> {
-    custom_aws_config_file(config_setting(cx).as_deref())
+pub(crate) fn aws_files(cx: &Call<'_>) -> AwsFiles {
+    aws_files_for(
+        cx.host.setting(CONFIG_DIR_SETTING).as_deref(),
+        cx.host.setting(CONFIG_FILE_SETTING).as_deref(),
+    )
 }
 
 fn setting_defs() -> Vec<SettingDef> {
@@ -304,9 +300,18 @@ fn setting_defs() -> Vec<SettingDef> {
     };
     vec![
         SettingDef {
+            key: CONFIG_DIR_SETTING.into(),
+            label: "Config folder".into(),
+            description: Some("An .aws-style folder with config and credentials. Empty uses ~/.aws or AWS_CONFIG_FILE.".into()),
+            group: None,
+            kind: SettingKind::Folder,
+            default: None,
+            secret: false,
+        },
+        SettingDef {
             key: CONFIG_FILE_SETTING.into(),
             label: "AWS config file".into(),
-            description: Some("Where profiles are read from.".into()),
+            description: Some("Overrides the config file. Wins over the config folder.".into()),
             group: None,
             kind: SettingKind::Path,
             default: Some(SettingValue::Text(DEFAULT_AWS_CONFIG_FILE.into())),
@@ -340,7 +345,7 @@ impl Provider for AwsProvider {
 
 impl Browse for AwsProvider {
     fn connections(&self, cx: &Call<'_>) -> Result<Vec<Connection>, ProviderError> {
-        let profiles = load_profiles_for(config_setting(cx).as_deref()).unwrap_or_default();
+        let profiles = load_profiles_for(&aws_files(cx)).unwrap_or_default();
         Ok(profiles
             .into_iter()
             .map(|profile| Connection {
@@ -409,7 +414,7 @@ impl Auth for AwsProvider {
         method: &AuthMethod,
         input: AuthInput,
     ) -> Result<AuthStep, ProviderError> {
-        self.auth.begin(&config_path(cx), method, input)
+        self.auth.begin(&aws_files(cx), method, input)
     }
 
     fn continue_auth(
@@ -422,7 +427,7 @@ impl Auth for AwsProvider {
     }
 
     fn auth_status(&self, cx: &Call<'_>, connection: Option<&ConnectionId>) -> AuthStatus {
-        self.auth.status(&config_path(cx), connection)
+        self.auth.status(&aws_files(cx), connection)
     }
 
     fn sign_out(
@@ -430,7 +435,7 @@ impl Auth for AwsProvider {
         cx: &Call<'_>,
         connection: Option<&ConnectionId>,
     ) -> Result<(), ProviderError> {
-        self.auth.sign_out(&config_path(cx), connection)
+        self.auth.sign_out(&aws_files(cx), connection)
     }
 
     fn identity(
@@ -440,7 +445,7 @@ impl Auth for AwsProvider {
         selection: &Selection,
     ) -> Result<String, ProviderError> {
         let service = AwsIdentityService::new(connection.as_str(), first_region(selection))
-            .with_config_file(custom_config_file(cx));
+            .with_files(aws_files(cx));
         within_deadline(cx, service.resolve()).map(|identity| identity.account_id)
     }
 
@@ -456,7 +461,7 @@ impl Auth for AwsProvider {
             verify_instance_access(
                 connection.as_str().to_string(),
                 first_region(selection),
-                custom_config_file(cx),
+                aws_files(cx),
             ),
         )
     }
@@ -473,12 +478,11 @@ pub fn aws_provider() -> Arc<dyn Provider> {
 }
 
 pub(crate) fn boxed_aws_provider() -> Box<dyn Provider> {
-    let (_, credentials) = aws_file_paths();
     let regions = REGIONS.iter().map(|region| (*region).to_string()).collect();
     let inner = ComputeServiceProvider::new("aws", Vec::new(), regions, |profile, region| {
         Box::new(AwsSdkComputeService::new(profile, region))
     });
-    let auth = AwsAuth::new(credentials, home_dir(), AwsSsoLoginService::new());
+    let auth = AwsAuth::new(home_dir(), AwsSsoLoginService::new());
     Box::new(AwsProvider { inner, auth })
 }
 
@@ -504,24 +508,23 @@ credential_process = /usr/local/bin/creds
         _dir: tempfile::TempDir,
         auth: AwsAuth,
         home: PathBuf,
-        config: PathBuf,
+        files: AwsFiles,
     }
 
     fn fixture(fake: Arc<FakeProvider>) -> Fixture {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path().to_path_buf();
-        let config = home.join("config");
-        std::fs::write(&config, SSO_PROFILE).unwrap();
-        let auth = AwsAuth::new(
-            home.join("credentials"),
-            home.clone(),
-            AwsSsoLoginService::with_provider(fake),
-        );
+        let files = AwsFiles {
+            config: home.join("config"),
+            credentials: home.join("credentials"),
+        };
+        std::fs::write(&files.config, SSO_PROFILE).unwrap();
+        let auth = AwsAuth::new(home.clone(), AwsSsoLoginService::with_provider(fake));
         Fixture {
             _dir: dir,
             auth,
             home,
-            config,
+            files,
         }
     }
 
@@ -549,7 +552,7 @@ credential_process = /usr/local/bin/creds
     fn begin_sso(fixture: &Fixture) -> AuthStep {
         fixture
             .auth
-            .begin(&fixture.config, &sso_method(fixture), input("sso"))
+            .begin(&fixture.files, &sso_method(fixture), input("sso"))
             .unwrap()
     }
 
@@ -608,7 +611,7 @@ credential_process = /usr/local/bin/creds
 
         let error = fixture
             .auth
-            .begin(&fixture.config, &sso_method(&fixture), input("external"))
+            .begin(&fixture.files, &sso_method(&fixture), input("external"))
             .unwrap_err();
 
         assert_eq!(error.kind, ErrorKind::Unsupported);
@@ -619,7 +622,7 @@ credential_process = /usr/local/bin/creds
         let fixture = fixture(approved_after_one_pending_poll());
         let connection = ConnectionId::from("sso");
         assert_eq!(
-            fixture.auth.status(&fixture.config, Some(&connection)),
+            fixture.auth.status(&fixture.files, Some(&connection)),
             AuthStatus::SignedOut
         );
 
@@ -630,7 +633,7 @@ credential_process = /usr/local/bin/creds
             Ok(AuthStep::Done)
         );
         assert!(matches!(
-            fixture.auth.status(&fixture.config, Some(&connection)),
+            fixture.auth.status(&fixture.files, Some(&connection)),
             AuthStatus::SignedIn { expires: Some(_) }
         ));
 
@@ -641,17 +644,17 @@ credential_process = /usr/local/bin/creds
         )
         .unwrap();
         assert_eq!(
-            fixture.auth.status(&fixture.config, Some(&connection)),
+            fixture.auth.status(&fixture.files, Some(&connection)),
             AuthStatus::Expired
         );
 
         fixture
             .auth
-            .sign_out(&fixture.config, Some(&connection))
+            .sign_out(&fixture.files, Some(&connection))
             .unwrap();
         assert!(!cache.exists());
         assert_eq!(
-            fixture.auth.status(&fixture.config, Some(&connection)),
+            fixture.auth.status(&fixture.files, Some(&connection)),
             AuthStatus::SignedOut
         );
     }
@@ -666,9 +669,20 @@ credential_process = /usr/local/bin/creds
         assert_eq!(
             fixture
                 .auth
-                .status(&fixture.config, Some(&ConnectionId::from("sso"))),
+                .status(&fixture.files, Some(&ConnectionId::from("sso"))),
             AuthStatus::Unknown
         );
+    }
+
+    #[test]
+    fn sign_in_is_one_profile_method_that_takes_the_config_folder() {
+        let fixture = fixture(approved_after_one_pending_poll());
+
+        let methods = fixture.auth.methods();
+
+        assert_eq!(methods.len(), 1);
+        assert_eq!(methods[0].id, "profile");
+        assert_eq!(methods[0].settings, ["config_dir"]);
     }
 
     fn sso_config() -> AwsSsoConfiguration {
@@ -767,7 +781,7 @@ sso_role_name = Admin
             Duration::ZERO,
             (0..8).map(|_| Ok(TokenPoll::Pending)).collect(),
         ));
-        let auth = AwsAuth::new(dir.join("credentials"), dir.to_path_buf(), sso);
+        let auth = AwsAuth::new(dir.to_path_buf(), sso);
         Box::new(AwsProvider { inner, auth })
     }
 
@@ -803,7 +817,7 @@ sso_role_name = Admin
 
     struct PinnedHost<'a> {
         base: &'a dyn Host,
-        config: &'a Path,
+        folder: &'a Path,
     }
 
     impl Host for PinnedHost<'_> {
@@ -816,8 +830,8 @@ sso_role_name = Admin
         }
 
         fn setting(&self, key: &str) -> Option<String> {
-            if key == CONFIG_FILE_SETTING {
-                return Some(self.config.display().to_string());
+            if key == CONFIG_DIR_SETTING {
+                return Some(self.folder.display().to_string());
             }
             self.base.setting(key)
         }
@@ -839,17 +853,17 @@ sso_role_name = Admin
         }
     }
 
-    /// Points the wrapped provider at `config` for calls the conformance kit makes with its own host.
+    /// Points the wrapped provider at `folder` for calls the conformance kit makes with its own host.
     struct Pinned {
         inner: Arc<dyn Provider>,
-        config: PathBuf,
+        folder: PathBuf,
     }
 
     impl Pinned {
         fn with_host<R>(&self, cx: &Call<'_>, f: impl FnOnce(&Call<'_>) -> R) -> R {
             let host = PinnedHost {
                 base: cx.host,
-                config: &self.config,
+                folder: &self.folder,
             };
             f(&Call {
                 deadline: cx.deadline,
@@ -1030,11 +1044,10 @@ sso_role_name = Admin
     #[test]
     fn provider_passes_the_conformance_kit() {
         let dir = tempfile::tempdir().unwrap();
-        let config = dir.path().join("custom-config");
-        std::fs::write(&config, PROFILE).unwrap();
+        std::fs::write(dir.path().join("config"), PROFILE).unwrap();
         let pinned = Pinned {
             inner: Arc::from(provider(dir.path())),
-            config,
+            folder: dir.path().to_path_buf(),
         };
         let violations = check_provider(Arc::new(pinned));
         assert!(violations.is_empty(), "{violations:#?}");
@@ -1051,20 +1064,35 @@ sso_role_name = Admin
     }
 
     #[test]
-    fn connections_come_from_the_configured_config_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let config = dir.path().join("custom-config");
-        std::fs::write(&config, PROFILE).unwrap();
-        let pinned = Pinned {
-            inner: Arc::from(provider(dir.path())),
-            config,
-        };
+    fn connections_are_the_profile_scan_of_the_configured_folder() {
+        let first = tempfile::tempdir().unwrap();
+        let second = tempfile::tempdir().unwrap();
+        std::fs::write(first.path().join("config"), PROFILE).unwrap();
+        std::fs::write(second.path().join("config"), "[profile other]\n").unwrap();
         let cx = Call {
             deadline: None,
             host: &NoHost,
         };
-        let connections = pinned.connections(&cx).unwrap();
-        let ids: Vec<&str> = connections.iter().map(|c| c.id.as_str()).collect();
-        assert_eq!(ids, ["conformance"]);
+        let connections = |folder: &Path| -> Vec<String> {
+            let pinned = Pinned {
+                inner: Arc::from(provider(folder)),
+                folder: folder.to_path_buf(),
+            };
+            pinned
+                .connections(&cx)
+                .unwrap()
+                .into_iter()
+                .map(|connection| connection.id.as_str().to_string())
+                .collect()
+        };
+
+        assert_eq!(connections(first.path()), ["conformance"]);
+        assert_eq!(connections(second.path()), ["other"]);
+        let scan: Vec<String> = load_profiles_for(&aws_files_for(first.path().to_str(), None))
+            .unwrap()
+            .into_iter()
+            .map(|profile| profile.name)
+            .collect();
+        assert_eq!(scan, ["conformance"]);
     }
 }

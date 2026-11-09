@@ -1,4 +1,4 @@
-use clouddeck_provider_kit::ComputeService;
+use clouddeck_provider_kit::{AwsFiles, ComputeService};
 use std::path::PathBuf;
 
 #[tokio::test]
@@ -15,8 +15,11 @@ async fn lists_seeded_instances_from_the_floci_emulator() {
     );
     let config =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testing/emulators/aws/config");
-    let service = clouddeck_aws::AwsSdkComputeService::new("local-dev", "us-east-1")
-        .with_config_file(Some(config));
+    let service =
+        clouddeck_aws::AwsSdkComputeService::new("local-dev", "us-east-1").with_files(AwsFiles {
+            config,
+            ..AwsFiles::default()
+        });
 
     let result = service
         .list_instances(None)

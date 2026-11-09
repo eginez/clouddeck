@@ -93,7 +93,7 @@ pub fn drive(wizard: &Entity<AccountWindowView>, cx: &mut App) {
 /// correctly routes into an actionable "no usable credentials" failure
 /// instead of a panic or a silent no-op.
 fn credential_kind_for(profile: &str) -> AwsCredentialKind {
-    clouddeck_core::load_profile_auth_for(clouddeck_core::aws_config_setting().as_deref())
+    clouddeck_core::load_profile_auth_for(&clouddeck_core::aws_files_setting())
         .ok()
         .and_then(|profiles| profiles.into_iter().find(|p| p.name == profile))
         .map(|p| p.credential_kind)
@@ -102,8 +102,7 @@ fn credential_kind_for(profile: &str) -> AwsCredentialKind {
 
 fn rescan(wizard: Entity<AccountWindowView>, cx: &mut App) {
     let profiles =
-        clouddeck_core::load_profiles_for(clouddeck_core::aws_config_setting().as_deref())
-            .unwrap_or_default();
+        clouddeck_core::load_profiles_for(&clouddeck_core::aws_files_setting()).unwrap_or_default();
     let regions = clouddeck_core::REGIONS
         .iter()
         .map(|region| (*region).to_string())

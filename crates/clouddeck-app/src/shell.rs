@@ -210,6 +210,10 @@ fn record_save_failure(message: &mut Option<String>, saved: Option<std::io::Resu
     }
 }
 
+fn changes_aws_profiles(extension: &str, key: Option<&str>) -> bool {
+    extension == "aws" && key.is_none_or(|key| matches!(key, "config_dir" | "config_file"))
+}
+
 fn reload_target(
     shows_all: bool,
     needs_sign_in: bool,
@@ -380,7 +384,7 @@ impl AppShell {
         if demo {
             Ok(demo_profiles(demo_scenario))
         } else {
-            clouddeck_core::load_profiles_for(clouddeck_core::aws_config_setting().as_deref())
+            clouddeck_core::load_profiles_for(&clouddeck_core::aws_files_setting())
         }
     }
 
@@ -806,6 +810,22 @@ impl AppShell {
                     main_window.update(cx, |main_window, cx| {
                         main_window.apply_settings(settings, window, cx)
                     })
+                });
+            }
+            SettingsEvent::ProviderSettingChanged { extension, key } => {
+                if !changes_aws_profiles(extension, key.as_deref()) {
+                    return;
+                }
+                let shell = cx.entity();
+                let window_handle = self.window_handle;
+                cx.defer(move |cx| {
+                    let _ = window_handle.update(cx, |_, window, cx| {
+                        shell.update(cx, |shell, cx| {
+                            let providers = app_providers::providers(cx);
+                            shell.reload_active_provider(&providers, window, cx);
+                            shell.refresh(cx);
+                        })
+                    });
                 });
             }
             SettingsEvent::RecentSearchesCleared => {
@@ -2126,6 +2146,20 @@ mod provider_switch_tests {
             shell.context_model.active_provider().to_string()
         });
         assert_eq!(before, after);
+    }
+}
+
+#[cfg(test)]
+mod changes_aws_profiles_tests {
+    use super::*;
+
+    #[test]
+    fn only_aws_profile_folder_settings_reload_the_profiles() {
+        assert!(changes_aws_profiles("aws", Some("config_dir")));
+        assert!(changes_aws_profiles("aws", Some("config_file")));
+        assert!(changes_aws_profiles("aws", None));
+        assert!(!changes_aws_profiles("aws", Some("request_timeout")));
+        assert!(!changes_aws_profiles("gcp", Some("config_dir")));
     }
 }
 

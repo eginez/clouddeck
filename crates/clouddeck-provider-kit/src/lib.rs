@@ -16,11 +16,10 @@ pub use console_url::{
 };
 pub mod context;
 pub use context::{
-    AwsConfigFile, AwsConfigParseError, AwsCredentialKind, AwsProfile, AwsProfileAuth,
+    AwsConfigFile, AwsConfigParseError, AwsCredentialKind, AwsFiles, AwsProfile, AwsProfileAuth,
     AwsSsoConfiguration, DEFAULT_AWS_CONFIG_FILE, FLEET_REGIONS, REGIONS, WorkspaceContext,
-    aws_file_paths, aws_file_paths_for, context_path, custom_aws_config_file,
-    load_profile_auth_for, load_profiles_for, parse_profile_auth, parse_profiles,
-    read_profile_auth,
+    aws_files_for, context_path, custom_aws_config_file, load_profile_auth_for, load_profiles_for,
+    parse_profile_auth, parse_profiles, read_profile_auth,
 };
 pub mod demo_fleet;
 pub use demo_fleet::{DemoFleet, demo_profiles, demo_region_names};

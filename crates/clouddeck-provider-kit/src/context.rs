@@ -341,25 +341,32 @@ fn home_dir() -> PathBuf {
         .unwrap_or_default()
 }
 
-pub fn aws_file_paths() -> (PathBuf, PathBuf) {
-    let home = home_dir().join(".aws");
-    let config = std::env::var_os("AWS_CONFIG_FILE")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home.join("config"));
-    let credentials = std::env::var_os("AWS_SHARED_CREDENTIALS_FILE")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home.join("credentials"));
-    (config, credentials)
+/// The config and credentials files a profile is read from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AwsFiles {
+    pub config: PathBuf,
+    pub credentials: PathBuf,
 }
 
-/// The config file named by the `config_file` setting, or `None` when it is unset or the default.
-pub fn custom_aws_config_file(setting: Option<&str>) -> Option<PathBuf> {
-    let value = setting?.trim();
-    if value.is_empty() || value == DEFAULT_AWS_CONFIG_FILE {
-        return None;
+impl Default for AwsFiles {
+    fn default() -> Self {
+        let home = home_dir().join(".aws");
+        let config = std::env::var_os("AWS_CONFIG_FILE")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join("config"));
+        let credentials = std::env::var_os("AWS_SHARED_CREDENTIALS_FILE")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join("credentials"));
+        Self {
+            config,
+            credentials,
+        }
     }
+}
+
+fn expand_home(value: &str) -> Option<PathBuf> {
     match value.strip_prefix("~/") {
         Some(rest) => {
             let home = std::env::var_os("HOME").filter(|value| !value.is_empty())?;
@@ -369,18 +376,34 @@ pub fn custom_aws_config_file(setting: Option<&str>) -> Option<PathBuf> {
     }
 }
 
-/// Config and credentials paths for the `config_file` setting; credentials always come from the environment.
-pub fn aws_file_paths_for(setting: Option<&str>) -> (PathBuf, PathBuf) {
-    let (config, credentials) = aws_file_paths();
-    (
-        custom_aws_config_file(setting).unwrap_or(config),
-        credentials,
-    )
+/// The config file named by the `config_file` setting, or `None` when it is unset or the default.
+pub fn custom_aws_config_file(setting: Option<&str>) -> Option<PathBuf> {
+    let value = setting?.trim();
+    if value.is_empty() || value == DEFAULT_AWS_CONFIG_FILE {
+        return None;
+    }
+    expand_home(value)
 }
 
-pub fn load_profile_auth_for(setting: Option<&str>) -> std::io::Result<Vec<AwsProfileAuth>> {
-    let (config, credentials) = aws_file_paths_for(setting);
-    read_profile_auth(&config, &credentials)
+/// Files for the `config_dir` folder setting, else the defaults. `config_file` overrides only the config file.
+pub fn aws_files_for(config_dir: Option<&str>, config_file: Option<&str>) -> AwsFiles {
+    let defaults = AwsFiles::default();
+    let folder = config_dir
+        .map(str::trim)
+        .filter(|dir| !dir.is_empty())
+        .and_then(expand_home);
+    let (config, credentials) = match folder {
+        Some(folder) => (folder.join("config"), folder.join("credentials")),
+        None => (defaults.config, defaults.credentials),
+    };
+    AwsFiles {
+        config: custom_aws_config_file(config_file).unwrap_or(config),
+        credentials,
+    }
+}
+
+pub fn load_profile_auth_for(files: &AwsFiles) -> std::io::Result<Vec<AwsProfileAuth>> {
+    read_profile_auth(&files.config, &files.credentials)
 }
 
 /// Only profile names and region metadata are retained; secret values are ignored.
@@ -394,8 +417,8 @@ pub fn parse_profiles(
         .collect())
 }
 
-pub fn load_profiles_for(setting: Option<&str>) -> std::io::Result<Vec<AwsProfile>> {
-    Ok(load_profile_auth_for(setting)?
+pub fn load_profiles_for(files: &AwsFiles) -> std::io::Result<Vec<AwsProfile>> {
+    Ok(load_profile_auth_for(files)?
         .into_iter()
         .map(AwsProfile::from)
         .collect())
@@ -688,26 +711,118 @@ mod tests {
     }
 
     #[test]
-    fn default_or_blank_config_setting_uses_the_environment_paths() {
+    fn empty_settings_use_the_default_files() {
         assert_eq!(custom_aws_config_file(None), None);
         assert_eq!(custom_aws_config_file(Some("  ")), None);
         assert_eq!(custom_aws_config_file(Some(DEFAULT_AWS_CONFIG_FILE)), None);
-        assert_eq!(aws_file_paths_for(None), aws_file_paths());
-        assert_eq!(aws_file_paths_for(Some("")), aws_file_paths());
+        assert_eq!(aws_files_for(None, None), AwsFiles::default());
+        assert_eq!(aws_files_for(Some(""), Some(" ")), AwsFiles::default());
     }
 
     #[test]
-    fn custom_config_setting_replaces_only_the_config_path() {
+    fn config_folder_supplies_both_files_and_config_file_overrides_only_the_config() {
+        let dir = PathBuf::from("/srv/aws");
         assert_eq!(
-            custom_aws_config_file(Some("/srv/aws/profiles")),
-            Some(PathBuf::from("/srv/aws/profiles"))
+            aws_files_for(Some("/srv/aws"), None),
+            AwsFiles {
+                config: dir.join("config"),
+                credentials: dir.join("credentials"),
+            }
+        );
+        assert_eq!(
+            aws_files_for(Some("/srv/aws"), Some("/srv/profiles")),
+            AwsFiles {
+                config: PathBuf::from("/srv/profiles"),
+                credentials: dir.join("credentials"),
+            }
         );
         assert_eq!(
             custom_aws_config_file(Some("~/work/aws-config")),
             Some(home_dir().join("work/aws-config"))
         );
-        let (config, credentials) = aws_file_paths_for(Some("/srv/aws/profiles"));
-        assert_eq!(config, PathBuf::from("/srv/aws/profiles"));
-        assert_eq!(credentials, aws_file_paths().1);
+    }
+
+    struct ScratchFolder(PathBuf);
+
+    impl ScratchFolder {
+        fn new(tag: &str) -> Self {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "clouddeck-aws-{tag}-{}-{nanos}",
+                std::process::id()
+            ));
+            std::fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for ScratchFolder {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn folder_scan_reads_default_named_sso_and_region_profiles() {
+        let dir = ScratchFolder::new("scan");
+        std::fs::write(
+            dir.0.join("config"),
+            "[default]\nregion = us-west-2\n\n[profile sso]\nsso_start_url = https://example.awsapps.com/start\nsso_region = us-east-1\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.0.join("credentials"),
+            "[named]\naws_access_key_id = AKIAEXAMPLE\naws_secret_access_key = never-retain\nregion = eu-west-1\n",
+        )
+        .unwrap();
+        let files = aws_files_for(dir.0.to_str(), None);
+
+        let profiles = load_profiles_for(&files).unwrap();
+        let names: Vec<(&str, Option<&str>)> = profiles
+            .iter()
+            .map(|profile| (profile.name.as_str(), profile.region.as_deref()))
+            .collect();
+        assert_eq!(
+            names,
+            [
+                ("default", Some("us-west-2")),
+                ("named", Some("eu-west-1")),
+                ("sso", None),
+            ]
+        );
+        assert!(!format!("{profiles:?}").contains("never-retain"));
+
+        let auth = load_profile_auth_for(&files).unwrap();
+        assert!(matches!(
+            auth.iter().find(|profile| profile.name == "sso").map(|p| &p.credential_kind),
+            Some(AwsCredentialKind::Sso(sso)) if sso.region == "us-east-1"
+        ));
+        assert_eq!(
+            auth.iter()
+                .find(|profile| profile.name == "named")
+                .map(|p| &p.credential_kind),
+            Some(&AwsCredentialKind::SharedCredentials)
+        );
+    }
+
+    #[test]
+    fn changing_the_folder_changes_the_scan() {
+        let first = ScratchFolder::new("first");
+        let second = ScratchFolder::new("second");
+        std::fs::write(first.0.join("config"), "[profile one]\n").unwrap();
+        std::fs::write(second.0.join("config"), "[profile two]\n").unwrap();
+
+        let names = |dir: &std::path::Path| -> Vec<String> {
+            load_profiles_for(&aws_files_for(dir.to_str(), None))
+                .unwrap()
+                .into_iter()
+                .map(|profile| profile.name)
+                .collect()
+        };
+        assert_eq!(names(&first.0), ["one"]);
+        assert_eq!(names(&second.0), ["two"]);
     }
 }

@@ -1,6 +1,7 @@
 use crate::context_path;
 use clouddeck_provider_api::SettingValue;
 pub use clouddeck_provider_kit::fleet_region_timeout;
+use clouddeck_provider_kit::{AwsFiles, aws_files_for};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -247,16 +248,28 @@ pub fn settings_path() -> PathBuf {
     context_path().with_file_name("settings.json")
 }
 
-/// The AWS plugin's `config_file` value as the user stored it, `None` when unset.
-pub fn aws_config_setting() -> Option<String> {
+fn aws_text_setting(key: &str) -> Option<String> {
     match Settings::load(&settings_path())
         .providers
         .get("aws")?
-        .get("config_file")?
+        .get(key)?
     {
-        SettingValue::Text(path) => Some(path.clone()),
+        SettingValue::Text(text) => Some(text.clone()),
         _ => None,
     }
+}
+
+/// The AWS plugin's `config_file` value as the user stored it, `None` when unset.
+pub fn aws_config_setting() -> Option<String> {
+    aws_text_setting("config_file")
+}
+
+/// The config and credentials files the AWS plugin's folder and config-file settings select.
+pub fn aws_files_setting() -> AwsFiles {
+    aws_files_for(
+        aws_text_setting("config_dir").as_deref(),
+        aws_text_setting("config_file").as_deref(),
+    )
 }
 
 /// Copies the AWS settings that used to live in `settings.json` into the AWS plugin's provider values,

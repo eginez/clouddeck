@@ -10,11 +10,11 @@ use clouddeck_core::extension_host::{
     ProviderRegistry, SettingsCategory, search_provider_settings,
 };
 use clouddeck_core::{
-    DEFAULT_AWS_CONFIG_FILE, DefaultSort, Density, KEYMAP, LaunchBehavior, Platform,
-    RECENT_SEARCH_LIMITS, REFRESH_INTERVALS, SETTINGS_CATEGORIES, SettingDef, SettingId,
-    SettingKind, SettingValue, Settings, SettingsSearchResults, Theme, UiState, aws_config_setting,
-    changed_categories, context_path, search_settings, settings_no_match_text, settings_path,
-    settings_results_title, settings_search_breadcrumb, shortcut_label, ui_state_path,
+    DefaultSort, Density, KEYMAP, LaunchBehavior, Platform, RECENT_SEARCH_LIMITS,
+    REFRESH_INTERVALS, SETTINGS_CATEGORIES, SettingDef, SettingId, SettingKind, SettingValue,
+    Settings, SettingsSearchResults, Theme, UiState, aws_files_setting, changed_categories,
+    context_path, search_settings, settings_no_match_text, settings_path, settings_results_title,
+    settings_search_breadcrumb, shortcut_label, ui_state_path,
 };
 use gpui::{
     AnyElement, AnyView, App, Bounds, ClickEvent, Context, Div, Entity, EventEmitter, Global,
@@ -63,6 +63,10 @@ type FieldKey = (String, String);
 #[derive(Debug, Clone, PartialEq)]
 pub enum SettingsEvent {
     Changed(Settings),
+    ProviderSettingChanged {
+        extension: String,
+        key: Option<String>,
+    },
     RecentSearchesCleared,
     RememberedScopeForgotten,
 }
@@ -718,6 +722,10 @@ impl SettingsWindow {
             match self.providers.set_setting(extension, key, value) {
                 Ok(()) => {
                     self.setting_errors.remove(&field);
+                    cx.emit(SettingsEvent::ProviderSettingChanged {
+                        extension: extension.to_string(),
+                        key: Some(key.to_string()),
+                    });
                 }
                 Err(error) => {
                     self.setting_errors.insert(field, error.0);
@@ -749,6 +757,10 @@ impl SettingsWindow {
         match self.providers.reset_setting(extension, key) {
             Ok(()) => {
                 self.setting_errors.remove(&field_key(extension, key));
+                cx.emit(SettingsEvent::ProviderSettingChanged {
+                    extension: extension.to_string(),
+                    key: Some(key.to_string()),
+                });
             }
             Err(error) => {
                 self.setting_errors
@@ -766,9 +778,14 @@ impl SettingsWindow {
         cx: &mut Context<Self>,
     ) {
         match self.providers.reset_extension_settings(extension) {
-            Ok(()) => self
-                .setting_errors
-                .retain(|(owner, _), _| owner.as_str() != extension),
+            Ok(()) => {
+                self.setting_errors
+                    .retain(|(owner, _), _| owner.as_str() != extension);
+                cx.emit(SettingsEvent::ProviderSettingChanged {
+                    extension: extension.to_string(),
+                    key: None,
+                });
+            }
             Err(error) => {
                 self.show_note(format!("Could not restore: {}", error.0), None, cx);
                 return;
@@ -1643,7 +1660,7 @@ impl SettingsWindow {
             [
                 (
                     "Config file",
-                    aws_config_setting().unwrap_or_else(|| DEFAULT_AWS_CONFIG_FILE.to_owned()),
+                    aws_files_setting().config.display().to_string(),
                 ),
                 ("Data folder", "~/.config/clouddeck".to_owned()),
                 ("Platform", platform.to_owned()),
@@ -2276,6 +2293,30 @@ mod tests {
         assert!(
             cx.debug_bounds("settings.provider.changed.sample.region_label")
                 .is_some()
+        );
+    }
+
+    #[gpui::test]
+    fn editing_a_provider_setting_asks_the_app_to_reload_that_provider(cx: &mut TestAppContext) {
+        let (view, cx) = provider_window(cx);
+        let events = recorded_events(&view, cx);
+        view.update_in(cx, |view, window, cx| {
+            view.show_provider("sample", window, cx)
+        });
+        cx.run_until_parked();
+
+        view.update_in(cx, |view, window, cx| {
+            view.type_provider_text("sample", "region_label", "Europe", window, cx)
+        });
+        cx.run_until_parked();
+
+        assert!(
+            events
+                .borrow()
+                .contains(&SettingsEvent::ProviderSettingChanged {
+                    extension: "sample".into(),
+                    key: Some("region_label".into()),
+                })
         );
     }
 

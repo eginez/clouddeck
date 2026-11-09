@@ -1,13 +1,12 @@
-use std::path::PathBuf;
 use std::time::Duration;
 
 use clouddeck_provider_api::{Call, ConnectionId, KindId, ListResult, Selection};
 use clouddeck_provider_kit::{
-    BoxError, ComputeService, FleetComputeService, MockComputeService, REGION, ScopeSettings,
-    custom_aws_config_file, fleet_region_timeout, service_provider,
+    AwsFiles, BoxError, ComputeService, FleetComputeService, MockComputeService, REGION,
+    ScopeSettings, fleet_region_timeout, service_provider,
 };
 
-use crate::aws_auth::{CONFIG_FILE_SETTING, REQUEST_TIMEOUT_SETTING};
+use crate::aws_auth::{REQUEST_TIMEOUT_SETTING, aws_files};
 use crate::aws_sdk::AwsSdkComputeService;
 
 type Service = Box<dyn ComputeService + Send + Sync>;
@@ -15,10 +14,10 @@ type Service = Box<dyn ComputeService + Send + Sync>;
 pub async fn verify_instance_access(
     profile: String,
     region: String,
-    config_file: Option<PathBuf>,
+    files: AwsFiles,
 ) -> Result<(), BoxError> {
     AwsSdkComputeService::new(profile, region)
-        .with_config_file(config_file)
+        .with_files(files)
         .list_instances(None)
         .await
         .map(|_| ())
@@ -47,7 +46,7 @@ pub(crate) fn routed_list(
         &region,
         &fleet_regions,
         request_timeout(cx, settings.request_timeout),
-        config_file(cx),
+        aws_files(cx),
     ))
     .list(cx, connection, kind, &Selection::new())
 }
@@ -60,26 +59,21 @@ fn request_timeout(cx: &Call<'_>, fallback: Duration) -> Duration {
         .unwrap_or(fallback)
 }
 
-fn config_file(cx: &Call<'_>) -> Option<PathBuf> {
-    custom_aws_config_file(cx.host.setting(CONFIG_FILE_SETTING).as_deref())
-}
-
 pub(crate) fn service(
     profile: &str,
     region: &str,
     fleet_regions: &[String],
     request_timeout: Duration,
-    config_file: Option<PathBuf>,
+    files: AwsFiles,
 ) -> Service {
     profile
         .is_empty()
         .then(no_profile_service)
         .or_else(|| {
-            (region == "fleet").then(|| {
-                fleet_aws_service(profile, fleet_regions, request_timeout, config_file.clone())
-            })
+            (region == "fleet")
+                .then(|| fleet_aws_service(profile, fleet_regions, request_timeout, files.clone()))
         })
-        .unwrap_or_else(|| aws_service(profile, region, request_timeout, config_file))
+        .unwrap_or_else(|| aws_service(profile, region, request_timeout, files))
 }
 
 fn no_profile_service() -> Service {
@@ -90,7 +84,7 @@ fn fleet_aws_service(
     profile: &str,
     fleet_regions: &[String],
     request_timeout: Duration,
-    config_file: Option<PathBuf>,
+    files: AwsFiles,
 ) -> Service {
     let profile = profile.to_string();
     Box::new(FleetComputeService::with_timeout(
@@ -99,23 +93,18 @@ fn fleet_aws_service(
             Box::new(
                 AwsSdkComputeService::new(profile.clone(), region)
                     .with_timeout(request_timeout)
-                    .with_config_file(config_file.clone()),
+                    .with_files(files.clone()),
             )
         },
         fleet_region_timeout(request_timeout),
     ))
 }
 
-fn aws_service(
-    profile: &str,
-    region: &str,
-    request_timeout: Duration,
-    config_file: Option<PathBuf>,
-) -> Service {
+fn aws_service(profile: &str, region: &str, request_timeout: Duration, files: AwsFiles) -> Service {
     Box::new(
         AwsSdkComputeService::new(profile, region)
             .with_timeout(request_timeout)
-            .with_config_file(config_file),
+            .with_files(files),
     )
 }
 
@@ -125,12 +114,12 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    use clouddeck_core::workspace_provider;
+    use clouddeck_core::{AwsFiles, workspace_provider};
     use clouddeck_provider_api::{ConnectionId, Host, KindId, LogLevel, ProviderError, Selection};
     use clouddeck_provider_kit::service_provider;
 
-    use super::{config_file, request_timeout, service};
-    use crate::aws_auth::{CONFIG_FILE_SETTING, REQUEST_TIMEOUT_SETTING};
+    use super::{aws_files, request_timeout, service};
+    use crate::aws_auth::{CONFIG_DIR_SETTING, CONFIG_FILE_SETTING, REQUEST_TIMEOUT_SETTING};
     use crate::builtin_providers;
 
     struct NullHost;
@@ -183,13 +172,19 @@ mod tests {
             ("fleet", fleet_regions.to_vec()),
         ];
         for (region, regions) in cases {
-            let expected = service_provider(service("", region, &fleet_regions, timeout, None))
-                .list(
-                    &call(),
-                    &ConnectionId::from(""),
-                    &KindId::instances(),
-                    &Selection::new(),
-                );
+            let expected = service_provider(service(
+                "",
+                region,
+                &fleet_regions,
+                timeout,
+                AwsFiles::default(),
+            ))
+            .list(
+                &call(),
+                &ConnectionId::from(""),
+                &KindId::instances(),
+                &Selection::new(),
+            );
             let actual = workspace_provider(&providers, "", &regions, None, timeout).list(
                 &call(),
                 &ConnectionId::from(""),
@@ -247,7 +242,7 @@ mod tests {
             request_timeout(&cx, Duration::from_secs(30)),
             Duration::from_secs(5)
         );
-        assert_eq!(config_file(&cx), Some(PathBuf::from("/srv/aws/profiles")));
+        assert_eq!(aws_files(&cx).config, PathBuf::from("/srv/aws/profiles"));
     }
 
     #[test]
@@ -264,6 +259,18 @@ mod tests {
             request_timeout(&cx, Duration::from_secs(45)),
             Duration::from_secs(45)
         );
-        assert_eq!(config_file(&cx), None);
+        assert_eq!(aws_files(&cx), AwsFiles::default());
+    }
+
+    #[test]
+    fn config_folder_reaches_the_listing_files() {
+        let host = SettingsHost(vec![(CONFIG_DIR_SETTING, "/srv/aws")]);
+        let cx = clouddeck_provider_api::Call {
+            deadline: None,
+            host: &host,
+        };
+        let files = aws_files(&cx);
+        assert_eq!(files.config, PathBuf::from("/srv/aws/config"));
+        assert_eq!(files.credentials, PathBuf::from("/srv/aws/credentials"));
     }
 }
