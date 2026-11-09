@@ -438,7 +438,10 @@ mod tests {
         );
         assert_eq!(form.value("flag"), Some(&SettingValue::Bool(false)));
         assert_eq!(form.value("region"), Some(&SettingValue::Text("eu".into())));
-        assert_eq!(form.value("token"), Some(&SettingValue::Text(String::new())));
+        assert_eq!(
+            form.value("token"),
+            Some(&SettingValue::Text(String::new()))
+        );
         assert_eq!(form.value("timeout"), Some(&SettingValue::DurationSecs(5)));
     }
 
@@ -523,13 +526,20 @@ mod tests {
         ];
 
         let error = with_call(|call| {
-            submit(&provider, call, &method("a", &[]), None, writes, |key, _| {
-                if key == "flag" {
-                    Err(SettingError("cannot save settings: disk full".into()))
-                } else {
-                    Ok(())
-                }
-            })
+            submit(
+                &provider,
+                call,
+                &method("a", &[]),
+                None,
+                writes,
+                |key, _| {
+                    if key == "flag" {
+                        Err(SettingError("cannot save settings: disk full".into()))
+                    } else {
+                        Ok(())
+                    }
+                },
+            )
         })
         .unwrap_err();
 

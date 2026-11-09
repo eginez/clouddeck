@@ -438,6 +438,7 @@ enum StoredContext {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceContext {
+    pub provider: String,
     pub profile: String,
 }
 impl WorkspaceContext {
@@ -446,27 +447,31 @@ impl WorkspaceContext {
     }
 
     fn decode(bytes: &[u8]) -> Option<Self> {
-        let profile = match serde_json::from_slice::<StoredContext>(bytes).ok()? {
+        let context = match serde_json::from_slice::<StoredContext>(bytes).ok()? {
             StoredContext::Current {
                 provider,
                 connection,
-            } if provider == "aws" => connection,
-            StoredContext::Current { .. } => return None,
-            StoredContext::Legacy { profile } => profile,
+            } => Self {
+                provider,
+                profile: connection,
+            },
+            StoredContext::Legacy { profile } => Self {
+                provider: "aws".into(),
+                profile,
+            },
         };
-        let context = Self { profile };
         context.is_usable().then_some(context)
     }
 
     pub fn is_usable(&self) -> bool {
-        !self.profile.trim().is_empty()
+        !self.provider.trim().is_empty() && !self.profile.trim().is_empty()
     }
 
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
         if !self.is_usable() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
-                "AWS profile must be non-empty",
+                "context needs a provider and a connection",
             ));
         }
         if let Some(parent) = path.parent() {
@@ -485,7 +490,7 @@ impl WorkspaceContext {
         let mut file = std::fs::File::create(&temp)?;
         use std::io::Write;
         let stored = StoredContext::Current {
-            provider: "aws".into(),
+            provider: self.provider.clone(),
             connection: self.profile.clone(),
         };
         file.write_all(&serde_json::to_vec(&stored).map_err(std::io::Error::other)?)?;
@@ -626,12 +631,14 @@ mod tests {
                 .as_nanos()
         ));
         let context = WorkspaceContext {
+            provider: "aws".into(),
             profile: "team".into(),
         };
         context.save(&path).unwrap();
         assert_eq!(WorkspaceContext::load(&path), Some(context));
         assert!(
             WorkspaceContext {
+                provider: "aws".into(),
                 profile: String::new(),
             }
             .save(&path)
@@ -661,6 +668,7 @@ mod tests {
         assert_eq!(
             WorkspaceContext::decode(legacy),
             Some(WorkspaceContext {
+                provider: "aws".into(),
                 profile: "team".into(),
             })
         );
@@ -677,6 +685,7 @@ mod tests {
                 .as_nanos()
         ));
         WorkspaceContext {
+            provider: "aws".into(),
             profile: "team".into(),
         }
         .save(&path)
@@ -694,8 +703,29 @@ mod tests {
     }
 
     #[test]
-    fn workspace_context_rejects_non_aws_contexts() {
-        assert!(WorkspaceContext::decode(br#"{"provider":"gcp","connection":"team"}"#).is_none());
+    fn saved_gcp_context_is_restored() {
+        assert_eq!(
+            WorkspaceContext::decode(br#"{"provider":"gcp","connection":"team"}"#),
+            Some(WorkspaceContext {
+                provider: "gcp".into(),
+                profile: "team".into(),
+            })
+        );
+        let path = std::env::temp_dir().join(format!(
+            "clouddeck-context-gcp-{}-{}.json",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let context = WorkspaceContext {
+            provider: "gcp".into(),
+            profile: "team".into(),
+        };
+        context.save(&path).unwrap();
+        assert_eq!(WorkspaceContext::load(&path), Some(context));
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]
@@ -705,6 +735,7 @@ mod tests {
                 br#"{"provider":"aws","connection":"team","scopes":["eu-west-1","us-east-1"]}"#
             ),
             Some(WorkspaceContext {
+                provider: "aws".into(),
                 profile: "team".into(),
             })
         );

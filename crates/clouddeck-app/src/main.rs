@@ -124,3 +124,17 @@ fn main() {
             cx.activate(true);
         });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn should_show_connect_false_for_saved_gcp_context() {
+        let saved = WorkspaceContext {
+            provider: "gcp".into(),
+            profile: "team".into(),
+        };
+        assert!(!should_show_connect(false, Some(&saved)));
+    }
+}

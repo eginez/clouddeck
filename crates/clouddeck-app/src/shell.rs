@@ -208,13 +208,17 @@ fn reload_target(
     shows_all: bool,
     needs_sign_in: bool,
     current: WorkspaceContext,
+    provider: &str,
     first_profile: Option<String>,
 ) -> Option<WorkspaceContext> {
     if shows_all {
         return Some(current);
     }
     match first_profile {
-        Some(profile) if !needs_sign_in => Some(WorkspaceContext { profile }),
+        Some(profile) if !needs_sign_in => Some(WorkspaceContext {
+            provider: provider.to_string(),
+            profile,
+        }),
         _ => None,
     }
 }
@@ -580,7 +584,13 @@ impl AppShell {
         let profiles = loaded.unwrap_or_default();
         let saved = (!demo)
             .then(|| WorkspaceContext::load(&clouddeck_core::context_path()))
-            .flatten();
+            .flatten()
+            .filter(|s| s.provider != "aws" || profiles.iter().any(|p| p.name == s.profile));
+        let launch_provider = settings
+            .active_provider
+            .clone()
+            .or_else(|| saved.as_ref().map(|s| s.provider.clone()));
+        let saved = saved.filter(|s| launch_provider.as_deref().is_none_or(|id| id == s.provider));
         let ui_state_file_present = ui_state_path.as_ref().is_some_and(|path| path.exists());
         let (mut ui_state, ui_state_path, ui_state_message) = ui_state_path.map_or_else(
             || (UiState::default(), None, None),
@@ -592,11 +602,15 @@ impl AppShell {
         let ui_state_existed = ui_state_file_present && ui_state_path.is_some();
         let message = message.or(ui_state_message);
         let available = Self::available_regions(demo, demo_scenario);
-        let context = saved
-            .filter(|s| profiles.iter().any(|p| p.name == s.profile))
-            .unwrap_or_else(|| WorkspaceContext {
-                profile: profiles.first().map(|p| p.name.clone()).unwrap_or_default(),
-            });
+        let context = saved.unwrap_or_else(|| {
+            let provider = launch_provider.clone().unwrap_or_else(|| "aws".into());
+            let profile = if provider == "aws" {
+                profiles.first().map(|p| p.name.clone()).unwrap_or_default()
+            } else {
+                String::new()
+            };
+            WorkspaceContext { provider, profile }
+        });
         let legacy_regions = ui_state.take_legacy_regions();
         let default_regions = if demo && demo_scenario == DemoFleet::Partial {
             available.clone()
@@ -632,7 +646,7 @@ impl AppShell {
                     bundled: true,
                 })
                 .collect(),
-            settings.active_provider.as_deref(),
+            launch_provider.as_deref(),
             "aws",
         );
         Self::load_connections(&mut context_model, &providers);
@@ -894,6 +908,7 @@ impl AppShell {
             |this: &mut Self, _, event: &MainWindowEvent, window, cx| match event {
                 MainWindowEvent::PickProfile(name) => {
                     let next = WorkspaceContext {
+                        provider: this.context_model.active_provider().to_string(),
                         profile: name.clone(),
                     };
                     if next != this.context {
@@ -1003,6 +1018,7 @@ impl AppShell {
             self.context_model.shows_all_providers(),
             self.context_model.needs_sign_in(),
             self.context.clone(),
+            self.context_model.active_provider(),
             first_profile,
         )
         .map(|context| self.apply_context(context, window, cx))
@@ -2400,6 +2416,7 @@ mod tests {
     #[test]
     fn demo_failure_and_partial_modes_are_observable_without_aws() {
         let context = WorkspaceContext {
+            provider: "aws".into(),
             profile: "scenario-default".into(),
         };
 
@@ -2444,6 +2461,7 @@ mod tests {
     #[test]
     fn large_demo_mode_has_enough_rows_to_exercise_scrolling() {
         let context = WorkspaceContext {
+            provider: "aws".into(),
             profile: "scenario-default".into(),
         };
         let view_model = loaded_demo(&context, DemoFleet::Large, &[]);
@@ -3197,6 +3215,7 @@ mod tests {
             set_region_values(&mut shell.context_model, &["us-west-2".to_string()]);
             shell.apply_context(
                 WorkspaceContext {
+                    provider: "aws".into(),
                     profile: "scenario-default".into(),
                 },
                 window,
