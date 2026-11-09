@@ -1,4 +1,5 @@
 use crate::app_providers;
+use crate::connect_window::{ConnectEvent, open_connect_window};
 use crate::render_state::{DEFAULT_ROW_MENU_ANCHOR, State, apply_render_state, fleet_loaded};
 use crate::{
     fleet_state::FleetState,
@@ -9,11 +10,11 @@ use crate::{
     theme::SurgicalTheme,
 };
 use clouddeck_core::{
-    ALL_PROVIDERS, Call, Column, ContextModel, DemoFleet, FLEET_REGIONS, InstanceListViewModel,
-    ListView, LoadHost, PROVIDER_SINGLE_COLUMN_KEY, ProfileInput, Provider, ProviderEntry, REGION,
-    Settings, UiState, ValueId, WindowFrame, WorkspaceContext, all_providers_view, demo_profiles,
-    demo_region_names, provider_signed_in, settings_path, short_name, switch_active_provider,
-    workspace_provider_for,
+    ALL_PROVIDERS, Call, Column, ConnectionId, ContextModel, DemoFleet, FLEET_REGIONS,
+    InstanceListViewModel, ListView, LoadHost, PROVIDER_SINGLE_COLUMN_KEY, ProfileInput, Provider,
+    ProviderEntry, REGION, Settings, UiState, ValueId, WindowFrame, WorkspaceContext,
+    all_providers_view, demo_profiles, demo_region_names, provider_signed_in, settings_path,
+    short_name, switch_active_provider, workspace_provider_for,
 };
 use gpui::{
     AnyWindowHandle, App, Bounds, Context, Entity, IntoElement, KeyBinding, ParentElement, Render,
@@ -21,10 +22,8 @@ use gpui::{
 };
 use gpui_component::Root;
 use std::{
-    cell::RefCell,
-    collections::{BTreeMap, HashSet},
+    collections::BTreeMap,
     path::{Path, PathBuf},
-    rc::Rc,
     time::Duration,
 };
 
@@ -47,10 +46,8 @@ pub struct AppShell {
     window_handle: AnyWindowHandle,
     context: WorkspaceContext,
     context_model: ContextModel,
-    sign_ins_in_flight: Rc<RefCell<HashSet<String>>>,
     demo: bool,
     demo_scenario: DemoFleet,
-    wizard: Option<Entity<crate::account_window::AccountWindowView>>,
     message: Option<String>,
     ui_state_path: Option<PathBuf>,
     ui_state_saved: UiState,
@@ -178,14 +175,6 @@ fn restored_regions(saved: &[String], available: &[String]) -> Vec<String> {
         available.to_vec()
     } else {
         kept
-    }
-}
-
-fn setup_mode(profile: &str) -> crate::account_window::AccountWindowMode {
-    if profile.is_empty() {
-        crate::account_window::AccountWindowMode::SetupRequired
-    } else {
-        crate::account_window::AccountWindowMode::ManageContext
     }
 }
 
@@ -340,18 +329,6 @@ fn open_window_sized(
     .ok()
 }
 
-pub(crate) fn open_main_window_with_setup(cx: &mut App) -> Option<WindowHandle<Root>> {
-    let handle = open_main_window(cx, false, DemoFleet::Happy)?;
-    let shell = handle
-        .update(cx, |root, _, _| {
-            root.view().clone().downcast::<AppShell>().ok()
-        })
-        .ok()
-        .flatten()?;
-    shell.update(cx, |shell, cx| shell.open_setup(cx));
-    Some(handle)
-}
-
 impl AppShell {
     #[cfg(test)]
     fn new_demo(window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -450,21 +427,6 @@ impl AppShell {
             return Vec::new();
         }
         region_values(model)
-    }
-
-    fn wizard_region(model: &ContextModel) -> String {
-        match region_values(model).as_slice() {
-            [only] if !model.is_all(REGION) => only.clone(),
-            _ => "fleet".into(),
-        }
-    }
-
-    fn apply_wizard_region(model: &mut ContextModel, region: &str, available: &[String]) {
-        if region != "fleet" {
-            set_region_values(model, &[region.to_string()]);
-        } else if region_values(model).len() == 1 {
-            set_region_values(model, available);
-        }
     }
 
     fn window_frame(window: &Window) -> WindowFrame {
@@ -749,7 +711,6 @@ impl AppShell {
             window_handle: window.window_handle(),
             context,
             context_model,
-            sign_ins_in_flight: Rc::default(),
             demo,
             demo_scenario,
             message,
@@ -762,7 +723,6 @@ impl AppShell {
             settings_subscription: None,
             remembered_regions,
             request_timeout,
-            wizard: None,
             #[cfg(test)]
             test_service_override: None,
         }
@@ -840,6 +800,7 @@ impl AppShell {
                 self.ui_state_saved.dimension_selections.clear();
                 self.remembered_regions = None;
             }
+            SettingsEvent::ConnectAgain(id) => self.sign_in(id, cx),
         }
     }
 
@@ -945,7 +906,6 @@ impl AppShell {
                     let context = this.context.clone();
                     this.apply_context(context, window, cx);
                 }
-                MainWindowEvent::ConnectToAws => this.open_setup(cx),
                 MainWindowEvent::SignIn(id) => this.sign_in(id, cx),
                 MainWindowEvent::Retry(_) => this.refresh(cx),
                 MainWindowEvent::OpenSettings => this.open_settings(cx),
@@ -956,42 +916,44 @@ impl AppShell {
     }
 
     fn sign_in(&mut self, id: &str, cx: &mut Context<Self>) {
-        if id == "aws" {
-            self.open_setup(cx);
-            return;
-        }
-        let providers = app_providers::providers(cx);
-        let Some(provider) = providers
-            .into_iter()
-            .find(|provider| provider.info().id == id)
-        else {
+        if !app_providers::providers(cx)
+            .iter()
+            .any(|provider| provider.info().id == id)
+        {
             self.fleet.update(cx, |fleet, cx| {
                 fleet.set_flash(format!("{id} is not installed"), cx)
             });
             return;
-        };
+        }
+        let connection = (self.context_model.active_provider() == id
+            && !self.context.profile.is_empty())
+        .then(|| ConnectionId::from(self.context.profile.as_str()));
         let shell = cx.weak_entity();
         let window_handle = self.window_handle;
-        let on_signed_in = move |cx: &mut gpui::App| {
+        let opened = open_connect_window(cx, id, connection, move |event, cx| {
             let _ = window_handle.update(cx, |_, window, cx| {
-                let _ = shell.update(cx, |shell, cx| {
-                    let providers = app_providers::providers(cx);
-                    shell.reload_active_provider(&providers, window, cx);
-                    shell.refresh(cx);
+                let _ = shell.update(cx, |shell, cx| match event {
+                    ConnectEvent::SignedIn { provider } => {
+                        if shell.context_model.active_provider() == provider {
+                            let providers = app_providers::providers(cx);
+                            shell.reload_active_provider(&providers, window, cx);
+                        }
+                        shell.refresh(cx);
+                    }
+                    ConnectEvent::ExploreDemo => shell.toggle_demo(window, cx),
                 });
             });
-        };
-        crate::provider_sign_in::begin_provider_sign_in(
-            provider,
-            self.fleet.clone(),
-            self.sign_ins_in_flight.clone(),
-            on_signed_in,
-            cx,
-        );
+        });
+        if opened.is_none() {
+            self.message = Some(format!("{id} has no sign-in to connect"));
+        }
     }
 
     fn pick_provider(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.switch_provider_to(id, &settings_path(), window, cx);
+        if self.context_model.needs_sign_in() {
+            self.sign_in(id, cx);
+        }
     }
 
     fn switch_provider_to(
@@ -1027,11 +989,16 @@ impl AppShell {
         let available = Self::available_regions(self.demo, self.demo_scenario);
         ensure_region_dimension(&mut self.context_model, &available);
         set_region_values(&mut self.context_model, &regions);
-        let first_profile = self
-            .context_model
-            .connections()
-            .first()
-            .map(|connection| connection.id.as_str().to_string());
+        let connections = self.context_model.connections();
+        let first_profile = connections
+            .iter()
+            .map(|connection| connection.id.as_str().to_string())
+            .find(|id| *id == self.context.profile)
+            .or_else(|| {
+                connections
+                    .first()
+                    .map(|connection| connection.id.as_str().to_string())
+            });
         reload_target(
             self.context_model.shows_all_providers(),
             self.context_model.needs_sign_in(),
@@ -1168,110 +1135,6 @@ impl AppShell {
     fn refresh(&mut self, cx: &mut Context<Self>) {
         self.fleet.update(cx, |fleet, cx| fleet.refresh(cx));
     }
-
-    fn open_setup(&mut self, cx: &mut Context<Self>) {
-        use crate::account_window::AccountWindowView;
-        let profiles = Self::profiles(self.demo, self.demo_scenario).unwrap_or_else(|error| {
-            self.message = Some(format!("Could not read AWS profiles: {error}"));
-            vec![]
-        });
-        let profile = self.context.profile.clone();
-        let region = Self::wizard_region(&self.context_model);
-        let mode = setup_mode(&profile);
-        let demo = self.demo;
-        let demo_scenario = self.demo_scenario;
-        let shell = cx.weak_entity();
-        let window_handle = self.window_handle;
-        let bounds = gpui::Bounds::centered(None, gpui::size(px(1000.0), px(760.0)), cx);
-        let result = cx.open_window(
-            gpui::WindowOptions {
-                titlebar: Some(gpui::TitlebarOptions {
-                    title: Some("CloudDeck Setup".into()),
-                    ..Default::default()
-                }),
-                window_bounds: Some(gpui::WindowBounds::Windowed(bounds)),
-                app_id: Some(crate::main_window::APP_ID.to_string()),
-                ..Default::default()
-            },
-            move |_, cx| {
-                let wizard = cx.new(|_| AccountWindowView {
-                    profiles: Some(profiles),
-                    available_regions: Some(Self::regions(demo, demo_scenario)),
-                    selected_profile: if profile.is_empty() {
-                        None
-                    } else {
-                        Some(profile)
-                    },
-                    selected_region: region,
-                    mode,
-                    ..Default::default()
-                });
-                cx.observe(&wizard, move |wizard, cx| {
-                    // Demo mode rebuilds the whole shell, so it needs the AppShell
-                    // and its window, which `account_connect::drive` does not have.
-                    if wizard.read(cx).demo_requested {
-                        wizard.update(cx, |view, _cx| view.demo_requested = false);
-                        let _ = window_handle.update(cx, |_, window, cx| {
-                            let _ = shell.update(cx, |shell, cx| shell.toggle_demo(window, cx));
-                        });
-                        return;
-                    }
-                    // Drives the SDK-backed connection check (STS identity,
-                    // EC2 access, browser SSO sign-in, rescan) behind the
-                    // wizard's one-shot request flags. See
-                    // `account_connect` for why this lives in its own
-                    // module rather than inline here.
-                    crate::account_connect::drive(&wizard, cx);
-                    if wizard.read(cx).finished {
-                        let next = WorkspaceContext {
-                            profile: wizard.read(cx).selected_profile.clone().unwrap_or_default(),
-                        };
-                        let wizard_region = wizard.read(cx).selected_region.clone();
-                        let _ = window_handle.update(cx, |_, window, cx| {
-                            let _ = shell.update(cx, |shell, cx| {
-                                let available =
-                                    Self::available_regions(shell.demo, shell.demo_scenario);
-                                let mut target_model = shell.context_model.clone();
-                                Self::apply_wizard_region(
-                                    &mut target_model,
-                                    &wizard_region,
-                                    &available,
-                                );
-                                let target_regions = region_values(&target_model);
-                                let was_sign_in = shell.context_model.needs_sign_in();
-                                if !was_sign_in
-                                    && next == shell.context
-                                    && target_regions == region_values(&shell.context_model)
-                                {
-                                    return;
-                                }
-                                let providers = app_providers::providers(cx);
-                                Self::load_connections(&mut shell.context_model, &providers);
-                                Self::load_dimensions(&mut shell.context_model, &providers);
-                                ensure_region_dimension(&mut shell.context_model, &available);
-                                set_region_values(&mut shell.context_model, &target_regions);
-                                Self::sync_provider_view(
-                                    &shell.main_window,
-                                    &shell.context_model,
-                                    cx,
-                                );
-                                shell.apply_context(next, window, cx);
-                            });
-                        });
-                    }
-                })
-                .detach();
-                wizard
-            },
-        );
-        result
-            .map(|handle| {
-                self.wizard = handle.update(cx, |_, _, cx| cx.entity()).ok();
-            })
-            .unwrap_or_else(|error| {
-                self.message = Some(format!("Could not open setup: {error}"));
-            });
-    }
 }
 
 impl Render for AppShell {
@@ -1305,6 +1168,7 @@ mod provider_switch_tests {
     use super::*;
     use clouddeck_core::Browse;
     use gpui::{TestAppContext, VisualTestContext};
+    use std::collections::HashSet;
 
     fn add_rooted_shell(
         cx: &mut TestAppContext,
@@ -1801,22 +1665,6 @@ mod provider_switch_tests {
             Some("aws")
         );
         let _ = std::fs::remove_file(&settings_file);
-    }
-
-    #[gpui::test]
-    fn sign_in_event_for_a_non_aws_provider_starts_its_flow(cx: &mut TestAppContext) {
-        install_registry(cx, std::sync::Arc::new(SignedOut(compute_provider("gcp"))));
-        let (shell, cx) = add_rooted_shell(cx, AppShell::new_demo);
-        let main_window = shell.read_with(cx, |shell, _| shell.main_window.clone());
-
-        main_window.update(cx, |_, cx| {
-            cx.emit(MainWindowEvent::SignIn("gcp".to_string()))
-        });
-
-        shell.read_with(cx, |shell, _| {
-            assert!(shell.sign_ins_in_flight.borrow().contains("gcp"));
-            assert!(shell.wizard.is_none());
-        });
     }
 
     #[gpui::test]
@@ -2603,53 +2451,6 @@ mod tests {
     }
 
     #[gpui::test]
-    fn opening_setup_creates_the_wizard_and_finishing_it_updates_the_context(
-        cx: &mut TestAppContext,
-    ) {
-        use crate::account_window::AccountConnectionState;
-
-        let (shell, cx) = add_rooted_shell(cx, AppShell::new_demo);
-
-        // The trigger: nothing opens the account-connect window on its own
-        // (per clouddeck-rs-w6s.18's design, existing profiles need minimal
-        // interaction), but `open_setup` -- reached from the main window's
-        // `ConnectToAws` event -- must actually create a wizard window.
-        shell.update(cx, |shell, cx| {
-            assert!(shell.wizard.is_none(), "no wizard until setup is opened");
-            shell.open_setup(cx);
-            assert!(
-                shell.wizard.is_some(),
-                "open_setup should create the Connect to AWS wizard entity"
-            );
-        });
-
-        let wizard = shell
-            .read_with(cx, |shell, _| shell.wizard.clone())
-            .expect("wizard entity");
-
-        // Drive the wizard to a finished connection the same way a real
-        // connect (account_connect::drive) would, then confirm the shell's
-        // observer applies the selected profile and region as the context.
-        wizard.update(cx, |wizard, cx| {
-            wizard.selected_profile = Some("scenario-default".into());
-            wizard.selected_region = "us-west-2".into();
-            wizard.connection_state = AccountConnectionState::Connected {
-                account_id: "123456789012".into(),
-            };
-            wizard.open_fleet();
-            cx.notify();
-        });
-
-        shell.read_with(cx, |shell, _| {
-            assert_eq!(
-                shell.context.profile, "scenario-default",
-                "finishing the wizard should apply its selected profile to the context"
-            );
-            assert_eq!(region_values(&shell.context_model), ["us-west-2"]);
-        });
-    }
-
-    #[gpui::test]
     fn mounting_in_real_mode_without_profiles_shows_setup_affordance(cx: &mut TestAppContext) {
         // A real (non-demo) launch with no detected AWS profiles must reach
         // the main window with an in-place "Connect to AWS" affordance (the
@@ -3039,79 +2840,15 @@ mod tests {
     }
 
     #[gpui::test]
-    fn connect_to_aws_event_opens_the_wizard(cx: &mut TestAppContext) {
-        let (shell, cx) = add_rooted_shell(cx, AppShell::new_demo);
-
-        emit_main_window_event(cx, &shell, MainWindowEvent::ConnectToAws);
-
-        shell.read_with(cx, |shell, _| {
-            assert!(
-                shell.wizard.is_some(),
-                "the ConnectToAws event should open the Connect to AWS window"
-            );
-        });
-    }
-
-    #[gpui::test]
-    fn sign_in_event_for_aws_opens_the_wizard(cx: &mut TestAppContext) {
-        let (shell, cx) = add_rooted_shell(cx, AppShell::new_demo);
-
-        emit_main_window_event(cx, &shell, MainWindowEvent::SignIn("aws".to_string()));
-
-        shell.read_with(cx, |shell, _| {
-            assert!(
-                shell.wizard.is_some(),
-                "SignIn(aws) should open the AWS wizard"
-            );
-        });
-    }
-
-    #[gpui::test]
     fn sign_in_event_for_an_unknown_provider_flashes_and_opens_nothing(cx: &mut TestAppContext) {
         let (shell, cx) = add_rooted_shell(cx, AppShell::new_demo);
 
         emit_main_window_event(cx, &shell, MainWindowEvent::SignIn("nope".to_string()));
 
         shell.read_with(cx, |shell, cx| {
-            assert!(shell.wizard.is_none());
             assert_eq!(
                 shell.fleet.read(cx).flash.as_deref(),
                 Some("nope is not installed")
-            );
-        });
-    }
-
-    // Regression test for a bug where the wizard's "Explore demo fleet"
-    // action (`demo_requested`) was read and cleared by
-    // `account_connect::drive` -- which never acts on it -- every render
-    // cycle, so the button was a silent no-op. The wizard's observer must
-    // intercept `demo_requested` itself and flip the shell's demo mode.
-    #[gpui::test]
-    fn wizard_demo_request_toggles_the_shell_demo_mode(cx: &mut TestAppContext) {
-        let (shell, cx) = add_rooted_shell(cx, AppShell::new_demo);
-
-        shell.update(cx, |shell, cx| shell.open_setup(cx));
-
-        let wizard = shell
-            .read_with(cx, |shell, _| shell.wizard.clone())
-            .expect("wizard entity");
-        let demo_before = shell.read_with(cx, |shell, _| shell.demo);
-
-        wizard.update(cx, |wizard, cx| {
-            wizard.request_demo();
-            cx.notify();
-        });
-
-        shell.read_with(cx, |shell, _| {
-            assert_ne!(
-                shell.demo, demo_before,
-                "Explore demo fleet must flip the shell's demo mode, not silently no-op"
-            );
-        });
-        wizard.read_with(cx, |wizard, _| {
-            assert!(
-                !wizard.demo_requested,
-                "the one-shot demo request must be consumed, not left set"
             );
         });
     }

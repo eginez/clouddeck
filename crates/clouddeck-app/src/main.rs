@@ -1,19 +1,10 @@
 mod about_window;
-mod account_connect;
-mod account_window;
 mod app_menus;
 mod app_providers;
 mod assets;
 mod center_state_view;
 mod command_palette;
 mod context_bar;
-// `account_provider_step`, `account_profile_picker`, and
-// `account_workspace_setup` (the old multi-step onboarding wizard views)
-// were removed under clouddeck-rs-w6s.18: the approved single-screen
-// Connect to AWS design (there is effectively only one provider, AWS, so a
-// provider-selection step added nothing) folded profile/region selection
-// directly into `account_window::AccountWindowView`. Nothing outside their
-// own files referenced them.
 mod dimension_picker_view;
 mod failure_popover;
 mod fleet_state;
@@ -26,12 +17,14 @@ mod linux_titlebar;
 mod main_window;
 mod plugins_window;
 mod profile_picker_view;
+mod provider_call;
 mod provider_picker_view;
 mod provider_sign_in;
 mod render_state;
 mod row_context_menu;
 mod runtime;
 mod search_field;
+mod setting_rows;
 mod settings_window;
 mod shell;
 mod sidebar;
@@ -48,16 +41,37 @@ mod updater;
 // a full-width central table with a bottom context bar. `shell.rs` already
 // composes the shell without it; see
 // `AppShell::render`'s `table_and_status_are_docked_without_a_sidebar` test.
+mod connect_window;
 #[cfg(test)]
 mod context_bar_provider_tests;
 #[cfg(test)]
 mod view_models;
-mod welcome_window;
 
-use clouddeck_core::{WorkspaceContext, context_path};
-use gpui::{App, Application, actions};
+use clouddeck_core::{DemoFleet, WorkspaceContext, context_path};
+use gpui::{App, Application, WindowHandle, actions};
+use gpui_component::Root;
 
 actions!(clouddeck, [Quit]);
+
+fn should_show_connect(demo: bool, saved: Option<&WorkspaceContext>) -> bool {
+    !demo && saved.is_none()
+}
+
+fn open_first_connect(cx: &mut App) -> Option<WindowHandle<Root>> {
+    let provider = app_providers::providers(cx)
+        .into_iter()
+        .find(|provider| provider.auth().is_some())?
+        .info()
+        .id;
+    connect_window::open_connect_window(cx, &provider, None, |event, cx| match event {
+        connect_window::ConnectEvent::SignedIn { .. } => {
+            shell::open_main_window(cx, false, DemoFleet::Happy);
+        }
+        connect_window::ConnectEvent::ExploreDemo => {
+            shell::open_main_window(cx, true, DemoFleet::Happy);
+        }
+    })
+}
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -92,12 +106,9 @@ fn main() {
                     cx.set_global(tokens::ActivePalette(tokens::Palette::for_dark(true)));
                 }
                 plugins_window::open(cx).expect("plugins window opens");
-            } else if options.state == Some(render_state::State::Welcome) {
-                welcome_window::open_welcome_window_sized(cx, options.size)
-                    .expect("welcome window opens");
-            } else if welcome_window::should_show_welcome(options.demo, saved.as_ref()) {
-                welcome_window::open_welcome_window(cx).expect("welcome window opens");
-            } else {
+            } else if !(should_show_connect(options.demo, saved.as_ref())
+                && open_first_connect(cx).is_some())
+            {
                 shell::open_main_window_with(
                     cx,
                     options.demo,

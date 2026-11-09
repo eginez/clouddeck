@@ -84,8 +84,22 @@ pub(crate) enum State {
     OverlayDimensionTree,
     /// Region picker over a single-select region dimension, with no checkboxes.
     OverlayDimensionSingle,
-    /// First-run welcome window listing three profiles.
-    Welcome,
+    /// Connect window for a provider with one folder setting, in the light palette.
+    ConnectFolderLight,
+    /// The same Connect window as `ConnectFolderLight`, in the dark palette.
+    ConnectFolderDark,
+    /// Connect window showing an error with its advice under the settings rows, in the light palette.
+    ConnectErrorLight,
+    /// The same Connect window as `ConnectErrorLight`, in the dark palette.
+    ConnectErrorDark,
+    /// Connect window waiting on a device code, in the light palette.
+    ConnectDeviceCodeLight,
+    /// The same Connect window as `ConnectDeviceCodeLight`, in the dark palette.
+    ConnectDeviceCodeDark,
+    /// Connect window for a provider with two auth methods, in the light palette.
+    ConnectTwoMethodsLight,
+    /// The same Connect window as `ConnectTwoMethodsLight`, in the dark palette.
+    ConnectTwoMethodsDark,
     /// About window in the light palette, with the demo plus two bundled or installed plugins.
     AboutLight,
     /// About window in the dark palette, with the same plugins as `AboutLight`.
@@ -139,7 +153,7 @@ pub(crate) enum State {
 }
 
 impl State {
-    pub(crate) const ALL: [State; 65] = [
+    pub(crate) const ALL: [State; 72] = [
         State::MainIdle,
         State::MainRowSelected,
         State::MainEmpty,
@@ -176,7 +190,14 @@ impl State {
         State::MainGcpActiveDark,
         State::OverlayDimensionTree,
         State::OverlayDimensionSingle,
-        State::Welcome,
+        State::ConnectFolderLight,
+        State::ConnectFolderDark,
+        State::ConnectErrorLight,
+        State::ConnectErrorDark,
+        State::ConnectDeviceCodeLight,
+        State::ConnectDeviceCodeDark,
+        State::ConnectTwoMethodsLight,
+        State::ConnectTwoMethodsDark,
         State::AboutLight,
         State::AboutDark,
         State::AboutRefusedPlugin,
@@ -246,7 +267,14 @@ impl State {
             State::MainGcpActiveDark => "MainGcpActiveDark",
             State::OverlayDimensionTree => "OverlayDimensionTree",
             State::OverlayDimensionSingle => "OverlayDimensionSingle",
-            State::Welcome => "Welcome",
+            State::ConnectFolderLight => "ConnectFolderLight",
+            State::ConnectFolderDark => "ConnectFolderDark",
+            State::ConnectErrorLight => "ConnectErrorLight",
+            State::ConnectErrorDark => "ConnectErrorDark",
+            State::ConnectDeviceCodeLight => "ConnectDeviceCodeLight",
+            State::ConnectDeviceCodeDark => "ConnectDeviceCodeDark",
+            State::ConnectTwoMethodsLight => "ConnectTwoMethodsLight",
+            State::ConnectTwoMethodsDark => "ConnectTwoMethodsDark",
             State::AboutLight => "AboutLight",
             State::AboutDark => "AboutDark",
             State::AboutRefusedPlugin => "AboutRefusedPlugin",
@@ -344,6 +372,22 @@ impl State {
         )
     }
 
+    /// Whether the state is the Connect window rather than a main-window state.
+    #[cfg(test)]
+    pub(crate) fn is_connect(self) -> bool {
+        matches!(
+            self,
+            State::ConnectFolderLight
+                | State::ConnectFolderDark
+                | State::ConnectErrorLight
+                | State::ConnectErrorDark
+                | State::ConnectDeviceCodeLight
+                | State::ConnectDeviceCodeDark
+                | State::ConnectTwoMethodsLight
+                | State::ConnectTwoMethodsDark
+        )
+    }
+
     /// Whether the state is the About window rather than a main-window state.
     pub(crate) fn is_about(self) -> bool {
         matches!(
@@ -395,7 +439,7 @@ pub(crate) fn fleet_loaded(fleet: &FleetState) -> bool {
 }
 
 /// Drives a loaded main window into `state`. `row_menu_anchor` is where the row menu opens
-/// for [`State::OverlayRowMenu`]. The welcome state has no main window and is a no-op.
+/// for [`State::OverlayRowMenu`]. States for other windows have no main window and are a no-op.
 pub(crate) fn apply_render_state(
     state: State,
     fleet: &Entity<FleetState>,
@@ -474,7 +518,14 @@ pub(crate) fn apply_render_state(
         | State::MainGcpActive
         | State::MainGcpSignIn
         | State::MainGcpActiveDark
-        | State::Welcome
+        | State::ConnectFolderLight
+        | State::ConnectFolderDark
+        | State::ConnectErrorLight
+        | State::ConnectErrorDark
+        | State::ConnectDeviceCodeLight
+        | State::ConnectDeviceCodeDark
+        | State::ConnectTwoMethodsLight
+        | State::ConnectTwoMethodsDark
         | State::AboutLight
         | State::AboutDark
         | State::AboutRefusedPlugin

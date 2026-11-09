@@ -68,7 +68,6 @@ pub enum Overlay {
 pub enum MainWindowEvent {
     PickProfile(String),
     PickProvider(String),
-    ConnectToAws,
     SignIn(String),
     RegionsChanged(Vec<String>),
     Retry(Option<String>),
@@ -249,12 +248,8 @@ impl MainWindow {
                     this.toggle_overlay(Overlay::Failure, window, cx)
                 }
                 ContextBarEvent::SignIn => {
-                    let provider = this.context_model.active_provider();
-                    if provider == "aws" {
-                        cx.emit(MainWindowEvent::ConnectToAws);
-                    } else {
-                        cx.emit(MainWindowEvent::SignIn(provider.to_string()));
-                    }
+                    let provider = this.context_model.active_provider().to_string();
+                    cx.emit(MainWindowEvent::SignIn(provider));
                 }
             },
         )
@@ -435,7 +430,7 @@ impl MainWindow {
                         }
                         ProfilePickerEvent::ConnectToAws => {
                             this.close_overlay(window, cx);
-                            cx.emit(MainWindowEvent::ConnectToAws);
+                            cx.emit(MainWindowEvent::SignIn("aws".to_string()));
                         }
                         ProfilePickerEvent::Dismissed => this.close_overlay(window, cx),
                     },
@@ -692,7 +687,7 @@ impl MainWindow {
             ),
             CommandId::OpenInConsole => self.open_selected_in_console(cx),
             CommandId::RetryFailedRegion => cx.emit(MainWindowEvent::Retry(None)),
-            CommandId::ConnectToAws => cx.emit(MainWindowEvent::ConnectToAws),
+            CommandId::ConnectToAws => cx.emit(MainWindowEvent::SignIn("aws".to_string())),
             CommandId::OpenSettings => cx.emit(MainWindowEvent::OpenSettings),
             CommandId::About => {
                 crate::about_window::open(cx);

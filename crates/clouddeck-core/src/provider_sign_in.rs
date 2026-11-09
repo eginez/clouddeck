@@ -1,6 +1,4 @@
-use std::collections::BTreeMap;
-
-use crate::{AuthInput, AuthStep, Call, FlowId, NoAuth, Provider, ProviderError};
+use crate::{AuthInput, AuthMethod, AuthStep, Call, FlowId, NoAuth, Provider, ProviderError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SignInAction {
@@ -45,21 +43,26 @@ pub fn sign_in_action(step: AuthStep) -> SignInAction {
     }
 }
 
-pub fn start_sign_in(provider: &dyn Provider, call: &Call<'_>) -> Result<AuthStep, ProviderError> {
-    let auth = provider.auth().unwrap_or(&NoAuth);
-    let method = auth
+pub fn first_auth_method(provider: &dyn Provider) -> Result<AuthMethod, ProviderError> {
+    provider
+        .auth()
+        .unwrap_or(&NoAuth)
         .auth_methods()
         .into_iter()
         .next()
-        .ok_or_else(ProviderError::unsupported)?;
-    auth.begin_auth(
-        call,
-        &method,
-        AuthInput {
-            connection: None,
-            values: BTreeMap::new(),
-        },
-    )
+        .ok_or_else(ProviderError::unsupported)
+}
+
+pub fn start_sign_in(
+    provider: &dyn Provider,
+    call: &Call<'_>,
+    method: &AuthMethod,
+    input: AuthInput,
+) -> Result<AuthStep, ProviderError> {
+    provider
+        .auth()
+        .unwrap_or(&NoAuth)
+        .begin_auth(call, method, input)
 }
 
 pub fn sign_in_message(provider_name: &str, action: &SignInAction) -> String {
@@ -84,6 +87,8 @@ pub fn sign_in_failed_message(provider_name: &str, error: &ProviderError) -> Str
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeMap;
+
     use crate::{
         Auth, AuthMethod, Browse, Connection, ConnectionId, Dimension, ErrorKind, FieldDef, Host,
         Instance, KindId, KindInfo, ListResult, LogLevel, ProviderInfo, Selection,
@@ -282,16 +287,28 @@ mod tests {
     }
 
     #[test]
-    fn start_sign_in_without_auth_methods_is_unsupported() {
+    fn a_provider_without_auth_methods_has_no_first_method() {
         let provider = SignInProvider { methods: false };
-        let error = with_test_call(|call| start_sign_in(&provider, call)).unwrap_err();
+        let error = first_auth_method(&provider).unwrap_err();
         assert_eq!(error.kind, ErrorKind::Unsupported);
     }
 
     #[test]
-    fn start_sign_in_begins_the_first_method_without_a_connection() {
+    fn start_sign_in_begins_the_given_method_without_a_connection() {
         let provider = SignInProvider { methods: true };
-        let step = with_test_call(|call| start_sign_in(&provider, call)).unwrap();
+        let method = first_auth_method(&provider).unwrap();
+        let step = with_test_call(|call| {
+            start_sign_in(
+                &provider,
+                call,
+                &method,
+                AuthInput {
+                    connection: None,
+                    values: BTreeMap::new(),
+                },
+            )
+        })
+        .unwrap();
         assert_eq!(
             step,
             device_code("flow-1", Some("https://example.test/complete"))

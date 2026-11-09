@@ -17,28 +17,8 @@ use gpui::{Hsla, rgb};
 pub struct SurgicalTheme;
 
 impl SurgicalTheme {
-    // Tonal surface tiers (lightest/neutral -> most saturated/contrast).
-    pub fn surface() -> Hsla {
-        rgb(0xfafafc).into()
-    }
-    pub fn surface_low() -> Hsla {
-        rgb(0xf1f2f8).into()
-    }
-    pub fn surface_container() -> Hsla {
-        rgb(0xe7e9f2).into()
-    }
-    pub fn surface_high() -> Hsla {
-        rgb(0xdadeeb).into()
-    }
     pub fn workspace_canvas() -> Hsla {
         rgb(0xf9f9fc).into()
-    }
-    // Text / outline colors.
-    pub fn text_primary() -> Hsla {
-        rgb(0x0a0d14).into()
-    }
-    pub fn text_secondary() -> Hsla {
-        rgb(0x474f66).into()
     }
     // Not yet exercised by any ported view — part of the oracle's full
     // text-color palette (`SurgicalTheme.textTertiary`), kept for parity
@@ -49,12 +29,6 @@ impl SurgicalTheme {
     }
 
     // Accent / state colors.
-    pub fn primary() -> Hsla {
-        rgb(0x005bc1).into()
-    }
-    pub fn error() -> Hsla {
-        rgb(0xb74743).into()
-    }
     pub fn warning() -> Hsla {
         rgb(0xbe8519).into()
     }
@@ -68,8 +42,6 @@ pub mod radius {
     // scale (`SurgicalTheme.Radius.small`), kept for parity and future use.
     #[allow(dead_code)]
     pub const SMALL: f32 = 2.0;
-    pub const STANDARD: f32 = 4.0;
-    pub const LARGE: f32 = 12.0;
 }
 
 /// Font sizes/weights, matching `enum SurgicalTypography` in the Swift
@@ -85,28 +57,4 @@ impl SurgicalTypography {
     // use.
     #[allow(dead_code)]
     pub const SECTION_TITLE_SIZE: f32 = 18.0;
-    pub const BODY_SIZE: f32 = 14.0;
-    pub const BODY_EMPHASIS_SIZE: f32 = 14.0;
-    pub const CAPTION_SIZE: f32 = 12.0;
-    pub const LABEL_SIZE: f32 = 11.0;
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn surface_tiers_are_distinct() {
-        let tiers = [
-            SurgicalTheme::surface(),
-            SurgicalTheme::surface_low(),
-            SurgicalTheme::surface_container(),
-            SurgicalTheme::surface_high(),
-        ];
-        for i in 0..tiers.len() {
-            for j in (i + 1)..tiers.len() {
-                assert_ne!(tiers[i], tiers[j], "tiers {i} and {j} should differ");
-            }
-        }
-    }
 }

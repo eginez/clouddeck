@@ -1,7 +1,6 @@
 //! Settings window (design/images/50-59).
 
 use std::collections::BTreeMap;
-use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -17,18 +16,23 @@ use clouddeck_core::{
     settings_search_breadcrumb, shortcut_label, ui_state_path,
 };
 use gpui::{
-    AnyElement, AnyView, App, Bounds, ClickEvent, Context, Div, Entity, EventEmitter, Global,
-    HighlightStyle, IntoElement, ParentElement, PathPromptOptions, Render, SharedString, Stateful,
-    Styled, StyledText, Subscription, TitlebarOptions, Window, WindowBounds, WindowHandle,
-    WindowOptions, div, img, point, prelude::*, px, size, white,
+    AnyElement, AnyView, App, Bounds, ClickEvent, Context, Entity, EventEmitter, Global,
+    IntoElement, ParentElement, PathPromptOptions, Render, SharedString, Styled, Subscription,
+    TitlebarOptions, Window, WindowBounds, WindowHandle, WindowOptions, div, img, point,
+    prelude::*, px, size, white,
 };
+use gpui_component::IndexPath;
 use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::select::{Select, SelectEvent, SelectItem, SelectState};
 use gpui_component::tooltip::Tooltip;
-use gpui_component::{IndexPath, Root, Sizable};
+use gpui_component::{Root, Sizable};
 
 use crate::app_menus;
 use crate::icons::AppIcon;
+use crate::setting_rows::{
+    ProviderChoice, RowParts, button, choice_field, choice_state, display_text, folder_field,
+    folder_is_missing, highlighted, link, setting_row, switch, text_field, text_state,
+};
 use crate::tokens::{Palette, palette};
 
 const SAVE_DEBOUNCE: Duration = Duration::from_millis(300);
@@ -69,6 +73,7 @@ pub enum SettingsEvent {
     },
     RecentSearchesCleared,
     RememberedScopeForgotten,
+    ConnectAgain(String),
 }
 
 pub struct SettingsWindow {
@@ -157,60 +162,12 @@ fn choice(title: impl Into<SharedString>, pick: Pick) -> Choice {
     }
 }
 
-#[derive(Clone)]
-struct ProviderChoice {
-    title: SharedString,
-    value: String,
-}
-
-impl SelectItem for ProviderChoice {
-    type Value = String;
-
-    fn title(&self) -> SharedString {
-        self.title.clone()
-    }
-
-    fn value(&self) -> &String {
-        &self.value
-    }
-}
-
 fn provider_match_count(hits: &[SettingsCategory]) -> usize {
     hits.iter().map(|category| category.settings.len()).sum()
 }
 
 fn field_key(extension: &str, key: &str) -> FieldKey {
     (extension.to_owned(), key.to_owned())
-}
-
-fn folder_is_missing(host_text: Option<String>) -> bool {
-    host_text.is_some_and(|path| !path.is_empty() && !Path::new(&path).is_dir())
-}
-
-fn display_text(value: Option<SettingValue>) -> String {
-    value.map(|value| value.host_text()).unwrap_or_default()
-}
-
-fn unit_suffix(kind: &SettingKind) -> Option<&'static str> {
-    match kind {
-        SettingKind::DurationSecs { .. } => Some("seconds"),
-        _ => None,
-    }
-}
-
-fn button(id: &'static str, label: &'static str, palette: &Palette) -> Stateful<Div> {
-    div()
-        .id(id)
-        .flex_none()
-        .px(px(12.))
-        .py(px(4.))
-        .rounded(px(6.))
-        .border_1()
-        .border_color(palette.line)
-        .bg(palette.surf)
-        .text_size(px(12.))
-        .text_color(palette.text)
-        .child(label)
 }
 
 fn about_row(label: &'static str, value: impl IntoElement, palette: &Palette) -> AnyElement {
@@ -338,51 +295,6 @@ fn groups_for(category: &str) -> Vec<(&'static str, Vec<SettingId>)> {
         }
     }
     groups
-}
-
-fn fold_case(c: char) -> char {
-    c.to_lowercase().next().unwrap_or(c)
-}
-
-fn match_ranges(text: &str, query: &str) -> Vec<Range<usize>> {
-    let needle: Vec<char> = query.trim().chars().map(fold_case).collect();
-    let mut ranges = Vec::new();
-    if needle.is_empty() {
-        return ranges;
-    }
-    let chars: Vec<(usize, char)> = text.char_indices().collect();
-    let mut start = 0;
-    while start + needle.len() <= chars.len() {
-        let hit = chars[start..start + needle.len()]
-            .iter()
-            .zip(&needle)
-            .all(|((_, c), n)| fold_case(*c) == *n);
-        if hit {
-            let begin = chars[start].0;
-            let end = chars
-                .get(start + needle.len())
-                .map_or(text.len(), |(index, _)| *index);
-            ranges.push(begin..end);
-            start += needle.len();
-        } else {
-            start += 1;
-        }
-    }
-    ranges
-}
-
-fn highlighted(text: &str, query: &str, palette: &Palette) -> StyledText {
-    StyledText::new(text.to_owned()).with_highlights(match_ranges(text, query).into_iter().map(
-        |range| {
-            (
-                range,
-                HighlightStyle {
-                    background_color: Some(palette.sel),
-                    ..Default::default()
-                },
-            )
-        },
-    ))
 }
 
 fn provider_groups(defs: &[SettingDef]) -> Vec<(Option<&str>, Vec<&SettingDef>)> {
@@ -538,19 +450,8 @@ impl SettingsWindow {
                 let key = field_key(&category.extension, &def.key);
                 match &def.kind {
                     SettingKind::Choice(options) => {
-                        let items: Vec<ProviderChoice> = options
-                            .iter()
-                            .map(|option| ProviderChoice {
-                                title: option.label.clone().into(),
-                                value: option.value.clone(),
-                            })
-                            .collect();
                         let selected = display_text(providers.setting_value(&key.0, &key.1));
-                        let selected = items
-                            .iter()
-                            .position(|item| item.value == selected)
-                            .map(IndexPath::new);
-                        let state = cx.new(|cx| SelectState::new(items, selected, window, cx));
+                        let state = choice_state(options, &selected, window, cx);
                         let extension = category.extension.clone();
                         let def = def.clone();
                         subscriptions.push(cx.subscribe_in(
@@ -571,12 +472,7 @@ impl SettingsWindow {
                     SettingKind::Bool => {}
                     _ => {
                         let text = display_text(providers.setting_value(&key.0, &key.1));
-                        let masked = def.secret;
-                        let state = cx.new(|cx| {
-                            InputState::new(window, cx)
-                                .default_value(text)
-                                .masked(masked)
-                        });
+                        let state = text_state(text, def.secret, window, cx);
                         let extension = category.extension.clone();
                         let def = def.clone();
                         subscriptions.push(cx.subscribe_in(
@@ -1216,40 +1112,6 @@ impl SettingsWindow {
             .into_any_element()
     }
 
-    fn provider_switch(
-        &self,
-        extension: &str,
-        key: &str,
-        on: bool,
-        palette: &Palette,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let track = div()
-            .w(px(32.))
-            .h(px(18.))
-            .rounded(px(9.))
-            .p(px(2.))
-            .flex()
-            .items_center()
-            .bg(if on { palette.accent } else { palette.line })
-            .when(on, |track| track.justify_end())
-            .child(div().size(px(14.)).rounded(px(7.)).bg(white()));
-        let extension_owned = extension.to_owned();
-        let key_owned = key.to_owned();
-        let selector = format!("settings.provider.control.{extension}.{key}");
-        div()
-            .id(SharedString::from(format!(
-                "settings-switch-{extension}-{key}"
-            )))
-            .debug_selector(move || selector)
-            .cursor_pointer()
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                this.toggle_provider_flag(&extension_owned, &key_owned, cx)
-            }))
-            .child(track)
-            .into_any_element()
-    }
-
     fn provider_control(
         &self,
         extension: &str,
@@ -1265,16 +1127,20 @@ impl SettingsWindow {
                     self.providers.setting_value(extension, &def.key),
                     Some(SettingValue::Bool(true))
                 );
-                self.provider_switch(extension, &def.key, on, palette, cx)
+                let extension_owned = extension.to_owned();
+                let key_owned = def.key.clone();
+                switch(
+                    selector,
+                    on,
+                    palette,
+                    cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        this.toggle_provider_flag(&extension_owned, &key_owned, cx)
+                    }),
+                )
             }
             SettingKind::Choice(_) => {
                 match self.provider_selects.iter().find(|(key, _)| *key == field) {
-                    Some((_, state)) => div()
-                        .debug_selector(move || selector)
-                        .w(px(190.))
-                        .text_color(palette.text)
-                        .child(Select::new(state).menu_width(px(220.)))
-                        .into_any_element(),
+                    Some((_, state)) => choice_field(state, selector, palette),
                     None => div().into_any_element(),
                 }
             }
@@ -1286,26 +1152,7 @@ impl SettingsWindow {
                 None => div().into_any_element(),
             },
             kind => match self.provider_inputs.iter().find(|(key, _)| *key == field) {
-                Some((_, state)) => {
-                    let width = match kind {
-                        SettingKind::Number { .. } | SettingKind::DurationSecs { .. } => 120.,
-                        _ => 260.,
-                    };
-                    let input = div()
-                        .debug_selector(move || selector)
-                        .w(px(width))
-                        .child(Input::new(state).small());
-                    match unit_suffix(kind) {
-                        Some(unit) => div()
-                            .flex()
-                            .items_center()
-                            .gap(px(6.))
-                            .child(input)
-                            .child(div().text_size(px(11.)).text_color(palette.dim).child(unit))
-                            .into_any_element(),
-                        None => input.into_any_element(),
-                    }
-                }
+                Some((_, state)) => text_field(state, kind, selector, palette),
                 None => div().into_any_element(),
             },
         }
@@ -1325,47 +1172,25 @@ impl SettingsWindow {
         let browse_key = key.to_owned();
         let clear_extension = extension.to_owned();
         let clear_key = key.to_owned();
-        div()
-            .flex()
-            .items_center()
-            .gap(px(8.))
-            .child(
-                div()
-                    .debug_selector(move || selector)
-                    .w(px(260.))
-                    .child(Input::new(state).small()),
-            )
-            .child(
-                div()
-                    .id(SharedString::from(format!("settings-browse-{row}")))
-                    .debug_selector({
-                        let selector = format!("settings.provider.browse.{row}");
-                        move || selector
-                    })
-                    .cursor_pointer()
-                    .text_size(px(11.))
-                    .text_color(palette.accent)
-                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                        this.browse_provider_folder(&browse_extension, &browse_key, window, cx)
-                    }))
-                    .child("Browse"),
-            )
-            .child(
-                div()
-                    .id(SharedString::from(format!("settings-clear-{row}")))
-                    .debug_selector({
-                        let selector = format!("settings.provider.clear.{row}");
-                        move || selector
-                    })
-                    .cursor_pointer()
-                    .text_size(px(11.))
-                    .text_color(palette.accent)
-                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                        this.clear_provider_folder(&clear_extension, &clear_key, window, cx)
-                    }))
-                    .child("Clear"),
-            )
-            .into_any_element()
+        let browse = link(
+            format!("settings-browse-{row}"),
+            format!("settings.provider.browse.{row}"),
+            "Browse",
+            palette,
+            cx.listener(move |this, _: &ClickEvent, window, cx| {
+                this.browse_provider_folder(&browse_extension, &browse_key, window, cx)
+            }),
+        );
+        let clear = link(
+            format!("settings-clear-{row}"),
+            format!("settings.provider.clear.{row}"),
+            "Clear",
+            palette,
+            cx.listener(move |this, _: &ClickEvent, window, cx| {
+                this.clear_provider_folder(&clear_extension, &clear_key, window, cx)
+            }),
+        );
+        folder_field(state, selector, browse, clear)
     }
 
     fn provider_setting_row(
@@ -1386,102 +1211,33 @@ impl SettingsWindow {
             && folder_is_missing(self.providers.setting_host_text(extension, &def.key));
         let extension_owned = extension.to_owned();
         let key_owned = def.key.clone();
-        div()
-            .debug_selector({
-                let row = row.clone();
-                move || format!("settings.provider.item.{row}")
-            })
-            .flex()
-            .items_center()
-            .justify_between()
-            .gap(px(16.))
-            .py(px(9.))
-            .border_b_1()
-            .border_color(palette.line)
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .flex_1()
-                    .min_w(px(0.))
-                    .gap(px(2.))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(6.))
-                            .child(div().w(px(2.)).h(px(14.)).rounded(px(1.)).when(
-                                changed,
-                                |bar| {
-                                    let row = row.clone();
-                                    bar.bg(palette.accent).debug_selector(move || {
-                                        format!("settings.provider.changed.{row}")
-                                    })
-                                },
-                            ))
-                            .child(
-                                div()
-                                    .text_size(px(13.))
-                                    .child(highlighted(&def.label, query, palette)),
-                            )
-                            .when(changed, |label| {
-                                let row = row.clone();
-                                label.child(
-                                    div()
-                                        .id(SharedString::from(format!("settings-reset-{row}")))
-                                        .debug_selector(move || {
-                                            format!("settings.provider.reset.{row}")
-                                        })
-                                        .cursor_pointer()
-                                        .text_size(px(11.))
-                                        .text_color(palette.accent)
-                                        .on_click(cx.listener(
-                                            move |this, _: &ClickEvent, window, cx| {
-                                                this.reset_provider_setting(
-                                                    &extension_owned,
-                                                    &key_owned,
-                                                    window,
-                                                    cx,
-                                                )
-                                            },
-                                        ))
-                                        .child("Reset"),
-                                )
-                            }),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(11.))
-                            .text_color(palette.dim)
-                            .child(highlighted(
-                                def.description.as_deref().unwrap_or_default(),
-                                query,
-                                palette,
-                            )),
-                    )
-                    .when_some(error, |column, error| {
-                        let row = row.clone();
-                        column.child(
-                            div()
-                                .debug_selector(move || format!("settings.provider.error.{row}"))
-                                .text_size(px(11.))
-                                .text_color(palette.err)
-                                .child(error),
-                        )
-                    })
-                    .when(missing, |column| {
-                        let row = row.clone();
-                        column.child(
-                            div()
-                                .debug_selector(move || format!("settings.provider.missing.{row}"))
-                                .text_size(px(11.))
-                                .text_color(palette.warn)
-                                .child("Folder not found"),
-                        )
-                    }),
+        let reset = changed.then(|| {
+            link(
+                format!("settings-reset-{row}"),
+                format!("settings.provider.reset.{row}"),
+                "Reset",
+                palette,
+                cx.listener(move |this, _: &ClickEvent, window, cx| {
+                    this.reset_provider_setting(&extension_owned, &key_owned, window, cx)
+                }),
             )
-            .child(self.provider_control(extension, def, palette, cx))
-            .into_any_element()
+        });
+        let control = self.provider_control(extension, def, palette, cx);
+        setting_row(
+            RowParts {
+                scope: "settings.provider",
+                item: format!("settings.provider.item.{row}"),
+                row,
+                def,
+                query,
+                changed,
+                error,
+                missing,
+                reset,
+                control,
+            },
+            palette,
+        )
     }
 
     fn provider_body(
@@ -1490,7 +1246,25 @@ impl SettingsWindow {
         palette: &Palette,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
-        provider_groups(&category.settings)
+        let mut sections = Vec::new();
+        let has_auth = crate::app_providers::providers(cx)
+            .iter()
+            .any(|provider| provider.info().id == category.extension && provider.auth().is_some());
+        if has_auth {
+            let id = category.extension.clone();
+            sections.push(
+                div()
+                    .child(
+                        button("settings-connect-again", "Connect again", palette).on_click(
+                            cx.listener(move |_, _: &ClickEvent, _, cx| {
+                                cx.emit(SettingsEvent::ConnectAgain(id.clone()));
+                            }),
+                        ),
+                    )
+                    .into_any_element(),
+            );
+        }
+        let groups: Vec<AnyElement> = provider_groups(&category.settings)
             .into_iter()
             .map(|(group, defs)| {
                 let rows = defs
@@ -1499,7 +1273,9 @@ impl SettingsWindow {
                     .collect();
                 section(group, rows, palette)
             })
-            .collect()
+            .collect();
+        sections.extend(groups);
+        sections
     }
 
     fn stored_data_section(&self, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
@@ -2159,6 +1935,7 @@ mod tests {
     use gpui::{Entity, TestAppContext, VisualTestContext};
 
     use super::*;
+    use crate::setting_rows::{match_ranges, unit_suffix};
 
     fn rooted(
         cx: &mut TestAppContext,

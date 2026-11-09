@@ -7,9 +7,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use clouddeck_core::about::{AboutInfo, PluginOrigin, PluginRow, PluginStatus};
+use clouddeck_core::extension_host::ProviderRegistry;
 use clouddeck_core::{
-    ALL_PROVIDERS, Connection, ContextModel, Dimension, ErrorKind, Instance, ListView,
-    ProfileInput, Provider, ProviderEntry, ProviderError, Settings, TestScenarioKind,
+    ALL_PROVIDERS, Auth, AuthAnswer, AuthInput, AuthMethod, AuthStep, Browse, Call, Config,
+    ConnectError, Connection, ConnectionId, ContextModel, Dimension, ErrorKind, FieldDef, FlowId,
+    Instance, KindId, KindInfo, ListResult, ListView, Provider, ProviderEntry, ProviderError,
+    ProviderInfo, Selection, SettingDef, SettingKind, Settings, TestScenarioKind,
     all_providers_view, fixture_fleet,
 };
 use gpui::{AppContext, Bounds, Entity, TestAppContext, VisualTestContext, point, px, size};
@@ -17,6 +20,7 @@ use gpui::{AppContext, Bounds, Entity, TestAppContext, VisualTestContext, point,
 use clouddeck_core::extension_manager::plugins::{Action, PluginsViewModel, Tab};
 
 use crate::about_window;
+use crate::connect_window;
 use crate::fleet_state::FleetState;
 use crate::main_window::{MainWindow, window_options};
 use crate::plugins_window;
@@ -27,7 +31,6 @@ use crate::render_state::{DEFAULT_ROW_MENU_ANCHOR, apply_render_state};
 use crate::settings_window;
 use crate::tokens::{ActivePalette, Palette};
 use crate::view_models::InstanceListViewModel;
-use crate::welcome_window::WelcomeWindow;
 
 pub(crate) use crate::render_state::State;
 
@@ -87,7 +90,14 @@ fn service_for(state: State) -> (Arc<dyn Provider>, Vec<String>) {
         | State::OverlayDimensionSingle => {
             unreachable!("provider-list states are built by multi_setup")
         }
-        State::Welcome
+        State::ConnectFolderLight
+        | State::ConnectFolderDark
+        | State::ConnectErrorLight
+        | State::ConnectErrorDark
+        | State::ConnectDeviceCodeLight
+        | State::ConnectDeviceCodeDark
+        | State::ConnectTwoMethodsLight
+        | State::ConnectTwoMethodsDark
         | State::AboutLight
         | State::AboutDark
         | State::AboutRefusedPlugin
@@ -248,31 +258,177 @@ fn context_for(setup: &MultiSetup) -> ContextModel {
     model
 }
 
-/// The three profiles the welcome state lists.
-fn welcome_profiles() -> Vec<ProfileInput> {
-    [
-        ("prod-readonly", "222222222222", "us-east-1"),
-        ("staging-admin", "333333333333", "us-west-2"),
-        ("sandbox", "444444444444", "eu-west-1"),
-    ]
-    .map(|(name, account_id, region)| ProfileInput {
-        name: name.to_string(),
-        account_id: Some(account_id.to_string()),
-        region: Some(region.to_string()),
-    })
-    .to_vec()
+/// A provider whose sign-in methods and settings the Connect states draw; it never signs in.
+struct ConnectFixture {
+    methods: Vec<AuthMethod>,
 }
 
-/// Opens the welcome window at the given size and returns its context.
-fn open_welcome(width: f32, height: f32, cx: &mut TestAppContext) -> &mut VisualTestContext {
-    let bounds = Bounds::new(point(px(0.0), px(0.0)), size(px(width), px(height)));
-    let window = cx.update(|cx| {
-        cx.open_window(window_options(bounds), |window, cx| {
-            gpui_component::init(cx);
-            let welcome = cx.new(|cx| WelcomeWindow::new(welcome_profiles(), window, cx));
-            cx.new(|cx| gpui_component::Root::new(welcome, window, cx))
+fn connect_method(id: &str, label: &str, settings: &[&str]) -> AuthMethod {
+    let mut method = AuthMethod::new(id.to_string(), label.to_string());
+    method.settings = settings.iter().map(|key| key.to_string()).collect();
+    method
+}
+
+fn connect_setting(key: &str, label: &str, kind: SettingKind, secret: bool) -> SettingDef {
+    SettingDef {
+        key: key.to_string(),
+        label: label.to_string(),
+        description: None,
+        group: None,
+        kind,
+        default: None,
+        secret,
+    }
+}
+
+impl ConnectFixture {
+    fn for_state(state: State) -> Self {
+        let methods = match state {
+            State::ConnectFolderLight | State::ConnectFolderDark => {
+                vec![connect_method("browser", "Browser", &["config_dir"])]
+            }
+            State::ConnectErrorLight | State::ConnectErrorDark => {
+                vec![connect_method(
+                    "browser",
+                    "Browser",
+                    &["config_dir", "region"],
+                )]
+            }
+            State::ConnectDeviceCodeLight | State::ConnectDeviceCodeDark => {
+                vec![connect_method("device", "Device code", &[])]
+            }
+            _ => vec![
+                connect_method("browser", "Browser", &["region"]),
+                connect_method("token", "Access token", &["token"]),
+            ],
+        };
+        Self { methods }
+    }
+}
+
+impl Provider for ConnectFixture {
+    fn info(&self) -> ProviderInfo {
+        ProviderInfo {
+            id: "fixture".to_string(),
+            name: "Fixture Cloud".to_string(),
+            version: "0".to_string(),
+            connection_label: "Project".to_string(),
+        }
+    }
+
+    fn auth(&self) -> Option<&dyn Auth> {
+        Some(self)
+    }
+
+    fn config(&self) -> Option<&dyn Config> {
+        Some(self)
+    }
+}
+
+impl Browse for ConnectFixture {
+    fn connections(&self, _cx: &Call<'_>) -> Result<Vec<Connection>, ProviderError> {
+        Ok(vec![])
+    }
+
+    fn dimensions(
+        &self,
+        _cx: &Call<'_>,
+        _connection: &ConnectionId,
+    ) -> Result<Vec<Dimension>, ProviderError> {
+        Ok(vec![])
+    }
+
+    fn kinds(&self) -> Vec<KindInfo> {
+        vec![]
+    }
+
+    fn list(
+        &self,
+        _cx: &Call<'_>,
+        _connection: &ConnectionId,
+        _kind: &KindId,
+        _selection: &Selection,
+    ) -> ListResult {
+        ListResult::default()
+    }
+
+    fn console_url(
+        &self,
+        _connection: &ConnectionId,
+        _kind: &KindId,
+        _resource: &Instance,
+    ) -> Option<String> {
+        None
+    }
+
+    fn fields(&self, _kind: &KindId) -> Vec<FieldDef> {
+        vec![]
+    }
+}
+
+impl Auth for ConnectFixture {
+    fn auth_methods(&self) -> Vec<AuthMethod> {
+        self.methods.clone()
+    }
+
+    fn begin_auth(
+        &self,
+        _cx: &Call<'_>,
+        _method: &AuthMethod,
+        _input: AuthInput,
+    ) -> Result<AuthStep, ProviderError> {
+        Err(ProviderError::unsupported())
+    }
+
+    fn continue_auth(
+        &self,
+        _cx: &Call<'_>,
+        _flow: &FlowId,
+        _answer: AuthAnswer,
+    ) -> Result<AuthStep, ProviderError> {
+        Err(ProviderError::unsupported())
+    }
+}
+
+impl Config for ConnectFixture {
+    fn settings(&self) -> Vec<SettingDef> {
+        vec![
+            connect_setting("config_dir", "Config folder", SettingKind::Folder, false),
+            connect_setting("region", "Region", SettingKind::Text, false),
+            connect_setting("token", "Token", SettingKind::Text, true),
+        ]
+    }
+}
+
+/// Opens the Connect window for `state` and returns its context.
+fn open_connect(state: State, cx: &mut TestAppContext) -> &mut VisualTestContext {
+    let dark = matches!(
+        state,
+        State::ConnectFolderDark
+            | State::ConnectErrorDark
+            | State::ConnectDeviceCodeDark
+            | State::ConnectTwoMethodsDark
+    );
+    cx.update(|app| app.set_global(ActivePalette(Palette::for_dark(dark))));
+    let providers: Vec<Arc<dyn Provider>> = vec![Arc::new(ConnectFixture::for_state(state))];
+    let registry = Arc::new(ProviderRegistry::default());
+    let window = cx.update(|app| {
+        gpui_component::init(app);
+        connect_window::open_window_for(app, providers, registry, "fixture", move |view, _| {
+            match state {
+                State::ConnectErrorLight | State::ConnectErrorDark => {
+                    view.show_error(ConnectError {
+                        message: "The access token was rejected".to_string(),
+                        advice: Some("Check the token and try again.".to_string()),
+                    })
+                }
+                State::ConnectDeviceCodeLight | State::ConnectDeviceCodeDark => {
+                    view.show_waiting("ABCD-1234", "https://example.test/device")
+                }
+                _ => {}
+            }
         })
-        .unwrap()
+        .expect("connect window opens")
     });
     let cx = VisualTestContext::from_window(window.into(), cx).into_mut();
     cx.run_until_parked();
@@ -526,7 +682,7 @@ fn open_settings(
     cx
 }
 
-/// Builds `state` in a fresh window; the welcome, About, Plugins and Settings states return no fleet or main window.
+/// Builds `state` in a fresh window; the Connect, About, Plugins and Settings states return no fleet or main window.
 pub(crate) fn build(
     state: State,
     width: f32,
@@ -537,8 +693,8 @@ pub(crate) fn build(
     Option<Entity<MainWindow>>,
     &mut VisualTestContext,
 ) {
-    if state == State::Welcome {
-        return (None, None, open_welcome(width, height, cx));
+    if state.is_connect() {
+        return (None, None, open_connect(state, cx));
     }
     if state.is_about() {
         return (None, None, open_about(state, cx));
@@ -684,7 +840,7 @@ mod tests {
     /// One key element per state that `apply_render_state` must produce.
     #[gpui::test]
     fn every_state_shows_its_key_element(cx: &mut TestAppContext) {
-        let key_elements: [(State, &str); 64] = [
+        let key_elements: [(State, &str); 72] = [
             (State::MainIdle, "main.root"),
             (State::MainRowSelected, "main.inspector"),
             (State::MainEmpty, "main.center-state"),
@@ -721,6 +877,14 @@ mod tests {
             (State::MainGcpActiveDark, "table.header.0"),
             (State::OverlayDimensionTree, "main.overlay.region"),
             (State::OverlayDimensionSingle, "dimension-picker.row.0"),
+            (State::ConnectFolderLight, "connect.browse.config_dir"),
+            (State::ConnectFolderDark, "connect.browse.config_dir"),
+            (State::ConnectErrorLight, "connect.error"),
+            (State::ConnectErrorDark, "connect.error"),
+            (State::ConnectDeviceCodeLight, "connect.code"),
+            (State::ConnectDeviceCodeDark, "connect.code"),
+            (State::ConnectTwoMethodsLight, "connect.method.1"),
+            (State::ConnectTwoMethodsDark, "connect.method.1"),
             (State::AboutLight, "about.title"),
             (State::AboutDark, "about.title"),
             (State::AboutRefusedPlugin, "about.title"),
@@ -783,11 +947,7 @@ mod tests {
                 "settings.provider.missing.toy.config_dir",
             ),
         ];
-        assert_eq!(
-            key_elements.len() + 1,
-            State::ALL.len(),
-            "Welcome has no main window"
-        );
+        assert_eq!(key_elements.len(), State::ALL.len());
         for (state, selector) in key_elements {
             let (_fleet, _main, window_cx) = build(state, 1280.0, 760.0, cx);
             assert!(
@@ -930,14 +1090,5 @@ mod tests {
         let (_fleet, _main, cx) = build(State::OverlayColumnMenu, 1280.0, 760.0, cx);
 
         assert!(cx.debug_bounds("table.columns.menu").is_some());
-    }
-
-    #[gpui::test]
-    fn welcome_lists_the_profiles_with_search(cx: &mut TestAppContext) {
-        let (fleet, main, cx) = build(State::Welcome, 1280.0, 760.0, cx);
-
-        assert!(fleet.is_none() && main.is_none());
-        assert!(cx.debug_bounds("welcome.search").is_some());
-        assert!(cx.debug_bounds("welcome.profile.2").is_some());
     }
 }

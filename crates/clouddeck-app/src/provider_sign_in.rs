@@ -1,91 +1,77 @@
-//! Runs a provider's generic sign-in flow (`begin_auth` / `continue_auth`) and
-//! reports progress in the fleet's status flash. The pure step-to-message logic
-//! lives in clouddeck-core's `provider_sign_in`.
+//! Drives a provider's generic sign-in flow (`continue_auth`) from the first step
+//! `begin_auth` returned, reporting each step to the Connect window. The
+//! step-to-action logic lives in clouddeck-core's `provider_sign_in`.
 
-use std::cell::RefCell;
-use std::collections::HashSet;
-use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
 
 use clouddeck_core::{
     AuthAnswer, AuthStep, ErrorKind, FlowId, NoAuth, Provider, ProviderError, SignInAction,
-    sign_in_action, sign_in_failed_message, sign_in_message, start_sign_in,
+    sign_in_action,
 };
-use gpui::{App, AsyncApp, Entity};
+use gpui::AsyncApp;
 
-use crate::account_connect::{off_thread, with_call};
-use crate::fleet_state::FleetState;
+use crate::provider_call::{off_thread, with_call};
 
-/// Starts `provider`'s sign-in unless one is already running for it. Returns
-/// whether a new flow started. `on_signed_in` runs only when the flow completes.
-pub fn begin_provider_sign_in(
-    provider: Arc<dyn Provider>,
-    fleet: Entity<FleetState>,
-    in_flight: Rc<RefCell<HashSet<String>>>,
-    on_signed_in: impl FnOnce(&mut App) + 'static,
-    cx: &mut App,
-) -> bool {
-    let id = provider.info().id;
-    if !in_flight.borrow_mut().insert(id.clone()) {
-        return false;
-    }
-    cx.spawn(async move |cx| {
-        let signed_in = drive(provider, &fleet, cx).await;
-        in_flight.borrow_mut().remove(&id);
-        if signed_in {
-            let _ = cx.update(on_signed_in);
-        }
-    })
-    .detach();
-    true
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum Progress {
+    Action(SignInAction),
+    Failed(ProviderError),
 }
 
-async fn drive(provider: Arc<dyn Provider>, fleet: &Entity<FleetState>, cx: &mut AsyncApp) -> bool {
-    let name = provider.info().name;
+/// Returns whether the flow signed in. `report` returns `false` to stop the flow; the
+/// driver then cancels it at the provider.
+pub(crate) async fn drive(
+    provider: Arc<dyn Provider>,
+    first: AuthStep,
+    mut report: impl FnMut(Progress, &mut AsyncApp) -> bool,
+    cx: &mut AsyncApp,
+) -> bool {
     let mut opened: Vec<FlowId> = Vec::new();
     let mut deadline: Option<Instant> = None;
-    let mut step = match off_thread(cx, {
-        let provider = provider.clone();
-        move || with_call(|call| start_sign_in(provider.as_ref(), call))
-    })
-    .await
-    {
-        Ok(step) => step,
-        Err(error) => {
-            show(fleet, sign_in_failed_message(&name, &error), cx);
-            return false;
-        }
-    };
+    let mut step = first;
     loop {
         if let AuthStep::DeviceCode { expires_in, .. } = &step {
             deadline.get_or_insert_with(|| Instant::now() + *expires_in);
         }
         let action = sign_in_action(step);
-        let message = sign_in_message(&name, &action);
         match action {
             SignInAction::Finish => {
-                show(fleet, message, cx);
+                report(Progress::Action(action), cx);
                 return true;
             }
             SignInAction::NeedsInput { flow } => {
                 cancel_flow(provider.clone(), flow, cx).await;
-                show(fleet, message, cx);
+                report(
+                    Progress::Failed(ProviderError::new(
+                        ErrorKind::Unsupported,
+                        "the sign-in asks for input CloudDeck cannot show yet",
+                    )),
+                    cx,
+                );
                 return false;
             }
             SignInAction::OpenBrowser {
-                flow, url, poll, ..
+                ref flow,
+                ref url,
+                poll,
+                ..
             } => {
+                let flow = flow.clone();
+                if !report(Progress::Action(action.clone()), cx) {
+                    cancel_flow(provider.clone(), flow, cx).await;
+                    return false;
+                }
                 if !opened.contains(&flow) {
                     opened.push(flow.clone());
-                    let _ = cx.update(|cx| cx.open_url(&url));
+                    let _ = cx.update(|cx| cx.open_url(url));
                 }
-                if !show(fleet, message, cx) || !poll {
+                if !poll {
                     return false;
                 }
                 if deadline_passed(deadline) {
                     cancel_flow(provider.clone(), flow, cx).await;
-                    show(fleet, sign_in_failed_message(&name, &expired_error()), cx);
+                    report(Progress::Failed(expired_error()), cx);
                     return false;
                 }
                 let polled = off_thread(cx, {
@@ -104,7 +90,7 @@ async fn drive(provider: Arc<dyn Provider>, fleet: &Entity<FleetState>, cx: &mut
                 match polled {
                     Ok(next) => step = next,
                     Err(error) => {
-                        show(fleet, sign_in_failed_message(&name, &error), cx);
+                        report(Progress::Failed(error), cx);
                         return false;
                     }
                 }
@@ -133,43 +119,31 @@ pub(crate) async fn cancel_flow(provider: Arc<dyn Provider>, flow: FlowId, cx: &
     .await;
 }
 
-/// Returns `false` once the fleet has been dropped, so the flow can stop.
-fn show(fleet: &Entity<FleetState>, text: String, cx: &mut AsyncApp) -> bool {
-    fleet
-        .update(cx, |fleet, cx| fleet.set_flash(text, cx))
-        .is_ok()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::cell::Cell;
+    use std::cell::{Cell, RefCell};
     use std::collections::VecDeque;
+    use std::rc::Rc;
     use std::sync::Mutex;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
 
     use clouddeck_core::{
-        Auth, AuthInput, AuthMethod, AuthStep, Browse, Call, Connection, ConnectionId, Dimension,
-        ErrorKind, FieldDef, Instance, InstanceListViewModel, KindId, KindInfo, ListResult,
-        ProviderError, ProviderInfo, Selection,
+        Auth, AuthInput, AuthMethod, Browse, Call, Connection, ConnectionId, Dimension, FieldDef,
+        Instance, KindId, KindInfo, ListResult, ProviderInfo, Selection,
     };
-    use gpui::{AppContext as _, TestAppContext};
+    use gpui::TestAppContext;
 
     struct FakeSignIn {
-        begin: Result<AuthStep, ProviderError>,
         polls: Mutex<VecDeque<AuthStep>>,
         answers: Mutex<Vec<AuthAnswer>>,
-        begin_calls: AtomicUsize,
     }
 
     impl FakeSignIn {
-        fn new(begin: Result<AuthStep, ProviderError>, polls: Vec<AuthStep>) -> Arc<Self> {
+        fn new(polls: Vec<AuthStep>) -> Arc<Self> {
             Arc::new(Self {
-                begin,
                 polls: Mutex::new(polls.into()),
                 answers: Mutex::new(Vec::new()),
-                begin_calls: AtomicUsize::new(0),
             })
         }
 
@@ -248,8 +222,7 @@ mod tests {
             _method: &AuthMethod,
             _input: AuthInput,
         ) -> Result<AuthStep, ProviderError> {
-            self.begin_calls.fetch_add(1, Ordering::SeqCst);
-            self.begin.clone()
+            Err(ProviderError::unsupported())
         }
 
         fn continue_auth(
@@ -267,187 +240,113 @@ mod tests {
         }
     }
 
-    fn device_code(complete_url: Option<&str>) -> AuthStep {
+    fn device_code(expires_in: Duration) -> AuthStep {
         AuthStep::DeviceCode {
             flow: FlowId::from("flow-1"),
             code: "ABCD".to_string(),
             url: "https://example.test/device".to_string(),
-            complete_url: complete_url.map(str::to_string),
-            expires_in: Duration::from_secs(900),
+            complete_url: Some("https://example.test/complete".to_string()),
+            expires_in,
         }
     }
 
-    fn fleet_for(cx: &mut TestAppContext, provider: Arc<dyn Provider>) -> Entity<FleetState> {
-        cx.new(|_| FleetState::new(InstanceListViewModel::new(provider), "p".into(), false))
+    struct Run {
+        reports: Rc<RefCell<Vec<Progress>>>,
+        signed_in: Rc<Cell<Option<bool>>>,
     }
 
-    fn start(
+    fn run(
         cx: &mut TestAppContext,
         provider: &Arc<FakeSignIn>,
-        fleet: &Entity<FleetState>,
-        in_flight: &Rc<RefCell<HashSet<String>>>,
-    ) -> bool {
+        first: AuthStep,
+        keep_going: bool,
+    ) -> Run {
+        let reports = Rc::new(RefCell::new(Vec::new()));
+        let signed_in = Rc::new(Cell::new(None));
         let provider: Arc<dyn Provider> = provider.clone();
+        let sink = reports.clone();
+        let result = signed_in.clone();
         cx.update(|cx| {
-            begin_provider_sign_in(provider, fleet.clone(), in_flight.clone(), |_| {}, cx)
-        })
-    }
-
-    fn flash(cx: &mut TestAppContext, fleet: &Entity<FleetState>) -> Option<String> {
-        fleet.read_with(cx, |fleet, _| fleet.flash.clone())
+            cx.spawn(async move |cx| {
+                let done = drive(
+                    provider,
+                    first,
+                    move |progress, _| {
+                        sink.borrow_mut().push(progress);
+                        keep_going
+                    },
+                    cx,
+                )
+                .await;
+                result.set(Some(done));
+            })
+            .detach();
+        });
+        cx.run_until_parked();
+        Run { reports, signed_in }
     }
 
     #[gpui::test]
-    fn device_code_flow_opens_the_url_polls_until_done(cx: &mut TestAppContext) {
-        let provider = FakeSignIn::new(
-            Ok(device_code(Some("https://example.test/complete"))),
-            vec![device_code(None), AuthStep::Done],
-        );
-        let fleet = fleet_for(cx, provider.clone());
-        let in_flight = Rc::default();
+    fn device_code_opens_the_url_and_polls_until_done(cx: &mut TestAppContext) {
+        let provider = FakeSignIn::new(vec![AuthStep::Done]);
+        let run = run(cx, &provider, device_code(Duration::from_secs(900)), true);
 
-        assert!(start(cx, &provider, &fleet, &in_flight));
-        cx.run_until_parked();
-
-        assert_eq!(
-            flash(cx, &fleet).as_deref(),
-            Some("Signed in to Fake Cloud")
-        );
+        assert_eq!(run.signed_in.get(), Some(true));
         assert_eq!(
             cx.opened_url().as_deref(),
             Some("https://example.test/complete")
         );
-        assert_eq!(provider.answers(), vec![AuthAnswer::Poll, AuthAnswer::Poll]);
-        assert!(in_flight.borrow().is_empty());
+        assert_eq!(provider.answers(), vec![AuthAnswer::Poll]);
+        assert_eq!(
+            *run.reports.borrow(),
+            vec![
+                Progress::Action(SignInAction::OpenBrowser {
+                    flow: FlowId::from("flow-1"),
+                    url: "https://example.test/complete".to_string(),
+                    code: Some("ABCD".to_string()),
+                    poll: true,
+                }),
+                Progress::Action(SignInAction::Finish),
+            ]
+        );
     }
 
     #[gpui::test]
     fn device_code_past_its_expiry_is_cancelled_and_reported(cx: &mut TestAppContext) {
-        let expired = AuthStep::DeviceCode {
-            flow: FlowId::from("flow-1"),
-            code: "ABCD".to_string(),
-            url: "https://example.test/device".to_string(),
-            complete_url: None,
-            expires_in: Duration::ZERO,
-        };
-        let provider = FakeSignIn::new(Ok(expired), vec![AuthStep::Done]);
-        let fleet = fleet_for(cx, provider.clone());
-        let in_flight = Rc::default();
+        let provider = FakeSignIn::new(vec![AuthStep::Done]);
+        let run = run(cx, &provider, device_code(Duration::ZERO), true);
 
-        assert!(start(cx, &provider, &fleet, &in_flight));
-        cx.run_until_parked();
-
+        assert_eq!(run.signed_in.get(), Some(false));
         assert_eq!(provider.answers(), vec![AuthAnswer::Cancel]);
         assert_eq!(
-            flash(cx, &fleet).as_deref(),
-            Some("Fake Cloud sign-in failed: the sign-in code expired")
+            run.reports.borrow().last(),
+            Some(&Progress::Failed(expired_error()))
         );
-        assert!(in_flight.borrow().is_empty());
+    }
+
+    #[gpui::test]
+    fn a_report_that_stops_the_flow_cancels_it_at_the_provider(cx: &mut TestAppContext) {
+        let provider = FakeSignIn::new(vec![AuthStep::Done]);
+        let run = run(cx, &provider, device_code(Duration::from_secs(900)), false);
+
+        assert_eq!(run.signed_in.get(), Some(false));
+        assert_eq!(provider.answers(), vec![AuthAnswer::Cancel]);
     }
 
     #[gpui::test]
     fn prompt_flow_is_cancelled_and_reported(cx: &mut TestAppContext) {
-        let provider = FakeSignIn::new(
-            Ok(AuthStep::Prompt {
-                flow: FlowId::from("flow-2"),
-                fields: vec![],
-            }),
-            vec![],
-        );
-        let fleet = fleet_for(cx, provider.clone());
-        let in_flight = Rc::default();
+        let provider = FakeSignIn::new(vec![]);
+        let first = AuthStep::Prompt {
+            flow: FlowId::from("flow-2"),
+            fields: vec![],
+        };
+        let run = run(cx, &provider, first, true);
 
-        assert!(start(cx, &provider, &fleet, &in_flight));
-        cx.run_until_parked();
-
+        assert_eq!(run.signed_in.get(), Some(false));
         assert_eq!(provider.answers(), vec![AuthAnswer::Cancel]);
-        assert_eq!(
-            flash(cx, &fleet).as_deref(),
-            Some("Fake Cloud sign-in needs input CloudDeck cannot show yet")
-        );
-        assert!(in_flight.borrow().is_empty());
-    }
-
-    #[gpui::test]
-    fn begin_error_is_reported_as_a_failed_sign_in(cx: &mut TestAppContext) {
-        let provider = FakeSignIn::new(
-            Err(ProviderError::new(ErrorKind::Auth, "token expired")),
-            vec![],
-        );
-        let fleet = fleet_for(cx, provider.clone());
-        let in_flight = Rc::default();
-
-        assert!(start(cx, &provider, &fleet, &in_flight));
-        cx.run_until_parked();
-
-        assert_eq!(
-            flash(cx, &fleet).as_deref(),
-            Some("Fake Cloud sign-in failed: token expired")
-        );
-        assert!(provider.answers().is_empty());
-        assert!(in_flight.borrow().is_empty());
-    }
-
-    #[gpui::test]
-    fn a_second_start_is_ignored_while_a_flow_is_in_flight(cx: &mut TestAppContext) {
-        let provider = FakeSignIn::new(Ok(AuthStep::Done), vec![]);
-        let fleet = fleet_for(cx, provider.clone());
-        let in_flight: Rc<RefCell<HashSet<String>>> = Rc::default();
-        in_flight.borrow_mut().insert("fake".to_string());
-
-        assert!(!start(cx, &provider, &fleet, &in_flight));
-        cx.run_until_parked();
-
-        assert_eq!(provider.begin_calls.load(Ordering::SeqCst), 0);
-        assert!(flash(cx, &fleet).is_none());
-    }
-
-    fn run_flow_counting_signed_in(
-        cx: &mut TestAppContext,
-        provider: &Arc<FakeSignIn>,
-    ) -> Rc<Cell<usize>> {
-        let fleet = fleet_for(cx, provider.clone());
-        let in_flight = Rc::default();
-        let calls = Rc::new(Cell::new(0));
-        let counter = calls.clone();
-        let provider: Arc<dyn Provider> = provider.clone();
-        cx.update(|cx| {
-            begin_provider_sign_in(
-                provider,
-                fleet,
-                in_flight,
-                move |_: &mut App| counter.set(counter.get() + 1),
-                cx,
-            )
-        });
-        cx.run_until_parked();
-        calls
-    }
-
-    #[gpui::test]
-    fn finishing_the_flow_runs_the_signed_in_callback(cx: &mut TestAppContext) {
-        let provider = FakeSignIn::new(Ok(device_code(None)), vec![AuthStep::Done]);
-        assert_eq!(run_flow_counting_signed_in(cx, &provider).get(), 1);
-    }
-
-    #[gpui::test]
-    fn a_failed_flow_does_not_run_the_signed_in_callback(cx: &mut TestAppContext) {
-        let provider = FakeSignIn::new(
-            Err(ProviderError::new(ErrorKind::Auth, "token expired")),
-            vec![],
-        );
-        assert_eq!(run_flow_counting_signed_in(cx, &provider).get(), 0);
-    }
-
-    #[gpui::test]
-    fn the_flow_id_is_released_once_it_finishes(cx: &mut TestAppContext) {
-        let provider = FakeSignIn::new(Ok(AuthStep::Done), vec![]);
-        let fleet = fleet_for(cx, provider.clone());
-        let in_flight = Rc::default();
-
-        assert!(start(cx, &provider, &fleet, &in_flight));
-        cx.run_until_parked();
-        assert!(!in_flight.borrow().contains("fake"));
-        assert!(start(cx, &provider, &fleet, &in_flight));
+        assert!(matches!(
+            run.reports.borrow().as_slice(),
+            [Progress::Failed(error)] if error.kind == ErrorKind::Unsupported
+        ));
     }
 }

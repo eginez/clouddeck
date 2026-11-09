@@ -261,6 +261,10 @@ back as a `ProviderError` with its message and advice. `AuthStep::Prompt`, `Open
 stay for one-off steps such as a code to type or a browser to open. Conformance checks that auth
 method ids are unique and that every key in `settings` is declared by `settings()`.
 
+The app draws one Connect window for every provider with `auth()`, from its `auth_methods()` and
+these settings. The workspace's current connection for that provider, if any, is passed as
+`AuthInput.connection`.
+
 ## Deadlines
 
 Each provider call runs on its own thread. When the deadline passes the call returns a timeout
