@@ -100,10 +100,7 @@ fn auth_is_a_no_op_sign_in() {
         Ok(AuthStep::Done)
     );
 
-    let sso = AuthMethod {
-        id: "sso".to_string(),
-        label: "SSO".to_string(),
-    };
+    let sso = AuthMethod::new("sso".to_string(), "SSO".to_string());
     assert_eq!(
         provider
             .begin_auth(&call(), &sso, input())

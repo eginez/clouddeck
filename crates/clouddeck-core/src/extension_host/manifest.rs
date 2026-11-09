@@ -190,12 +190,13 @@ fn setting_def(table: &SettingTable) -> Result<SettingDef, String> {
         Ok(())
     };
     let (kind, secret) = match table.kind.as_str() {
-        "text" | "path" | "bool" => {
+        "text" | "path" | "folder" | "bool" => {
             no_bounds()?;
             no_options()?;
             let kind = match table.kind.as_str() {
                 "text" => SettingKind::Text,
                 "path" => SettingKind::Path,
+                "folder" => SettingKind::Folder,
                 _ => SettingKind::Bool,
             };
             (kind, false)
@@ -235,7 +236,7 @@ fn setting_def(table: &SettingTable) -> Result<SettingDef, String> {
         }
         other => {
             return Err(format!(
-                "setting {key}: unknown kind {other:?}; use text, path, choice, bool, number, duration_secs or secret"
+                "setting {key}: unknown kind {other:?}; use text, path, folder, choice, bool, number, duration_secs or secret"
             ));
         }
     };
@@ -292,10 +293,12 @@ fn default_value(
             .ok_or_else(mismatch);
     }
     match kind {
-        SettingKind::Text | SettingKind::Path | SettingKind::Choice(_) => value
-            .as_str()
-            .map(|text| SettingValue::Text(text.to_string()))
-            .ok_or_else(mismatch),
+        SettingKind::Text | SettingKind::Path | SettingKind::Folder | SettingKind::Choice(_) => {
+            value
+                .as_str()
+                .map(|text| SettingValue::Text(text.to_string()))
+                .ok_or_else(mismatch)
+        }
         SettingKind::Bool => value.as_bool().map(SettingValue::Bool).ok_or_else(mismatch),
         SettingKind::Number { .. } => toml_number(value)
             .map(SettingValue::Number)
@@ -333,7 +336,7 @@ id = "toy"
 name = "Toy"
 version = "0.1.0"
 schema_version = 1
-api_version = 5
+api_version = 6
 authors = ["Esteban"]
 
 [providers.toy]
@@ -382,6 +385,30 @@ kind = "secrets"
     #[test]
     fn previous_api_version_is_refused_with_rebuild_message() {
         let text = MANIFEST.replace(
+            &format!("api_version = {API_VERSION}"),
+            &format!("api_version = {}", API_VERSION - 1),
+        );
+        let manifest = Manifest::parse(&text).unwrap();
+        let message = manifest.check_api(API_VERSION, "0.3.0").unwrap_err();
+        assert!(
+            message.contains("Rebuild toy for CloudDeck 0.3.0"),
+            "{message}"
+        );
+    }
+
+    const FOLDER_SETTING: &str =
+        "\n[[settings]]\nkey = \"config_dir\"\nlabel = \"Config folder\"\nkind = \"folder\"\n";
+
+    #[test]
+    fn folder_setting_parses_as_a_folder_without_a_default() {
+        let manifest = Manifest::parse(&format!("{MANIFEST}{FOLDER_SETTING}")).unwrap();
+        assert_eq!(manifest.settings[0].kind, SettingKind::Folder);
+        assert_eq!(manifest.settings[0].default, None);
+    }
+
+    #[test]
+    fn previous_api_version_refuses_a_manifest_with_a_folder_setting() {
+        let text = format!("{MANIFEST}{FOLDER_SETTING}").replace(
             &format!("api_version = {API_VERSION}"),
             &format!("api_version = {}", API_VERSION - 1),
         );

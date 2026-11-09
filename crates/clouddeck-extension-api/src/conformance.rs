@@ -10,8 +10,9 @@ use std::time::{Duration, Instant};
 
 use clouddeck_provider_api::{
     AuthAnswer, AuthInput, AuthMethod, AuthStatus, AuthStep, Call, ConnectionId, Dimension,
-    DimensionId, ErrorKind, FlowId, Host, Instance, KindId, ListResult, LogLevel, Provider,
-    ProviderError, ResourceId, Selection, SettingDef, ValueId, settings_mismatches,
+    DimensionId, ErrorKind, FlowId, Host, Instance, KindId, ListResult, LogLevel, PromptField,
+    PromptKind, Provider, ProviderError, ResourceId, Selection, SettingDef, ValueId,
+    settings_mismatches,
 };
 
 const MISSING: &str = "conformance-no-such-value";
@@ -483,6 +484,11 @@ fn check_auth(p: &dyn Provider, cx: &Call<'_>, r: &mut Report) {
         .unwrap_or_default();
     r.unique("auth_methods()", methods.iter().map(|m| m.id.clone()));
     for method in &methods {
+        check_fields(
+            r,
+            &format!("auth method {} initial_fields", method.id),
+            &method.initial_fields,
+        );
         check_auth_flow(p, cx, r, None, method);
         check_auth_flow(p, cx, r, Some(&conn), method);
     }
@@ -501,6 +507,55 @@ fn is_signed_out(p: &dyn Provider, cx: &Call<'_>, conn: Option<&ConnectionId>) -
         catch_unwind(AssertUnwindSafe(|| p.auth_status(cx, conn))),
         Ok(AuthStatus::SignedOut)
     )
+}
+
+fn check_fields(r: &mut Report, what: &str, fields: &[PromptField]) {
+    r.unique(what, fields.iter().map(|f| f.id.clone()));
+    for field in fields {
+        if let Err(error) = field.check() {
+            r.fail(format!("{what}: {error}"));
+        }
+    }
+}
+
+/// A value the kit can submit for `field` that a well-behaved provider accepts.
+fn sample_value(field: &PromptField) -> String {
+    match field.kind {
+        PromptKind::Choice => field
+            .default
+            .clone()
+            .or_else(|| field.options.first().map(|o| o.value.clone()))
+            .unwrap_or_default(),
+        PromptKind::Folder => "/tmp".into(),
+        _ => "x".into(),
+    }
+}
+
+fn submitted(fields: &[PromptField]) -> BTreeMap<String, String> {
+    fields
+        .iter()
+        .filter(|f| f.kind != PromptKind::Note)
+        .map(|f| (f.id.clone(), sample_value(f)))
+        .collect()
+}
+
+fn check_refresh(
+    p: &dyn Provider,
+    cx: &Call<'_>,
+    r: &mut Report,
+    flow: &FlowId,
+    fields: &[PromptField],
+) {
+    let values = submitted(fields);
+    for field in fields.iter().filter(|f| f.refresh_on_change) {
+        let answer = AuthAnswer::Change {
+            field: field.id.clone(),
+            values: values.clone(),
+        };
+        r.ok(&format!("continue_auth() refresh of {}", field.id), || {
+            p.continue_auth(cx, flow, answer)
+        });
+    }
 }
 
 fn check_auth_flow(
@@ -535,10 +590,11 @@ fn check_auth_flow(
     for _ in 0..4 {
         let (flow, answer) = match &step {
             AuthStep::Done => return,
-            AuthStep::Prompt { flow, fields } => (
-                flow.clone(),
-                AuthAnswer::Values(fields.iter().map(|f| (f.id.clone(), "x".into())).collect()),
-            ),
+            AuthStep::Prompt { flow, fields, .. } => {
+                check_fields(r, &format!("auth method {} prompt", method.id), fields);
+                check_refresh(p, cx, r, flow, fields);
+                (flow.clone(), AuthAnswer::Values(submitted(fields)))
+            }
             AuthStep::OpenUrl { flow, .. } | AuthStep::DeviceCode { flow, .. } => {
                 (flow.clone(), AuthAnswer::Poll)
             }

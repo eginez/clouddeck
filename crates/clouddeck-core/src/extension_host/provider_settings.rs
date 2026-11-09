@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use clouddeck_provider_api::{SettingDef, SettingError, SettingValue};
+use clouddeck_provider_api::{SettingDef, SettingError, SettingKind, SettingValue};
 
 use crate::settings::Settings;
 
@@ -91,9 +91,16 @@ impl ProviderSettings {
         self.stored(extension, &def).or(def.default)
     }
 
-    /// The value as the extension receives it from `Host::setting`.
+    /// The value as the extension receives it from `Host::setting`; a folder's leading `~/` is expanded.
     pub fn host_text(&self, extension: &str, key: &str) -> Option<String> {
-        self.get(extension, key).map(|value| value.host_text())
+        let is_folder = self
+            .definition(extension, key)
+            .is_some_and(|def| def.kind == SettingKind::Folder);
+        let text = self.get(extension, key)?.host_text();
+        Some(match text.strip_prefix("~/") {
+            Some(rest) if is_folder => expand_home(rest),
+            _ => text,
+        })
     }
 
     pub fn set(&self, extension: &str, key: &str, value: SettingValue) -> Result<(), SettingError> {
@@ -173,6 +180,13 @@ impl ProviderSettings {
     }
 }
 
+fn expand_home(rest: &str) -> String {
+    match std::env::var_os("HOME").filter(|home| !home.is_empty()) {
+        Some(home) => PathBuf::from(home).join(rest).display().to_string(),
+        None => format!("~/{rest}"),
+    }
+}
+
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
@@ -223,6 +237,48 @@ mod tests {
 
         let json: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         assert_eq!(json["providers"]["toy"]["display_name"]["text"], "Hi");
+    }
+
+    #[test]
+    fn folder_host_text_expands_a_home_relative_path_and_nothing_else() {
+        let dir = tempfile::tempdir().unwrap();
+        let settings = ProviderSettings::new(dir.path().join("settings.json"));
+        let folder = SettingDef {
+            kind: SettingKind::Folder,
+            ..text("config_dir", None)
+        };
+        settings.declare("toy", vec![folder, text("display_name", None)]);
+
+        settings
+            .set("toy", "config_dir", text_value("~/configs"))
+            .unwrap();
+        let expected = match std::env::var_os("HOME").filter(|home| !home.is_empty()) {
+            Some(home) => std::path::PathBuf::from(home)
+                .join("configs")
+                .display()
+                .to_string(),
+            None => "~/configs".into(),
+        };
+        assert_eq!(
+            settings.host_text("toy", "config_dir").as_deref(),
+            Some(expected.as_str())
+        );
+
+        settings
+            .set("toy", "config_dir", text_value("/srv/configs"))
+            .unwrap();
+        assert_eq!(
+            settings.host_text("toy", "config_dir").as_deref(),
+            Some("/srv/configs")
+        );
+
+        settings
+            .set("toy", "display_name", text_value("~/Notes"))
+            .unwrap();
+        assert_eq!(
+            settings.host_text("toy", "display_name").as_deref(),
+            Some("~/Notes")
+        );
     }
 
     #[test]

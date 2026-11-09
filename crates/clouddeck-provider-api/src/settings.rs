@@ -1,4 +1,5 @@
 use std::fmt;
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
@@ -24,6 +25,8 @@ pub struct SettingDef {
 pub enum SettingKind {
     Text,
     Path,
+    /// A directory. Empty means unset; otherwise an absolute path or one starting with `~/`.
+    Folder,
     Bool,
     Number {
         #[serde(default)]
@@ -167,7 +170,9 @@ impl SettingDef {
                 }
                 Ok(())
             }
-            SettingKind::Text | SettingKind::Path | SettingKind::Bool => Ok(()),
+            SettingKind::Text | SettingKind::Path | SettingKind::Folder | SettingKind::Bool => {
+                Ok(())
+            }
         }
     }
 
@@ -189,6 +194,10 @@ impl SettingDef {
         match (&self.kind, value) {
             (SettingKind::Text | SettingKind::Path, SettingValue::Text(_))
             | (SettingKind::Bool, SettingValue::Bool(_)) => Ok(()),
+            (SettingKind::Folder, SettingValue::Text(text)) => match folder_path_error(text) {
+                None => Ok(()),
+                Some(reason) => self.reject(&reason),
+            },
             (SettingKind::Number { min, max }, SettingValue::Number(number)) => {
                 if !number.is_finite() {
                     return self.reject(&format!("{number} is not a finite number"));
@@ -218,9 +227,10 @@ impl SettingDef {
     /// Reads host text (as passed to extensions or typed by a user) into a value of this kind, then validates it.
     pub fn parse(&self, text: &str) -> Result<SettingValue, SettingError> {
         let value = match &self.kind {
-            SettingKind::Text | SettingKind::Path | SettingKind::Choice(_) => {
-                SettingValue::Text(text.to_string())
-            }
+            SettingKind::Text
+            | SettingKind::Path
+            | SettingKind::Folder
+            | SettingKind::Choice(_) => SettingValue::Text(text.to_string()),
             SettingKind::Bool => match text {
                 "true" => SettingValue::Bool(true),
                 "false" => SettingValue::Bool(false),
@@ -239,6 +249,17 @@ impl SettingDef {
         };
         self.validate(&value)?;
         Ok(value)
+    }
+}
+
+/// Why `text` is not a usable folder path; empty means unset, which is always allowed.
+pub(crate) fn folder_path_error(text: &str) -> Option<String> {
+    if text.is_empty() || text.starts_with("~/") || Path::new(text).is_absolute() {
+        None
+    } else {
+        Some(format!(
+            "{text:?} must be an absolute path or start with ~/"
+        ))
     }
 }
 
@@ -297,6 +318,28 @@ mod tests {
                 },
             ]),
         )
+    }
+
+    #[test]
+    fn folders_accept_unset_absolute_and_home_relative_paths() {
+        let folder = def("folder", SettingKind::Folder);
+        for text in ["", "/srv/config", "~/config"] {
+            assert!(
+                folder.validate(&SettingValue::Text(text.into())).is_ok(),
+                "{text:?} should be accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn folders_refuse_relative_and_bare_home_paths() {
+        let folder = def("folder", SettingKind::Folder);
+        for text in ["config", "./config", "~", "~user/config"] {
+            assert!(
+                folder.validate(&SettingValue::Text(text.into())).is_err(),
+                "{text:?} should be refused"
+            );
+        }
     }
 
     #[test]

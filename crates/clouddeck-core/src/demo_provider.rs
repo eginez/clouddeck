@@ -221,10 +221,10 @@ impl Provider for DemoProvider {
     }
 
     fn auth_methods(&self) -> Vec<AuthMethod> {
-        vec![AuthMethod {
-            id: DEMO_METHOD.to_string(),
-            label: "Demo sign-in".to_string(),
-        }]
+        vec![AuthMethod::new(
+            DEMO_METHOD.to_string(),
+            "Demo sign-in".to_string(),
+        )]
     }
 
     fn begin_auth(

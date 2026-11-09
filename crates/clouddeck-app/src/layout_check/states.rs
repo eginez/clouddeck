@@ -108,7 +108,13 @@ fn service_for(state: State) -> (Arc<dyn Provider>, Vec<String>) {
         | State::ProviderSettingsDark
         | State::ProviderSettingsChanged
         | State::ProviderSettingsInvalid
-        | State::ProviderSettingsSearch => {
+        | State::ProviderSettingsSearch
+        | State::ProviderFolderEmptyLight
+        | State::ProviderFolderEmptyDark
+        | State::ProviderFolderSetLight
+        | State::ProviderFolderSetDark
+        | State::ProviderFolderMissingLight
+        | State::ProviderFolderMissingDark => {
             unreachable!("only main window states have a fleet service")
         }
     }
@@ -170,18 +176,16 @@ fn multi_setup(state: State) -> Option<MultiSetup> {
             vec![aws(), fixture_fleet::gcp_provider(gcp_instances(), None)],
             us_east,
         )),
-        State::MainAllProvidersFailedGroup | State::MainAllProvidersFailedGroupDark => {
-            Some(all(
-                vec![
-                    aws(),
-                    fixture_fleet::gcp_provider(
-                        Vec::new(),
-                        Some("Simulated Google Cloud outage".to_string()),
-                    ),
-                ],
-                us_east,
-            ))
-        }
+        State::MainAllProvidersFailedGroup | State::MainAllProvidersFailedGroupDark => Some(all(
+            vec![
+                aws(),
+                fixture_fleet::gcp_provider(
+                    Vec::new(),
+                    Some("Simulated Google Cloud outage".to_string()),
+                ),
+            ],
+            us_east,
+        )),
         State::MainAllProvidersGrouped | State::MainAllProvidersGroupedDark => Some(all(
             vec![aws(), fixture_fleet::gcp_provider(gcp_instances(), None)],
             us_east,
@@ -446,7 +450,12 @@ fn open_settings(
     static NEXT_DIR: AtomicUsize = AtomicUsize::new(0);
     let dark = matches!(
         state,
-        State::SettingsDark | State::SettingsNarrowDark | State::ProviderSettingsDark
+        State::SettingsDark
+            | State::SettingsNarrowDark
+            | State::ProviderSettingsDark
+            | State::ProviderFolderEmptyDark
+            | State::ProviderFolderSetDark
+            | State::ProviderFolderMissingDark
     );
     cx.update(|app| app.set_global(ActivePalette(Palette::for_dark(dark))));
     let dir = std::env::temp_dir().join(format!(
@@ -454,6 +463,7 @@ fn open_settings(
         std::process::id(),
         NEXT_DIR.fetch_add(1, Ordering::Relaxed)
     ));
+    let folder = dir.display().to_string();
     let providers = std::sync::Arc::new(settings_window::provider_fixture(&dir));
     let window = cx.update(|app| {
         gpui_component::init(app);
@@ -486,6 +496,27 @@ fn open_settings(
         State::ProviderSettingsSearch => {
             view.update_in(cx, |view, window, cx| {
                 view.type_query("timeout", window, cx)
+            });
+        }
+        State::ProviderFolderEmptyLight | State::ProviderFolderEmptyDark => {
+            view.update_in(cx, |view, window, cx| view.show_provider("toy", window, cx));
+        }
+        State::ProviderFolderSetLight | State::ProviderFolderSetDark => {
+            view.update_in(cx, |view, window, cx| {
+                view.show_provider("toy", window, cx);
+                view.type_provider_text("toy", "config_dir", &folder, window, cx);
+            });
+        }
+        State::ProviderFolderMissingLight | State::ProviderFolderMissingDark => {
+            view.update_in(cx, |view, window, cx| {
+                view.show_provider("toy", window, cx);
+                view.type_provider_text(
+                    "toy",
+                    "config_dir",
+                    "/clouddeck-layout-missing-folder",
+                    window,
+                    cx,
+                );
             });
         }
         _ => {}
@@ -652,7 +683,7 @@ mod tests {
     /// One key element per state that `apply_render_state` must produce.
     #[gpui::test]
     fn every_state_shows_its_key_element(cx: &mut TestAppContext) {
-        let key_elements: [(State, &str); 56] = [
+        let key_elements: [(State, &str); 62] = [
             (State::MainIdle, "main.root"),
             (State::MainRowSelected, "main.inspector"),
             (State::MainEmpty, "main.center-state"),
@@ -723,6 +754,30 @@ mod tests {
             (
                 State::ProviderSettingsSearch,
                 "settings.provider.item.sample.timeout_secs",
+            ),
+            (
+                State::ProviderFolderEmptyLight,
+                "settings.provider.browse.toy.config_dir",
+            ),
+            (
+                State::ProviderFolderEmptyDark,
+                "settings.provider.browse.toy.config_dir",
+            ),
+            (
+                State::ProviderFolderSetLight,
+                "settings.provider.control.toy.config_dir",
+            ),
+            (
+                State::ProviderFolderSetDark,
+                "settings.provider.control.toy.config_dir",
+            ),
+            (
+                State::ProviderFolderMissingLight,
+                "settings.provider.missing.toy.config_dir",
+            ),
+            (
+                State::ProviderFolderMissingDark,
+                "settings.provider.missing.toy.config_dir",
             ),
         ];
         assert_eq!(

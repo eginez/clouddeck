@@ -110,6 +110,10 @@ impl ProviderRegistry {
         self.settings.is_changed(extension, key)
     }
 
+    pub fn setting_host_text(&self, extension: &str, key: &str) -> Option<String> {
+        self.settings.host_text(extension, key)
+    }
+
     /// Extensions whose manifest declares settings, in discovery order.
     pub fn settings_categories(&self) -> Vec<SettingsCategory> {
         self.plugins

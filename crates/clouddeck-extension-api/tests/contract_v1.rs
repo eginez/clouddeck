@@ -8,8 +8,8 @@ use clouddeck_extension_api::{
     AuthAnswer, AuthInput, AuthMethod, AuthStatus, AuthStep, Call, CellFailure, Connection,
     ConnectionId, CoreField, DimValue, Dimension, ErrorKind, Extension, ExtrasSection, FieldDef,
     FieldKind, FieldSource, FlowId, Host, INSTANCES, Instance, KindId, KindInfo, ListResult,
-    LogLevel, MatchMode, PromptField, Provider, ProviderError, ProviderInfo, ResourceId, Selection,
-    ValueId,
+    LogLevel, MatchMode, PromptField, PromptKind, Provider, ProviderError, ProviderInfo,
+    ResourceId, Selection, ValueId,
 };
 
 const REGION_TREE: [(&str, Option<&str>); 3] =
@@ -237,10 +237,7 @@ impl Provider for Fake {
     }
 
     fn auth_methods(&self) -> Vec<AuthMethod> {
-        vec![AuthMethod {
-            id: "token".into(),
-            label: "API token".into(),
-        }]
+        vec![AuthMethod::new("token", "API token")]
     }
 
     fn begin_auth(
@@ -254,11 +251,9 @@ impl Provider for Fake {
         }
         Ok(AuthStep::Prompt {
             flow: FlowId::from("flow-1"),
-            fields: vec![PromptField {
-                id: "token".into(),
-                label: "Token".into(),
-                secret: true,
-            }],
+            fields: vec![PromptField::new("token", "Token", PromptKind::Secret)],
+            message: None,
+            error: None,
         })
     }
 

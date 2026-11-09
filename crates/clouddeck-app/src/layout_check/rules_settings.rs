@@ -202,5 +202,117 @@ pub(crate) fn rules() -> Vec<Rule> {
         why: "a search hit in an extension category is fully inside the window",
         known_bug: None,
     });
+    rules.extend(footer_rules!(
+        State::ProviderFolderEmptyLight,
+        WINDOW,
+        "provider-folder-empty-light"
+    ));
+    rules.extend(controls_rules!(
+        State::ProviderFolderEmptyLight,
+        WINDOW,
+        "provider-folder-empty-light",
+        [
+            "settings.provider.control.toy.config_dir",
+            "settings.provider.browse.toy.config_dir",
+            "settings.provider.clear.toy.config_dir",
+        ]
+    ));
+    rules.extend(footer_rules!(
+        State::ProviderFolderEmptyDark,
+        WINDOW,
+        "provider-folder-empty-dark"
+    ));
+    rules.extend(controls_rules!(
+        State::ProviderFolderEmptyDark,
+        WINDOW,
+        "provider-folder-empty-dark",
+        [
+            "settings.provider.control.toy.config_dir",
+            "settings.provider.browse.toy.config_dir",
+            "settings.provider.clear.toy.config_dir",
+        ]
+    ));
+    rules.extend(footer_rules!(
+        State::ProviderFolderSetLight,
+        WINDOW,
+        "provider-folder-set-light"
+    ));
+    rules.extend(controls_rules!(
+        State::ProviderFolderSetLight,
+        WINDOW,
+        "provider-folder-set-light",
+        [
+            "settings.provider.control.toy.config_dir",
+            "settings.provider.browse.toy.config_dir",
+            "settings.provider.clear.toy.config_dir",
+        ]
+    ));
+    rules.extend(footer_rules!(
+        State::ProviderFolderSetDark,
+        WINDOW,
+        "provider-folder-set-dark"
+    ));
+    rules.extend(controls_rules!(
+        State::ProviderFolderSetDark,
+        WINDOW,
+        "provider-folder-set-dark",
+        [
+            "settings.provider.control.toy.config_dir",
+            "settings.provider.browse.toy.config_dir",
+            "settings.provider.clear.toy.config_dir",
+        ]
+    ));
+    rules.extend(footer_rules!(
+        State::ProviderFolderMissingLight,
+        WINDOW,
+        "provider-folder-missing-light"
+    ));
+    rules.extend(controls_rules!(
+        State::ProviderFolderMissingLight,
+        WINDOW,
+        "provider-folder-missing-light",
+        [
+            "settings.provider.control.toy.config_dir",
+            "settings.provider.browse.toy.config_dir",
+            "settings.provider.clear.toy.config_dir",
+        ]
+    ));
+    rules.extend(footer_rules!(
+        State::ProviderFolderMissingDark,
+        WINDOW,
+        "provider-folder-missing-dark"
+    ));
+    rules.extend(controls_rules!(
+        State::ProviderFolderMissingDark,
+        WINDOW,
+        "provider-folder-missing-dark",
+        [
+            "settings.provider.control.toy.config_dir",
+            "settings.provider.browse.toy.config_dir",
+            "settings.provider.clear.toy.config_dir",
+        ]
+    ));
+    rules.push(Rule {
+        id: "provider-folder-missing-light-warning-in-row",
+        state: State::ProviderFolderMissingLight,
+        window: WINDOW,
+        check: Check::Inside {
+            inner: "settings.provider.missing.toy.config_dir",
+            outer: "settings.provider.item.toy.config_dir",
+        },
+        why: "the Folder not found warning is drawn inside its setting row",
+        known_bug: None,
+    });
+    rules.push(Rule {
+        id: "provider-folder-missing-dark-warning-in-row",
+        state: State::ProviderFolderMissingDark,
+        window: WINDOW,
+        check: Check::Inside {
+            inner: "settings.provider.missing.toy.config_dir",
+            outer: "settings.provider.item.toy.config_dir",
+        },
+        why: "the Folder not found warning is drawn inside its setting row",
+        known_bug: None,
+    });
     rules
 }

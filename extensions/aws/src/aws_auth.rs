@@ -66,10 +66,10 @@ impl AwsAuth {
     }
 
     fn methods(&self) -> Vec<AuthMethod> {
-        vec![AuthMethod {
-            id: SSO_METHOD_ID.to_string(),
-            label: "Browser sign-in (IAM Identity Center)".to_string(),
-        }]
+        vec![AuthMethod::new(
+            SSO_METHOD_ID.to_string(),
+            "Browser sign-in (IAM Identity Center)".to_string(),
+        )]
     }
 
     fn credential_kind(
@@ -135,7 +135,7 @@ impl AwsAuth {
         match answer {
             AuthAnswer::Poll => self.poll(flow),
             AuthAnswer::Cancel => self.cancel(flow),
-            AuthAnswer::Values(_) => Err(ProviderError::unsupported()),
+            AuthAnswer::Values(_) | AuthAnswer::Change { .. } => Err(ProviderError::unsupported()),
         }
     }
 

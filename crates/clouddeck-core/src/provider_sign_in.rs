@@ -177,10 +177,10 @@ mod tests {
 
         fn auth_methods(&self) -> Vec<AuthMethod> {
             if self.methods {
-                vec![AuthMethod {
-                    id: "browser".to_string(),
-                    label: "Browser".to_string(),
-                }]
+                vec![AuthMethod::new(
+                    "browser".to_string(),
+                    "Browser".to_string(),
+                )]
             } else {
                 vec![]
             }
@@ -263,6 +263,8 @@ mod tests {
         let step = AuthStep::Prompt {
             flow: FlowId::from("flow-3"),
             fields: vec![],
+            message: None,
+            error: None,
         };
         assert_eq!(
             sign_in_action(step),

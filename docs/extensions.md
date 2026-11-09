@@ -36,7 +36,7 @@ clouddeck-extension-api = { git = "https://github.com/eginez/clouddeck", tag = "
 - Fields are named on the wire, so unknown fields are ignored and missing fields take their serde
   default. `#[serde(skip_serializing_if)]`, `#[serde(flatten)]`, `#[serde(untagged)]` and tagged
   enums all work on types that cross the boundary.
-- Host and extension are built against the same `API_VERSION`, which is 5 for this format.
+- Host and extension are built against the same `API_VERSION`, which is 6 for this format.
   Manifests and host state files are still JSON and TOML and are unaffected.
 
 ## Loading
@@ -216,9 +216,11 @@ min = 5
 max = 120
 ```
 
-Kinds are `text`, `path`, `bool`, `number` (with optional `min`/`max`), `duration_secs` (whole
+Kinds are `text`, `path`, `folder`, `bool`, `number` (with optional `min`/`max`), `duration_secs` (whole
 seconds, optional `min`/`max`), `choice` (with `options = [{ value = "...", label = "..." }]`), and
-`secret`. A `secret` is declared only so the host can refuse it: it has no default, and this build
+`secret`. A `folder` is a directory: empty means unset, and otherwise it is an absolute path or starts
+with `~/`. The host expands `~/` before the extension reads it, and the Settings window shows
+"Folder not found" when the directory is missing without refusing the value. A `secret` is declared only so the host can refuse it: it has no default, and this build
 has no secret store to save it in.
 
 Keys use lowercase letters, digits, `_`, `.` and `-`; the `clouddeck.` prefix is reserved for the host.
@@ -229,6 +231,49 @@ settings file under `providers.<extension id>.<key>`, and a missing value falls 
 The host checks the manifest against `settings()` when the library loads. On a mismatch it logs the
 difference and uses the manifest's copy. When the user changes a setting, the host calls
 `settings_changed` with the changed keys, so the provider can drop caches built from them.
+
+## Onboarding
+
+A sign-in method can declare the form it needs in `initial_fields`, so the host can show it on first
+connect, before any call is made:
+
+```rust
+AuthMethod {
+    description: Some("Pick a config folder and a profile in it".into()),
+    initial_fields: vec![
+        PromptField {
+            help: Some("The folder that holds the profile's config".into()),
+            required: true,
+            refresh_on_change: true,
+            persist_as: Some("config_dir".into()),
+            ..PromptField::new("config_dir", "Config folder", PromptKind::Folder)
+        },
+        PromptField {
+            default: Some("alpha".into()),
+            options: vec![SettingOption { value: "alpha".into(), label: "Alpha".into() }],
+            required: true,
+            ..PromptField::new("profile", "Profile", PromptKind::Choice)
+        },
+    ],
+    ..AuthMethod::new("profile", "Profile in a folder")
+}
+```
+
+- Field kinds: `text`, `secret` (masked, and never stored as a setting), `path`, `folder` (chosen with
+  the native folder picker, with the same rules as a `folder` setting), `choice` (its default must be
+  one of its `options`), and `note` (read-only `help` text that is never submitted).
+- `persist_as` stores the value as a setting of this extension as soon as it changes, so
+  `Host::setting` sees it during the sign-in call. A secret cannot persist.
+- `refresh_on_change` asks the plugin to answer a change while the prompt is open. The host calls
+  `continue_auth` with `AuthAnswer::Change { field, values }`, and shows the prompt it returns. Use it
+  to list choices from the folder that was picked.
+- `AuthStep::Prompt` takes a `message` (a status line) and an `error` (a problem with the last attempt,
+  shown above the form). A `PromptField::error` marks one field instead.
+- Submitted values arrive as `AuthAnswer::Values`. Return `AuthStep::Done` when they are accepted, or a
+  `Prompt` with an `error` to keep the form up for another try.
+- The host checks each declaration before showing it: ids must be present and unique, choices need
+  options and a default among them, `persist_as` must be a valid setting key, and only choices may list
+  options.
 
 ## Deadlines
 

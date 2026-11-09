@@ -2,8 +2,9 @@ pub use clouddeck_provider_api::{
     AuthAnswer, AuthInput, AuthMethod, AuthStep, Call, CellFailure, Connection, ConnectionId,
     CoreField, DimValue, Dimension, DimensionId, ErrorKind, FieldDef, FieldKind, FieldSource,
     FlowId, Host, InspectorRowDef, InspectorSectionDef, InspectorValue, KindId, KindInfo,
-    ListResult, LogLevel, MatchMode, Provider, ProviderError, ProviderInfo, ResourceId, Selection,
-    SettingDef, SettingKind, SettingValue, ValueId,
+    ListResult, LogLevel, MatchMode, PromptField, PromptKind, Provider, ProviderError,
+    ProviderInfo, ResourceId, Selection, SettingDef, SettingKind, SettingOption, SettingValue,
+    ValueId,
 };
 pub use clouddeck_provider_kit::ComputeServiceProvider;
 pub use clouddeck_provider_kit::service_provider;
@@ -74,6 +75,8 @@ mod context_model;
 pub use context_model::*;
 mod provider_sign_in;
 pub use provider_sign_in::*;
+mod onboarding;
+pub use onboarding::{ActionView, FieldView, Onboarding, OnboardingView, SettingStore};
 mod failure_advice;
 pub use failure_advice::*;
 mod commands;

@@ -126,10 +126,16 @@ pub(crate) enum State {
     ProviderSettingsInvalid,
     /// Settings window with a search that matches an extension's setting.
     ProviderSettingsSearch,
+    ProviderFolderEmptyLight,
+    ProviderFolderEmptyDark,
+    ProviderFolderSetLight,
+    ProviderFolderSetDark,
+    ProviderFolderMissingLight,
+    ProviderFolderMissingDark,
 }
 
 impl State {
-    pub(crate) const ALL: [State; 57] = [
+    pub(crate) const ALL: [State; 63] = [
         State::MainIdle,
         State::MainRowSelected,
         State::MainEmpty,
@@ -187,6 +193,12 @@ impl State {
         State::ProviderSettingsChanged,
         State::ProviderSettingsInvalid,
         State::ProviderSettingsSearch,
+        State::ProviderFolderEmptyLight,
+        State::ProviderFolderEmptyDark,
+        State::ProviderFolderSetLight,
+        State::ProviderFolderSetDark,
+        State::ProviderFolderMissingLight,
+        State::ProviderFolderMissingDark,
     ];
 
     /// The variant name, as accepted by `--render-state`.
@@ -249,6 +261,12 @@ impl State {
             State::ProviderSettingsChanged => "ProviderSettingsChanged",
             State::ProviderSettingsInvalid => "ProviderSettingsInvalid",
             State::ProviderSettingsSearch => "ProviderSettingsSearch",
+            State::ProviderFolderEmptyLight => "ProviderFolderEmptyLight",
+            State::ProviderFolderEmptyDark => "ProviderFolderEmptyDark",
+            State::ProviderFolderSetLight => "ProviderFolderSetLight",
+            State::ProviderFolderSetDark => "ProviderFolderSetDark",
+            State::ProviderFolderMissingLight => "ProviderFolderMissingLight",
+            State::ProviderFolderMissingDark => "ProviderFolderMissingDark",
         }
     }
 
@@ -307,6 +325,12 @@ impl State {
                 | State::ProviderSettingsChanged
                 | State::ProviderSettingsInvalid
                 | State::ProviderSettingsSearch
+                | State::ProviderFolderEmptyLight
+                | State::ProviderFolderEmptyDark
+                | State::ProviderFolderSetLight
+                | State::ProviderFolderSetDark
+                | State::ProviderFolderMissingLight
+                | State::ProviderFolderMissingDark
         )
     }
 
@@ -460,7 +484,13 @@ pub(crate) fn apply_render_state(
         | State::ProviderSettingsDark
         | State::ProviderSettingsChanged
         | State::ProviderSettingsInvalid
-        | State::ProviderSettingsSearch => {}
+        | State::ProviderSettingsSearch
+        | State::ProviderFolderEmptyLight
+        | State::ProviderFolderEmptyDark
+        | State::ProviderFolderSetLight
+        | State::ProviderFolderSetDark
+        | State::ProviderFolderMissingLight
+        | State::ProviderFolderMissingDark => {}
     }
     // Focus and overlays settle on the next frame; make sure one is drawn.
     window.refresh();

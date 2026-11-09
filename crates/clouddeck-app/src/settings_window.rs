@@ -18,9 +18,9 @@ use clouddeck_core::{
 };
 use gpui::{
     AnyElement, AnyView, App, Bounds, ClickEvent, Context, Div, Entity, EventEmitter, Global,
-    HighlightStyle, IntoElement, ParentElement, Render, SharedString, Stateful, Styled, StyledText,
-    Subscription, TitlebarOptions, Window, WindowBounds, WindowHandle, WindowOptions, div, img,
-    point, prelude::*, px, size, white,
+    HighlightStyle, IntoElement, ParentElement, PathPromptOptions, Render, SharedString, Stateful,
+    Styled, StyledText, Subscription, TitlebarOptions, Window, WindowBounds, WindowHandle,
+    WindowOptions, div, img, point, prelude::*, px, size, white,
 };
 use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::select::{Select, SelectEvent, SelectItem, SelectState};
@@ -177,6 +177,10 @@ fn provider_match_count(hits: &[SettingsCategory]) -> usize {
 
 fn field_key(extension: &str, key: &str) -> FieldKey {
     (extension.to_owned(), key.to_owned())
+}
+
+fn folder_is_missing(host_text: Option<String>) -> bool {
+    host_text.is_some_and(|path| !path.is_empty() && !Path::new(&path).is_dir())
 }
 
 fn display_text(value: Option<SettingValue>) -> String {
@@ -648,6 +652,48 @@ impl SettingsWindow {
         cx: &mut Context<Self>,
     ) {
         self.edit_provider_text(extension, def, value, cx);
+    }
+
+    fn browse_provider_folder(
+        &mut self,
+        extension: &str,
+        key: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let picked = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: None,
+        });
+        let extension = extension.to_owned();
+        let key = key.to_owned();
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(paths))) = picked.await else {
+                return;
+            };
+            let Some(path) = paths.into_iter().next() else {
+                return;
+            };
+            let _ = this.update_in(cx, |this, window, cx| {
+                let text = path.to_string_lossy().into_owned();
+                this.store_provider_value(&extension, &key, SettingValue::Text(text), cx);
+                this.sync_provider_controls(&extension, Some(&key), window, cx);
+            });
+        })
+        .detach();
+    }
+
+    fn clear_provider_folder(
+        &mut self,
+        extension: &str,
+        key: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.store_provider_value(extension, key, SettingValue::Text(String::new()), cx);
+        self.sync_provider_controls(extension, Some(key), window, cx);
     }
 
     fn toggle_provider_flag(&mut self, extension: &str, key: &str, cx: &mut Context<Self>) {
@@ -1215,6 +1261,13 @@ impl SettingsWindow {
                     None => div().into_any_element(),
                 }
             }
+            SettingKind::Folder => match self.provider_inputs.iter().find(|(key, _)| *key == field)
+            {
+                Some((_, state)) => {
+                    self.folder_control(extension, &def.key, state, selector, palette, cx)
+                }
+                None => div().into_any_element(),
+            },
             kind => match self.provider_inputs.iter().find(|(key, _)| *key == field) {
                 Some((_, state)) => {
                     let width = match kind {
@@ -1241,6 +1294,63 @@ impl SettingsWindow {
         }
     }
 
+    fn folder_control(
+        &self,
+        extension: &str,
+        key: &str,
+        state: &Entity<InputState>,
+        selector: String,
+        palette: &Palette,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let row = format!("{extension}.{key}");
+        let browse_extension = extension.to_owned();
+        let browse_key = key.to_owned();
+        let clear_extension = extension.to_owned();
+        let clear_key = key.to_owned();
+        div()
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .child(
+                div()
+                    .debug_selector(move || selector)
+                    .w(px(260.))
+                    .child(Input::new(state).small()),
+            )
+            .child(
+                div()
+                    .id(SharedString::from(format!("settings-browse-{row}")))
+                    .debug_selector({
+                        let selector = format!("settings.provider.browse.{row}");
+                        move || selector
+                    })
+                    .cursor_pointer()
+                    .text_size(px(11.))
+                    .text_color(palette.accent)
+                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                        this.browse_provider_folder(&browse_extension, &browse_key, window, cx)
+                    }))
+                    .child("Browse"),
+            )
+            .child(
+                div()
+                    .id(SharedString::from(format!("settings-clear-{row}")))
+                    .debug_selector({
+                        let selector = format!("settings.provider.clear.{row}");
+                        move || selector
+                    })
+                    .cursor_pointer()
+                    .text_size(px(11.))
+                    .text_color(palette.accent)
+                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                        this.clear_provider_folder(&clear_extension, &clear_key, window, cx)
+                    }))
+                    .child("Clear"),
+            )
+            .into_any_element()
+    }
+
     fn provider_setting_row(
         &self,
         extension: &str,
@@ -1255,6 +1365,8 @@ impl SettingsWindow {
             .setting_errors
             .get(&field_key(extension, &def.key))
             .cloned();
+        let missing = matches!(def.kind, SettingKind::Folder)
+            && folder_is_missing(self.providers.setting_host_text(extension, &def.key));
         let extension_owned = extension.to_owned();
         let key_owned = def.key.clone();
         div()
@@ -1338,6 +1450,16 @@ impl SettingsWindow {
                                 .text_size(px(11.))
                                 .text_color(palette.err)
                                 .child(error),
+                        )
+                    })
+                    .when(missing, |column| {
+                        let row = row.clone();
+                        column.child(
+                            div()
+                                .debug_selector(move || format!("settings.provider.missing.{row}"))
+                                .text_size(px(11.))
+                                .text_color(palette.warn)
+                                .child("Folder not found"),
                         )
                     }),
             )
@@ -1909,7 +2031,7 @@ pub(crate) fn provider_fixture(dir: &Path) -> ProviderRegistry {
 name = "Sample"
 version = "0.1.0"
 schema_version = 1
-api_version = 5
+api_version = 6
 
 [providers.sample]
 name = "Sample"
@@ -1970,7 +2092,7 @@ kind = "secret"
 name = "Toy"
 version = "0.1.0"
 schema_version = 1
-api_version = 5
+api_version = 6
 
 [providers.toy]
 name = "Toy"
@@ -1980,12 +2102,17 @@ key = "display_name"
 label = "Display name"
 kind = "text"
 default = "Default"
+
+[[settings]]
+key = "config_dir"
+label = "Config folder"
+kind = "folder"
 "#;
     const PLAIN: &str = r#"id = "plain"
 name = "Plain"
 version = "0.1.0"
 schema_version = 1
-api_version = 5
+api_version = 6
 
 [providers.plain]
 name = "Plain"
@@ -2150,6 +2277,62 @@ mod tests {
             cx.debug_bounds("settings.provider.changed.sample.region_label")
                 .is_some()
         );
+    }
+
+    #[gpui::test]
+    fn a_missing_folder_is_flagged_but_kept(cx: &mut TestAppContext) {
+        let (view, cx) = provider_window(cx);
+        view.update_in(cx, |view, window, cx| {
+            view.show_provider("toy", window, cx);
+            view.type_provider_text("toy", "config_dir", "/clouddeck-missing-folder", window, cx);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            view.read_with(cx, |view, _| view
+                .providers
+                .setting_host_text("toy", "config_dir")),
+            Some("/clouddeck-missing-folder".to_string())
+        );
+        assert!(
+            cx.debug_bounds("settings.provider.missing.toy.config_dir")
+                .is_some()
+        );
+        assert!(
+            cx.debug_bounds("settings.provider.error.toy.config_dir")
+                .is_none()
+        );
+    }
+
+    #[gpui::test]
+    fn clearing_a_folder_leaves_it_empty_without_a_warning(cx: &mut TestAppContext) {
+        let (view, cx) = provider_window(cx);
+        view.update_in(cx, |view, window, cx| {
+            view.show_provider("toy", window, cx);
+            view.type_provider_text("toy", "config_dir", "/clouddeck-missing-folder", window, cx);
+        });
+        cx.run_until_parked();
+        view.update_in(cx, |view, window, cx| {
+            view.clear_provider_folder("toy", "config_dir", window, cx)
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            view.read_with(cx, |view, _| view
+                .providers
+                .setting_host_text("toy", "config_dir")),
+            Some(String::new())
+        );
+    }
+
+    #[test]
+    fn only_a_set_folder_that_is_not_a_directory_is_missing() {
+        assert!(!folder_is_missing(None));
+        assert!(!folder_is_missing(Some(String::new())));
+        assert!(folder_is_missing(Some("/clouddeck-missing-folder".into())));
+        assert!(!folder_is_missing(Some(
+            std::env::temp_dir().display().to_string()
+        )));
     }
 
     #[gpui::test]

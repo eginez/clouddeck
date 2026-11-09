@@ -381,10 +381,7 @@ mod tests {
             deadline: None,
             host: &host,
         };
-        let method = AuthMethod {
-            id: "method".to_string(),
-            label: "Method".to_string(),
-        };
+        let method = AuthMethod::new("method".to_string(), "Method".to_string());
         let input = AuthInput {
             connection: Some(ConnectionId::from("default")),
             values: Default::default(),

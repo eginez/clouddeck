@@ -294,10 +294,10 @@ impl Provider for GcpProvider {
     }
 
     fn auth_methods(&self) -> Vec<AuthMethod> {
-        vec![AuthMethod {
-            id: ADC_METHOD.to_string(),
-            label: "Application Default Credentials (gcloud)".to_string(),
-        }]
+        vec![AuthMethod::new(
+            ADC_METHOD.to_string(),
+            "Application Default Credentials (gcloud)".to_string(),
+        )]
     }
 
     fn begin_auth(

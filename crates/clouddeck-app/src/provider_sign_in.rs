@@ -215,10 +215,10 @@ mod tests {
         }
 
         fn auth_methods(&self) -> Vec<AuthMethod> {
-            vec![AuthMethod {
-                id: "browser".to_string(),
-                label: "Browser".to_string(),
-            }]
+            vec![AuthMethod::new(
+                "browser".to_string(),
+                "Browser".to_string(),
+            )]
         }
 
         fn begin_auth(
@@ -330,6 +330,8 @@ mod tests {
             Ok(AuthStep::Prompt {
                 flow: FlowId::from("flow-2"),
                 fields: vec![],
+                message: None,
+                error: None,
             }),
             vec![],
         );
