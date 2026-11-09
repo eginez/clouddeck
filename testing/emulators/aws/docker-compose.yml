@@ -1,0 +1,25 @@
+services:
+  floci:
+    image: floci/floci:2.4.0
+    ports:
+      - "4566:4566"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/localhost/4566' || exit 1"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 2s
+
+  seed:
+    image: amazon/aws-cli:latest
+    profiles: ["seed"]
+    depends_on:
+      floci:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "/seed.sh"]
+    environment:
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      FLOCI_ENDPOINT: http://floci:4566
+    volumes:
+      - ./seed.sh:/seed.sh:ro
