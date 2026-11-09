@@ -57,6 +57,23 @@ instance demo-data us-central1-b us-central1 etl-1 n2-standard-4 staging
 instance demo-data europe-west1-b europe-west1 notebook-1 g2-standard-4 dev
 instance demo-data us-central1-b us-central1 gpu-train-1 g2-standard-8 dev
 
-post "/compute/v1/projects/demo-web/zones/us-central1-b/instances/web-2/stop" '{}'
+# An instance that was just created is still starting; stopping it fails with HTTP 400 until that finishes.
+stop_instance() { # path
+    tries=0
+    while [ "$tries" -lt 30 ]; do
+        code=$(curl -s -o /tmp/response -w '%{http_code}' -X POST \
+            -H 'Content-Type: application/json' -d '{}' "$endpoint$1")
+        case "$code" in
+            2*|409) return 0 ;;
+        esac
+        tries=$((tries + 1))
+        sleep 1
+    done
+    echo "POST $1 failed with HTTP $code after $tries tries:" >&2
+    cat /tmp/response >&2
+    echo >&2
+    exit 1
+}
+stop_instance "/compute/v1/projects/demo-web/zones/us-central1-b/instances/web-2/stop"
 
 echo "seeded GCP emulator: projects demo-web and demo-data, 8 instances"
