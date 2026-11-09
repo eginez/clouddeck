@@ -182,7 +182,10 @@ impl ProviderSettings {
 
 fn expand_home(rest: &str) -> String {
     match std::env::var_os("HOME").filter(|home| !home.is_empty()) {
-        Some(home) => PathBuf::from(home).join(rest).display().to_string(),
+        Some(home) => PathBuf::from(home)
+            .join(rest.trim_start_matches('/'))
+            .display()
+            .to_string(),
         None => format!("~/{rest}"),
     }
 }

@@ -1,12 +1,10 @@
 //! Minimal extension used to exercise the boundary and the conformance kit.
 
-use std::collections::BTreeMap;
-
 use clouddeck_extension_api::{
     AuthAnswer, AuthInput, AuthMethod, AuthStep, Call, Connection, ConnectionId, Dimension,
     ErrorKind, Extension, FieldDef, FlowId, INSTANCES, Instance, KindId, KindInfo, ListResult,
-    PromptField, PromptKind, Provider, ProviderError, ProviderInfo, ResourceId, Selection,
-    SettingDef, SettingKind, SettingOption, SettingValue, register_extension,
+    Provider, ProviderError, ProviderInfo, ResourceId, Selection, SettingDef, SettingKind,
+    SettingValue, register_extension,
 };
 
 pub struct Toy;
@@ -25,11 +23,6 @@ register_extension!(Toy);
 
 pub struct ToyProvider;
 
-const PROFILE_METHOD: &str = "profile";
-const PROFILE_FLOW: &str = "toy-profile";
-const CONFIG_FIELD: &str = "config_dir";
-const PROFILES: [&str; 2] = ["alpha", "beta"];
-
 fn toy_instances() -> Vec<Instance> {
     ["alpha", "beta"]
         .into_iter()
@@ -39,66 +32,6 @@ fn toy_instances() -> Vec<Instance> {
             ..Default::default()
         })
         .collect()
-}
-
-fn profile_method() -> AuthMethod {
-    AuthMethod {
-        description: Some("Pick a config folder and a profile in it".into()),
-        initial_fields: vec![config_field(""), profile_field()],
-        ..AuthMethod::new(PROFILE_METHOD, "Profile in a folder")
-    }
-}
-
-fn config_field(folder: &str) -> PromptField {
-    PromptField {
-        default: (!folder.is_empty()).then(|| folder.to_string()),
-        help: Some("The folder that holds the profile's config".into()),
-        required: true,
-        refresh_on_change: true,
-        persist_as: Some(CONFIG_FIELD.into()),
-        ..PromptField::new(CONFIG_FIELD, "Config folder", PromptKind::Folder)
-    }
-}
-
-fn profile_field() -> PromptField {
-    PromptField {
-        default: Some(PROFILES[0].into()),
-        options: PROFILES
-            .iter()
-            .map(|name| SettingOption {
-                value: (*name).into(),
-                label: (*name).into(),
-            })
-            .collect(),
-        required: true,
-        ..PromptField::new("profile", "Profile", PromptKind::Choice)
-    }
-}
-
-fn form_error(values: &BTreeMap<String, String>) -> Option<String> {
-    if values.get(CONFIG_FIELD).is_none_or(String::is_empty) {
-        return Some("Choose a config folder".into());
-    }
-    let profile = values
-        .get("profile")
-        .map(String::as_str)
-        .unwrap_or(PROFILES[0]);
-    (!PROFILES.contains(&profile)).then(|| "Choose one of the listed profiles".into())
-}
-
-fn profile_prompt(values: &BTreeMap<String, String>, error: Option<String>) -> AuthStep {
-    let folder = values.get(CONFIG_FIELD).cloned().unwrap_or_default();
-    let mut fields = vec![config_field(&folder), profile_field()];
-    if folder.is_empty() {
-        fields[0].error = error.clone();
-    }
-    AuthStep::Prompt {
-        flow: FlowId::from(PROFILE_FLOW),
-        fields,
-        message: (!folder.is_empty())
-            .then(|| format!("Found {} profiles in {folder}", PROFILES.len())),
-        error: error.filter(|_| !folder.is_empty()),
-    }
 }
 
 impl Provider for ToyProvider {
@@ -123,7 +56,7 @@ impl Provider for ToyProvider {
                 secret: false,
             },
             SettingDef {
-                key: CONFIG_FIELD.into(),
+                key: "config_dir".into(),
                 label: "Config folder".into(),
                 description: None,
                 group: None,
@@ -189,39 +122,29 @@ impl Provider for ToyProvider {
     }
 
     fn auth_methods(&self) -> Vec<AuthMethod> {
-        vec![profile_method()]
+        vec![AuthMethod {
+            id: "config".into(),
+            label: "Use config folder".into(),
+            description: Some("Choose where the toy keeps its configuration.".into()),
+            settings: vec!["config_dir".into()],
+        }]
     }
 
     fn begin_auth(
         &self,
         _: &Call<'_>,
-        method: &AuthMethod,
-        input: AuthInput,
+        _: &AuthMethod,
+        _: AuthInput,
     ) -> Result<AuthStep, ProviderError> {
-        if method.id != PROFILE_METHOD {
-            return Err(ProviderError::unsupported());
-        }
-        let error = form_error(&input.values);
-        Ok(profile_prompt(&input.values, error))
+        Ok(AuthStep::Done)
     }
 
     fn continue_auth(
         &self,
         _: &Call<'_>,
-        flow: &FlowId,
-        answer: AuthAnswer,
+        _: &FlowId,
+        _: AuthAnswer,
     ) -> Result<AuthStep, ProviderError> {
-        if flow.as_str() != PROFILE_FLOW {
-            return Err(ProviderError::new(ErrorKind::Other, "unknown sign-in flow"));
-        }
-        match answer {
-            AuthAnswer::Change { values, .. } => Ok(profile_prompt(&values, None)),
-            AuthAnswer::Values(values) => match form_error(&values) {
-                Some(error) => Ok(profile_prompt(&values, Some(error))),
-                None => Ok(AuthStep::Done),
-            },
-            AuthAnswer::Cancel => Ok(AuthStep::Done),
-            AuthAnswer::Poll => Err(ProviderError::unsupported()),
-        }
+        Err(ProviderError::of(ErrorKind::Unsupported))
     }
 }

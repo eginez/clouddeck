@@ -9,7 +9,7 @@ mod provider;
 mod selection;
 mod settings;
 
-pub use auth::{AuthAnswer, AuthInput, AuthMethod, AuthStatus, AuthStep, PromptField, PromptKind};
+pub use auth::{AuthAnswer, AuthInput, AuthMethod, AuthStatus, AuthStep, PromptField};
 pub use error::{ErrorKind, ProviderError};
 pub use field::{CoreField, FieldDef, FieldKind, FieldSource, MatchMode};
 pub use host::{Call, Host, LogLevel};

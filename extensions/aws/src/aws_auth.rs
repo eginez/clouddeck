@@ -135,7 +135,7 @@ impl AwsAuth {
         match answer {
             AuthAnswer::Poll => self.poll(flow),
             AuthAnswer::Cancel => self.cancel(flow),
-            AuthAnswer::Values(_) | AuthAnswer::Change { .. } => Err(ProviderError::unsupported()),
+            AuthAnswer::Values(_) => Err(ProviderError::unsupported()),
         }
     }
 

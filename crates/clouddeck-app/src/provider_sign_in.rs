@@ -330,8 +330,6 @@ mod tests {
             Ok(AuthStep::Prompt {
                 flow: FlowId::from("flow-2"),
                 fields: vec![],
-                message: None,
-                error: None,
             }),
             vec![],
         );

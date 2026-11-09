@@ -7,9 +7,9 @@ use clouddeck_extension_api::{
     Address, AddressKind, AuthAnswer, AuthInput, AuthMethod, AuthStatus, AuthStep, CellFailure,
     Connection, ConnectionId, CoreField, DimValue, Dimension, ErrorKind, ExtrasSection, FieldDef,
     FieldKind, FieldSource, FlowId, InspectorRowDef, InspectorSectionDef, InspectorValue, Instance,
-    KindId, KindInfo, Label, ListResult, MatchMode, PromptField, PromptKind, ProviderError,
-    ProviderInfo, ResourceId, Selection, SettingDef, SettingKind, SettingOption, SettingValue,
-    State, StateKind, ValueId,
+    KindId, KindInfo, Label, ListResult, MatchMode, PromptField, ProviderError, ProviderInfo,
+    ResourceId, Selection, SettingDef, SettingKind, SettingOption, SettingValue, State, StateKind,
+    ValueId,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -153,7 +153,6 @@ fn settings_round_trip_every_kind_and_value() {
     let kinds = vec![
         SettingKind::Text,
         SettingKind::Path,
-        SettingKind::Folder,
         SettingKind::Bool,
         SettingKind::Number {
             min: None,
@@ -200,34 +199,12 @@ fn settings_round_trip_every_kind_and_value() {
 
 #[test]
 fn auth_round_trips_every_variant() {
-    round_trip(AuthMethod::new(UNICODE, ""));
+    round_trip(AuthMethod::new(UNICODE.into(), String::new()));
     round_trip(AuthMethod {
-        description: Some(UNICODE.into()),
-        icon: Some("key".into()),
-        initial_fields: [
-            PromptKind::Text,
-            PromptKind::Secret,
-            PromptKind::Path,
-            PromptKind::Folder,
-            PromptKind::Choice,
-            PromptKind::Note,
-        ]
-        .into_iter()
-        .map(|kind| PromptField {
-            default: Some(UNICODE.into()),
-            help: Some(UNICODE.into()),
-            required: true,
-            options: vec![SettingOption {
-                value: "eu".into(),
-                label: UNICODE.into(),
-            }],
-            refresh_on_change: true,
-            persist_as: Some("config_dir".into()),
-            error: Some("bad value".into()),
-            ..PromptField::new("field", UNICODE, kind)
-        })
-        .collect(),
-        ..AuthMethod::new("profile", "Profile")
+        id: "token".into(),
+        label: "API token".into(),
+        description: Some("Paste a token from the console".into()),
+        settings: vec!["config_dir".into(), "region".into()],
     });
     round_trip(AuthInput {
         connection: None,
@@ -241,10 +218,6 @@ fn auth_round_trips_every_variant() {
         AuthAnswer::Poll,
         AuthAnswer::Values(BTreeMap::new()),
         AuthAnswer::Values(BTreeMap::from([("code".into(), UNICODE.into())])),
-        AuthAnswer::Change {
-            field: "config_dir".into(),
-            values: BTreeMap::from([("config_dir".into(), UNICODE.into())]),
-        },
         AuthAnswer::Cancel,
     ] {
         round_trip(answer);
@@ -255,14 +228,14 @@ fn auth_round_trips_every_variant() {
         AuthStep::Prompt {
             flow: flow.clone(),
             fields: Vec::new(),
-            message: None,
-            error: None,
         },
         AuthStep::Prompt {
             flow: flow.clone(),
-            fields: vec![PromptField::new("token", UNICODE, PromptKind::Secret)],
-            message: Some(UNICODE.into()),
-            error: Some("wrong token".into()),
+            fields: vec![PromptField {
+                id: "token".into(),
+                label: UNICODE.into(),
+                secret: true,
+            }],
         },
         AuthStep::OpenUrl {
             flow: flow.clone(),
