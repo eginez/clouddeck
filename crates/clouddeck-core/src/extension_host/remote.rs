@@ -6,10 +6,10 @@ use std::time::{Duration, Instant};
 
 use clouddeck_extension_api::wire::{self, Method, Request};
 use clouddeck_provider_api::{
-    AuthAnswer, AuthInput, AuthMethod, AuthStatus, AuthStep, Call, CellFailure, Connection,
-    ConnectionId, Dimension, ErrorKind, ExtrasSection, FieldDef, FlowId, InspectorSectionDef,
-    Instance, KindId, KindInfo, ListResult, Provider, ProviderError, ProviderInfo, ResourceId,
-    Selection, SettingDef, settings_mismatches,
+    Auth, AuthAnswer, AuthInput, AuthMethod, AuthStatus, AuthStep, Browse, Call, CellFailure,
+    Config, Connection, ConnectionId, Dimension, ErrorKind, ExtrasSection, FieldDef, FlowId,
+    InspectorSectionDef, Instance, KindId, KindInfo, ListResult, Provider, ProviderError,
+    ProviderInfo, ResourceId, Selection, SettingDef, settings_mismatches,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -398,7 +398,16 @@ impl Provider for RemoteProvider {
             }
         }
     }
+    fn auth(&self) -> Option<&dyn Auth> {
+        Some(self)
+    }
 
+    fn config(&self) -> Option<&dyn Config> {
+        Some(self)
+    }
+}
+
+impl Browse for RemoteProvider {
     fn connections(&self, cx: &Call<'_>) -> Result<Vec<Connection>, ProviderError> {
         self.invoke(cx.deadline, Method::Connections, ())
     }
@@ -442,29 +451,27 @@ impl Provider for RemoteProvider {
         self.invoke(cx.deadline, Method::Describe, (connection, kind, id))
     }
 
-    fn identity(
+    fn console_url(
         &self,
-        cx: &Call<'_>,
-        connection: &ConnectionId,
-        selection: &Selection,
-    ) -> Result<String, ProviderError> {
-        self.invoke(cx.deadline, Method::Identity, (connection, selection))
-    }
-
-    fn check_access(
-        &self,
-        cx: &Call<'_>,
         connection: &ConnectionId,
         kind: &KindId,
-        selection: &Selection,
-    ) -> Result<(), ProviderError> {
-        self.invoke(
-            cx.deadline,
-            Method::CheckAccess,
-            (connection, kind, selection),
-        )
+        resource: &Instance,
+    ) -> Option<String> {
+        self.invoke::<_, Option<String>>(None, Method::ConsoleUrl, (connection, kind, resource))
+            .ok()
+            .flatten()
     }
 
+    fn fields(&self, kind: &KindId) -> Vec<FieldDef> {
+        self.fallible(self.invoke(None, Method::Fields, kind))
+    }
+
+    fn inspector(&self, kind: &KindId) -> Vec<InspectorSectionDef> {
+        self.fallible(self.invoke(None, Method::Inspector, kind))
+    }
+}
+
+impl Auth for RemoteProvider {
     fn auth_methods(&self) -> Vec<AuthMethod> {
         self.fallible(self.invoke(None, Method::AuthMethods, ()))
     }
@@ -500,25 +507,31 @@ impl Provider for RemoteProvider {
         self.invoke(cx.deadline, Method::SignOut, connection)
     }
 
-    fn console_url(
+    fn identity(
         &self,
+        cx: &Call<'_>,
+        connection: &ConnectionId,
+        selection: &Selection,
+    ) -> Result<String, ProviderError> {
+        self.invoke(cx.deadline, Method::Identity, (connection, selection))
+    }
+
+    fn check_access(
+        &self,
+        cx: &Call<'_>,
         connection: &ConnectionId,
         kind: &KindId,
-        resource: &Instance,
-    ) -> Option<String> {
-        self.invoke::<_, Option<String>>(None, Method::ConsoleUrl, (connection, kind, resource))
-            .ok()
-            .flatten()
+        selection: &Selection,
+    ) -> Result<(), ProviderError> {
+        self.invoke(
+            cx.deadline,
+            Method::CheckAccess,
+            (connection, kind, selection),
+        )
     }
+}
 
-    fn fields(&self, kind: &KindId) -> Vec<FieldDef> {
-        self.fallible(self.invoke(None, Method::Fields, kind))
-    }
-
-    fn inspector(&self, kind: &KindId) -> Vec<InspectorSectionDef> {
-        self.fallible(self.invoke(None, Method::Inspector, kind))
-    }
-
+impl Config for RemoteProvider {
     fn settings(&self) -> Vec<SettingDef> {
         self.plugin.declared_settings().to_vec()
     }
@@ -527,7 +540,6 @@ impl Provider for RemoteProvider {
         self.plugin.notify_settings_changed(&self.provider, changed);
     }
 }
-
 #[cfg(test)]
 mod tests {
     use std::path::Path;

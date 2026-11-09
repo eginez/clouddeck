@@ -77,7 +77,7 @@ fn registry_entry(
 mod registry_entry_tests {
     use super::*;
     use clouddeck_provider_api::{
-        Call, Connection, Dimension, KindInfo, ListResult, ProviderError,
+        Browse, Call, Connection, Dimension, KindInfo, ListResult, ProviderError,
     };
 
     struct Named(&'static str);
@@ -91,7 +91,9 @@ mod registry_entry_tests {
                 connection_label: "Profile".to_string(),
             }
         }
+    }
 
+    impl Browse for Named {
         fn connections(&self, _cx: &Call<'_>) -> Result<Vec<Connection>, ProviderError> {
             Ok(Vec::new())
         }

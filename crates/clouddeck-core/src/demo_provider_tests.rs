@@ -3,8 +3,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use clouddeck_provider_api::{
-    AuthAnswer, AuthInput, AuthMethod, AuthStatus, AuthStep, Call, ConnectionId, ErrorKind, FlowId,
-    Host, KindId, ListResult, LogLevel, Provider, ProviderError, ResourceId, Selection, ValueId,
+    Auth, AuthAnswer, AuthInput, AuthMethod, AuthStatus, AuthStep, Browse, Call, ConnectionId,
+    ErrorKind, FlowId, Host, KindId, ListResult, LogLevel, Provider, ProviderError, ResourceId,
+    Selection, ValueId,
 };
 
 use crate::demo_provider::{DemoProvider, demo_provider};

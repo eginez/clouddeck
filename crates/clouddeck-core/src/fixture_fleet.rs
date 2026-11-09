@@ -3,7 +3,7 @@
 use std::sync::{Arc, Condvar, Mutex};
 
 use clouddeck_provider_api::{
-    Call, Connection, ConnectionId, DimValue, Dimension, DimensionId, FieldDef,
+    Browse, Call, Connection, ConnectionId, DimValue, Dimension, DimensionId, FieldDef,
     InspectorSectionDef, KindId, KindInfo, ListResult, Provider, ProviderError, ProviderInfo,
     Selection, ValueId,
 };
@@ -248,7 +248,9 @@ impl Provider for StaticProvider {
     fn info(&self) -> ProviderInfo {
         self.info.clone()
     }
+}
 
+impl Browse for StaticProvider {
     fn connections(&self, _cx: &Call<'_>) -> Result<Vec<Connection>, ProviderError> {
         Ok(connections())
     }

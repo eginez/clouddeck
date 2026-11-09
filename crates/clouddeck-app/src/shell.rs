@@ -1278,6 +1278,7 @@ impl Render for AppShell {
 #[cfg(test)]
 mod provider_switch_tests {
     use super::*;
+    use clouddeck_core::Browse;
     use gpui::{TestAppContext, VisualTestContext};
 
     fn add_rooted_shell(
@@ -1318,7 +1319,9 @@ mod provider_switch_tests {
         fn info(&self) -> clouddeck_core::ProviderInfo {
             self.0.info()
         }
+    }
 
+    impl Browse for SignedOut {
         fn connections(
             &self,
             _cx: &clouddeck_core::Call<'_>,
@@ -1843,7 +1846,9 @@ mod provider_switch_tests {
         fn info(&self) -> clouddeck_core::ProviderInfo {
             self.0.info()
         }
+    }
 
+    impl Browse for Unauthenticated {
         fn connections(
             &self,
             _cx: &clouddeck_core::Call<'_>,

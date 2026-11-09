@@ -272,8 +272,9 @@ mod tests {
     use crate::query::fixtures::bare_ec2;
     use crate::service_provider::{service_provider, whole_load_failure};
     use crate::{
-        BoxError, Call, CloudDeckError, Connection, ConnectionId, Dimension, FieldDef, KindId,
-        KindInfo, ListResult, MockComputeService, Provider, ProviderError, Selection, native_id,
+        BoxError, Browse, Call, CloudDeckError, Connection, ConnectionId, Dimension, FieldDef,
+        KindId, KindInfo, ListResult, MockComputeService, Provider, ProviderError, Selection,
+        native_id,
     };
 
     /// Wraps a provider so it reports a different id, since the mock service always reports "aws".
@@ -291,7 +292,9 @@ mod tests {
                 connection_label: "Profile".to_string(),
             }
         }
+    }
 
+    impl Browse for Named {
         fn connections(&self, cx: &Call<'_>) -> Result<Vec<Connection>, ProviderError> {
             self.inner.connections(cx)
         }

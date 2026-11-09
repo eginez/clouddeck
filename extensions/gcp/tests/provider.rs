@@ -3,7 +3,7 @@ mod common;
 use std::sync::Arc;
 
 use clouddeck_extension_api::{
-    AuthInput, AuthStatus, AuthStep, ConnectionId, ErrorKind, KindId, Provider, ResourceId,
+    Auth, AuthInput, AuthStatus, AuthStep, Browse, ConnectionId, ErrorKind, KindId, ResourceId,
     Selection, StateKind, ValueId,
 };
 use common::{FakeHttp, TestHost, call, fixture, provider, provider_with};
@@ -12,7 +12,7 @@ fn prod() -> ConnectionId {
     ConnectionId::from("demo-prod")
 }
 
-fn list(p: &impl Provider, zones: &[&str]) -> clouddeck_extension_api::ListResult {
+fn list(p: &impl Browse, zones: &[&str]) -> clouddeck_extension_api::ListResult {
     let host = TestHost;
     let ids = zones.iter().map(|z| ValueId::from(*z)).collect();
     let selection = Selection::new().with("zone", ids);

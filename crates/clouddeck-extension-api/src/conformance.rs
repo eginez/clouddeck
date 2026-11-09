@@ -9,9 +9,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use clouddeck_provider_api::{
-    AuthAnswer, AuthInput, AuthMethod, AuthStatus, AuthStep, Call, ConnectionId, Dimension,
-    DimensionId, ErrorKind, FlowId, Host, Instance, KindId, ListResult, LogLevel, Provider,
-    ProviderError, ResourceId, Selection, SettingDef, ValueId, settings_mismatches,
+    Auth, AuthAnswer, AuthInput, AuthMethod, AuthStatus, AuthStep, Call, ConnectionId, Dimension,
+    DimensionId, ErrorKind, FlowId, Host, Instance, KindId, ListResult, LogLevel, NoConfig,
+    Provider, ProviderError, ResourceId, Selection, SettingDef, ValueId, settings_mismatches,
 };
 
 const MISSING: &str = "conformance-no-such-value";
@@ -116,11 +116,16 @@ pub fn check_provider(shared: Arc<dyn Provider>) -> Vec<String> {
 
 /// Checks that the provider's own settings match the manifest's copy, key for key.
 pub fn check_manifest_settings(p: &dyn Provider, declared: &[SettingDef]) -> Vec<String> {
-    settings_mismatches(&p.settings(), declared)
+    settings_mismatches(&p.config().unwrap_or(&NoConfig).settings(), declared)
 }
 
 fn check_settings(p: &dyn Provider, cx: &Call<'_>, r: &mut Report) {
-    let defs = r.guard("settings()", || p.settings()).unwrap_or_default();
+    let Some(config) = p.config() else {
+        return;
+    };
+    let defs = r
+        .guard("settings()", || config.settings())
+        .unwrap_or_default();
     let mut keys = Vec::new();
     for def in &defs {
         if let Err(error) = def.check() {
@@ -130,9 +135,11 @@ fn check_settings(p: &dyn Provider, cx: &Call<'_>, r: &mut Report) {
     }
     r.unique("settings()", keys);
     r.guard("settings_changed(unknown key)", || {
-        p.settings_changed(cx, &["conformance-no-such-setting".to_string()]);
+        config.settings_changed(cx, &["conformance-no-such-setting".to_string()]);
     });
-    r.guard("settings_changed(empty)", || p.settings_changed(cx, &[]));
+    r.guard("settings_changed(empty)", || {
+        config.settings_changed(cx, &[])
+    });
 }
 
 fn check_kinds(p: &dyn Provider, r: &mut Report) -> Vec<KindId> {
@@ -477,13 +484,16 @@ fn check_resource_views(
 }
 
 fn check_auth(p: &dyn Provider, cx: &Call<'_>, r: &mut Report) {
+    let Some(auth) = p.auth() else {
+        return;
+    };
     let conn = ConnectionId::from("conformance");
     let methods = r
-        .guard("auth_methods()", || p.auth_methods())
+        .guard("auth_methods()", || auth.auth_methods())
         .unwrap_or_default();
     r.unique("auth_methods()", methods.iter().map(|m| m.id.clone()));
     let declared: Vec<String> = r
-        .guard("settings()", || p.settings())
+        .guard("settings()", || p.config().unwrap_or(&NoConfig).settings())
         .unwrap_or_default()
         .into_iter()
         .map(|def| def.key)
@@ -497,28 +507,28 @@ fn check_auth(p: &dyn Provider, cx: &Call<'_>, r: &mut Report) {
                 ));
             }
         }
-        check_auth_flow(p, cx, r, None, method);
-        check_auth_flow(p, cx, r, Some(&conn), method);
+        check_auth_flow(auth, cx, r, None, method);
+        check_auth_flow(auth, cx, r, Some(&conn), method);
     }
     let unknown = FlowId::from("conformance-no-such-flow");
     if let Some(Ok(_)) = r.guard("continue_auth() unknown FlowId", || {
-        p.continue_auth(cx, &unknown, AuthAnswer::Poll)
+        auth.continue_auth(cx, &unknown, AuthAnswer::Poll)
     }) {
         r.fail("continue_auth() accepted an unknown FlowId");
     }
-    r.guard("auth_status()", || p.auth_status(cx, Some(&conn)));
-    r.guard("sign_out()", || p.sign_out(cx, Some(&conn)));
+    r.guard("auth_status()", || auth.auth_status(cx, Some(&conn)));
+    r.guard("sign_out()", || auth.sign_out(cx, Some(&conn)));
 }
 
-fn is_signed_out(p: &dyn Provider, cx: &Call<'_>, conn: Option<&ConnectionId>) -> bool {
+fn is_signed_out(auth: &dyn Auth, cx: &Call<'_>, conn: Option<&ConnectionId>) -> bool {
     matches!(
-        catch_unwind(AssertUnwindSafe(|| p.auth_status(cx, conn))),
+        catch_unwind(AssertUnwindSafe(|| auth.auth_status(cx, conn))),
         Ok(AuthStatus::SignedOut)
     )
 }
 
 fn check_auth_flow(
-    p: &dyn Provider,
+    auth: &dyn Auth,
     cx: &Call<'_>,
     r: &mut Report,
     conn: Option<&ConnectionId>,
@@ -533,9 +543,9 @@ fn check_auth_flow(
     } else {
         "begin_auth(None)"
     };
-    let begun = match r.guard(what, || p.begin_auth(cx, method, input)) {
+    let begun = match r.guard(what, || auth.begin_auth(cx, method, input)) {
         Some(Ok(step)) => Some(step),
-        Some(Err(error)) if error.kind == ErrorKind::Auth && is_signed_out(p, cx, conn) => None,
+        Some(Err(error)) if error.kind == ErrorKind::Auth && is_signed_out(auth, cx, conn) => None,
         Some(Err(error)) if conn.is_none() && error.kind == ErrorKind::Unsupported => None,
         Some(Err(error)) => {
             r.fail(format!("{what} failed: {error}"));
@@ -561,7 +571,7 @@ fn check_auth_flow(
             r.fail(format!("auth method {} issued an empty FlowId", method.id));
             return;
         }
-        let Some(next) = r.ok("continue_auth()", || p.continue_auth(cx, &flow, answer)) else {
+        let Some(next) = r.ok("continue_auth()", || auth.continue_auth(cx, &flow, answer)) else {
             return;
         };
         step = next;

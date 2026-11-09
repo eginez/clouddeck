@@ -3,9 +3,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use clouddeck_provider_api::{
-    Call, CellFailure, Connection, ConnectionId, Dimension, ErrorKind, FieldDef, Host, INSTANCES,
-    InspectorSectionDef, Instance, KindId, KindInfo, ListResult, LogLevel, Provider, ProviderError,
-    ProviderInfo, Selection, ValueId,
+    Browse, Call, CellFailure, Connection, ConnectionId, Dimension, ErrorKind, FieldDef, Host,
+    INSTANCES, InspectorSectionDef, Instance, KindId, KindInfo, ListResult, LogLevel, Provider,
+    ProviderError, ProviderInfo, Selection, ValueId,
 };
 
 use crate::console_url::console_url_for_instance;
@@ -163,7 +163,9 @@ impl Provider for ServiceProvider {
     fn info(&self) -> ProviderInfo {
         info()
     }
+}
 
+impl Browse for ServiceProvider {
     fn connections(&self, _cx: &Call<'_>) -> Result<Vec<Connection>, ProviderError> {
         Ok(connections())
     }

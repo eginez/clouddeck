@@ -1233,9 +1233,9 @@ mod tests {
 
     use clouddeck_core::fixture_fleet as fixtures;
     use clouddeck_core::{
-        Call, CloudDeckError, Connection, ConnectionId, Dimension, FieldDef, InspectorSectionDef,
-        KindId, KindInfo, ListResult, Provider, ProviderError, ProviderInfo, Selection,
-        whole_load_failure,
+        Browse, Call, CloudDeckError, Connection, ConnectionId, Dimension, FieldDef,
+        InspectorSectionDef, KindId, KindInfo, ListResult, Provider, ProviderError, ProviderInfo,
+        Selection, whole_load_failure,
     };
     use gpui::{Bounds, Entity, MouseButton, TestAppContext, VisualTestContext, point, size};
 
@@ -1293,7 +1293,9 @@ mod tests {
         fn info(&self) -> ProviderInfo {
             self.inner.info()
         }
+    }
 
+    impl Browse for CountingProvider {
         fn connections(&self, cx: &Call<'_>) -> Result<Vec<Connection>, ProviderError> {
             self.inner.connections(cx)
         }

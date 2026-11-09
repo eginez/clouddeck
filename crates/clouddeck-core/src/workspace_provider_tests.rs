@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use clouddeck_provider_api::{
-    Call, Connection, ConnectionId, Dimension, ErrorKind, FieldDef, Host, Instance, KindId,
+    Browse, Call, Connection, ConnectionId, Dimension, ErrorKind, FieldDef, Host, Instance, KindId,
     KindInfo, ListResult, LogLevel, Provider, ProviderError, ProviderInfo, Selection, ValueId,
 };
 
@@ -446,7 +446,9 @@ impl Provider for Spy {
             connection_label: "Profile".to_string(),
         }
     }
+}
 
+impl Browse for Spy {
     fn connections(&self, _cx: &Call<'_>) -> Result<Vec<Connection>, ProviderError> {
         Ok(Vec::new())
     }

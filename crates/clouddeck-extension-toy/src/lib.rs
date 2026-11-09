@@ -1,10 +1,10 @@
 //! Minimal extension used to exercise the boundary and the conformance kit.
 
 use clouddeck_extension_api::{
-    AuthAnswer, AuthInput, AuthMethod, AuthStep, Call, Connection, ConnectionId, Dimension,
-    ErrorKind, Extension, FieldDef, FlowId, INSTANCES, Instance, KindId, KindInfo, ListResult,
-    Provider, ProviderError, ProviderInfo, ResourceId, Selection, SettingDef, SettingKind,
-    SettingValue, register_extension,
+    Auth, AuthAnswer, AuthInput, AuthMethod, AuthStep, Browse, Call, Config, Connection,
+    ConnectionId, Dimension, ErrorKind, Extension, FieldDef, FlowId, INSTANCES, Instance, KindId,
+    KindInfo, ListResult, Provider, ProviderError, ProviderInfo, ResourceId, Selection, SettingDef,
+    SettingKind, SettingValue, register_extension,
 };
 
 pub struct Toy;
@@ -44,29 +44,16 @@ impl Provider for ToyProvider {
         }
     }
 
-    fn settings(&self) -> Vec<SettingDef> {
-        vec![
-            SettingDef {
-                key: "display_name".into(),
-                label: "Display name".into(),
-                description: None,
-                group: None,
-                kind: SettingKind::Text,
-                default: Some(SettingValue::Text("Default".into())),
-                secret: false,
-            },
-            SettingDef {
-                key: "config_dir".into(),
-                label: "Config folder".into(),
-                description: None,
-                group: None,
-                kind: SettingKind::Folder,
-                default: None,
-                secret: false,
-            },
-        ]
+    fn auth(&self) -> Option<&dyn Auth> {
+        Some(self)
     }
 
+    fn config(&self) -> Option<&dyn Config> {
+        Some(self)
+    }
+}
+
+impl Browse for ToyProvider {
     fn connections(&self, cx: &Call<'_>) -> Result<Vec<Connection>, ProviderError> {
         let display_name = cx
             .host
@@ -120,7 +107,9 @@ impl Provider for ToyProvider {
     fn fields(&self, _: &KindId) -> Vec<FieldDef> {
         Vec::new()
     }
+}
 
+impl Auth for ToyProvider {
     fn auth_methods(&self) -> Vec<AuthMethod> {
         vec![AuthMethod {
             id: "config".into(),
@@ -146,5 +135,30 @@ impl Provider for ToyProvider {
         _: AuthAnswer,
     ) -> Result<AuthStep, ProviderError> {
         Err(ProviderError::of(ErrorKind::Unsupported))
+    }
+}
+
+impl Config for ToyProvider {
+    fn settings(&self) -> Vec<SettingDef> {
+        vec![
+            SettingDef {
+                key: "display_name".into(),
+                label: "Display name".into(),
+                description: None,
+                group: None,
+                kind: SettingKind::Text,
+                default: Some(SettingValue::Text("Default".into())),
+                secret: false,
+            },
+            SettingDef {
+                key: "config_dir".into(),
+                label: "Config folder".into(),
+                description: None,
+                group: None,
+                kind: SettingKind::Folder,
+                default: None,
+                secret: false,
+            },
+        ]
     }
 }

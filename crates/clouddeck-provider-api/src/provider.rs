@@ -43,8 +43,8 @@ pub struct ListResult {
     pub failures: Vec<CellFailure>,
 }
 
-pub trait Provider: Send + Sync {
-    fn info(&self) -> ProviderInfo;
+/// What a provider exposes to browse: connections, dimensions, kinds, resources and their fields.
+pub trait Browse: Send + Sync {
     /// Err with kind Auth means the user must sign in first.
     fn connections(&self, cx: &Call<'_>) -> Result<Vec<Connection>, ProviderError>;
     fn dimensions(
@@ -71,14 +71,21 @@ pub trait Provider: Send + Sync {
         Err(ProviderError::unsupported())
     }
 
-    /// Settings this provider reads through `Host::setting`. Also declared in the manifest.
-    fn settings(&self) -> Vec<SettingDef> {
+    fn console_url(
+        &self,
+        connection: &ConnectionId,
+        kind: &KindId,
+        resource: &Instance,
+    ) -> Option<String>;
+    fn fields(&self, kind: &KindId) -> Vec<FieldDef>;
+
+    fn inspector(&self, _kind: &KindId) -> Vec<InspectorSectionDef> {
         Vec::new()
     }
+}
 
-    /// Called after the host stored a new value for one of `changed`, so caches can be dropped.
-    fn settings_changed(&self, _cx: &Call<'_>, _changed: &[String]) {}
-
+/// How a connection signs in and whether it is signed in.
+pub trait Auth: Send + Sync {
     fn auth_methods(&self) -> Vec<AuthMethod> {
         Vec::new()
     }
@@ -114,18 +121,6 @@ pub trait Provider: Send + Sync {
         Ok(())
     }
 
-    fn console_url(
-        &self,
-        connection: &ConnectionId,
-        kind: &KindId,
-        resource: &Instance,
-    ) -> Option<String>;
-    fn fields(&self, kind: &KindId) -> Vec<FieldDef>;
-
-    fn inspector(&self, _kind: &KindId) -> Vec<InspectorSectionDef> {
-        Vec::new()
-    }
-
     /// The account the connection signs in as, checked with the selection's scope.
     fn identity(
         &self,
@@ -147,6 +142,37 @@ pub trait Provider: Send + Sync {
         Err(ProviderError::unsupported())
     }
 }
+
+/// Settings this provider reads through `Host::setting`. Also declared in the manifest.
+pub trait Config: Send + Sync {
+    fn settings(&self) -> Vec<SettingDef> {
+        Vec::new()
+    }
+
+    /// Called after the host stored a new value for one of `changed`, so caches can be dropped.
+    fn settings_changed(&self, _cx: &Call<'_>, _changed: &[String]) {}
+}
+
+/// A provider without `auth()` needs no sign-in; without `config()` it has no settings.
+pub trait Provider: Browse {
+    fn info(&self) -> ProviderInfo;
+    fn auth(&self) -> Option<&dyn Auth> {
+        None
+    }
+    fn config(&self) -> Option<&dyn Config> {
+        None
+    }
+}
+
+/// Callers use this in place of a missing `auth()`: every method is the trait default.
+pub struct NoAuth;
+
+impl Auth for NoAuth {}
+
+/// Callers use this in place of a missing `config()`: no settings.
+pub struct NoConfig;
+
+impl Config for NoConfig {}
 
 #[cfg(test)]
 mod tests {
@@ -192,7 +218,11 @@ mod tests {
                 connection_label: "Profile".to_string(),
             }
         }
+    }
 
+    impl Auth for EmptyProvider {}
+
+    impl Browse for EmptyProvider {
         fn connections(&self, _cx: &Call<'_>) -> Result<Vec<Connection>, ProviderError> {
             Ok(vec![])
         }
@@ -239,7 +269,9 @@ mod tests {
         fn info(&self) -> ProviderInfo {
             EmptyProvider.info()
         }
+    }
 
+    impl Browse for TreeProvider {
         fn connections(&self, _cx: &Call<'_>) -> Result<Vec<Connection>, ProviderError> {
             Ok(vec![])
         }

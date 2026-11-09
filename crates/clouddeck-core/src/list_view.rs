@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
-use clouddeck_provider_api::AuthStatus;
+use clouddeck_provider_api::{AuthStatus, NoAuth};
 use clouddeck_provider_kit::scoped_provider::{ScopeSettings, scoped_provider};
 
 use crate::service_provider::{LoadHost, REGION};
@@ -253,7 +253,7 @@ pub fn all_providers_view(
     {
         let info = provider.info();
         if matches!(
-            provider.auth_status(&call, None),
+            provider.auth().unwrap_or(&NoAuth).auth_status(&call, None),
             AuthStatus::SignedOut | AuthStatus::Expired
         ) {
             unavailable.push(ProviderFailure {

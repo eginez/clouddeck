@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use clouddeck_provider_api::{
     AuthAnswer, AuthInput, AuthMethod, Call, ConnectionId, ErrorKind, FlowId, Host, Instance,
-    KindId, Provider, ProviderError, ResourceId, Selection,
+    KindId, NoAuth, NoConfig, Provider, ProviderError, ResourceId, Selection,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -157,13 +157,19 @@ fn catalog_call<E: Extension>(
             host,
             request,
             |p, cx, (connection, selection): (ConnectionId, Selection)| {
-                p.identity(cx, &connection, &selection)
+                p.auth()
+                    .unwrap_or(&NoAuth)
+                    .identity(cx, &connection, &selection)
             },
         ),
-        Method::Settings => serve(extension, host, request, |p, _, ()| Ok(p.settings())),
+        Method::Settings => serve(extension, host, request, |p, _, ()| {
+            Ok(p.config().unwrap_or(&NoConfig).settings())
+        }),
         Method::SettingsChanged => {
             serve(extension, host, request, |p, cx, changed: Vec<String>| {
-                p.settings_changed(cx, &changed);
+                p.config()
+                    .unwrap_or(&NoConfig)
+                    .settings_changed(cx, &changed);
                 Ok(())
             })
         }
@@ -179,39 +185,55 @@ fn auth_call<E: Extension>(
     request: &[u8],
 ) -> Option<Vec<u8>> {
     let response = match method {
-        Method::AuthMethods => serve(extension, host, request, |p, _, ()| Ok(p.auth_methods())),
+        Method::AuthMethods => serve(extension, host, request, |p, _, ()| {
+            Ok(p.auth().unwrap_or(&NoAuth).auth_methods())
+        }),
         Method::BeginAuth => serve(
             extension,
             host,
             request,
             |p, cx, (auth_method, input): (AuthMethod, AuthInput)| {
-                p.begin_auth(cx, &auth_method, input)
+                p.auth()
+                    .unwrap_or(&NoAuth)
+                    .begin_auth(cx, &auth_method, input)
             },
         ),
         Method::ContinueAuth => serve(
             extension,
             host,
             request,
-            |p, cx, (flow, answer): (FlowId, AuthAnswer)| p.continue_auth(cx, &flow, answer),
+            |p, cx, (flow, answer): (FlowId, AuthAnswer)| {
+                p.auth().unwrap_or(&NoAuth).continue_auth(cx, &flow, answer)
+            },
         ),
         Method::AuthStatus => serve(
             extension,
             host,
             request,
-            |p, cx, connection: Option<ConnectionId>| Ok(p.auth_status(cx, connection.as_ref())),
+            |p, cx, connection: Option<ConnectionId>| {
+                Ok(p.auth()
+                    .unwrap_or(&NoAuth)
+                    .auth_status(cx, connection.as_ref()))
+            },
         ),
         Method::SignOut => serve(
             extension,
             host,
             request,
-            |p, cx, connection: Option<ConnectionId>| p.sign_out(cx, connection.as_ref()),
+            |p, cx, connection: Option<ConnectionId>| {
+                p.auth()
+                    .unwrap_or(&NoAuth)
+                    .sign_out(cx, connection.as_ref())
+            },
         ),
         Method::CheckAccess => serve(
             extension,
             host,
             request,
             |p, cx, (connection, kind, selection): (ConnectionId, KindId, Selection)| {
-                p.check_access(cx, &connection, &kind, &selection)
+                p.auth()
+                    .unwrap_or(&NoAuth)
+                    .check_access(cx, &connection, &kind, &selection)
             },
         ),
         _ => return None,

@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use clouddeck_provider_api::{
-    Call, CellFailure, Connection, ConnectionId, DimValue, Dimension, DimensionId, ErrorKind,
-    FieldDef, INSTANCES, InspectorSectionDef, Instance, KindId, KindInfo, ListResult, Provider,
-    ProviderError, ProviderInfo, Selection, ValueId,
+    Browse, Call, CellFailure, Connection, ConnectionId, DimValue, Dimension, DimensionId,
+    ErrorKind, FieldDef, INSTANCES, InspectorSectionDef, Instance, KindId, KindInfo, ListResult,
+    Provider, ProviderError, ProviderInfo, Selection, ValueId,
 };
 
 use crate::console_url::console_url_for_instance;
@@ -122,7 +122,9 @@ impl Provider for ComputeServiceProvider {
             connection_label: "Profile".to_string(),
         }
     }
+}
 
+impl Browse for ComputeServiceProvider {
     fn connections(&self, _cx: &Call<'_>) -> Result<Vec<Connection>, ProviderError> {
         Ok(self.connections.clone())
     }

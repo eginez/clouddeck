@@ -28,6 +28,14 @@ clouddeck-extension-api = { git = "https://github.com/eginez/clouddeck", tag = "
   calls (a token cache, a client, a session) belongs in the `Extension` struct, which is shared by all
   calls and must be `Send + Sync`.
 
+## The Provider traits
+
+`Provider` is split into four traits in `clouddeck-provider-api`. `Browse` (connections, dimensions,
+kinds, list, describe, console_url, fields, inspector) is required and is the supertrait of `Provider`.
+`Auth` and `Config` are optional: `Provider::auth()` and `Provider::config()` return `None` by default,
+and the host then behaves as if the provider had no sign-in and no settings. Return `Some(self)` from
+those accessors to opt in. The wire methods and their names are unchanged by the split.
+
 ## Boundary format
 
 - Requests and responses cross `clouddeck_call` as MessagePack in the map form with field names
@@ -36,7 +44,7 @@ clouddeck-extension-api = { git = "https://github.com/eginez/clouddeck", tag = "
 - Fields are named on the wire, so unknown fields are ignored and missing fields take their serde
   default. `#[serde(skip_serializing_if)]`, `#[serde(flatten)]`, `#[serde(untagged)]` and tagged
   enums all work on types that cross the boundary.
-- Host and extension are built against the same `API_VERSION`, which is 6 for this format.
+- Host and extension are built against the same `API_VERSION`, which is 7 for this format.
   Manifests and host state files are still JSON and TOML and are unaffected.
 
 ## Loading
@@ -198,7 +206,7 @@ sign in again when a token cannot be stored.
 ## Settings
 
 A provider declares the settings it reads in two places that must match: the `settings` method of
-the `Provider` trait (the source of truth) and `[[settings]]` tables in `extension.toml`:
+the `Config` trait (the source of truth) and `[[settings]]` tables in `extension.toml`:
 
 ```toml
 [[settings]]

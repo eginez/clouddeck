@@ -3,9 +3,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use clouddeck_provider_api::{
-    AuthAnswer, AuthInput, AuthMethod, AuthStatus, AuthStep, Call, Connection, ConnectionId,
-    Dimension, ExtrasSection, FieldDef, FlowId, Host, InspectorSectionDef, Instance, KindId,
-    KindInfo, ListResult, LogLevel, Provider, ProviderError, ProviderInfo, ResourceId, Selection,
+    Auth, AuthAnswer, AuthInput, AuthMethod, AuthStatus, AuthStep, Browse, Call, Connection,
+    ConnectionId, Dimension, ExtrasSection, FieldDef, FlowId, Host, InspectorSectionDef, Instance,
+    KindId, KindInfo, ListResult, LogLevel, NoAuth, Provider, ProviderError, ProviderInfo,
+    ResourceId, Selection,
 };
 
 use crate::demo_fleet::DemoFleet;
@@ -148,6 +149,12 @@ impl Provider for ScopedProvider {
         self.inner.info()
     }
 
+    fn auth(&self) -> Option<&dyn Auth> {
+        self.inner.auth().map(|_| self as &dyn Auth)
+    }
+}
+
+impl Browse for ScopedProvider {
     fn connections(&self, cx: &Call<'_>) -> Result<Vec<Connection>, ProviderError> {
         self.inner.connections(cx)
     }
@@ -190,44 +197,6 @@ impl Provider for ScopedProvider {
         self.inner.describe(cx, &self.connection, kind, id)
     }
 
-    fn auth_methods(&self) -> Vec<AuthMethod> {
-        self.inner.auth_methods()
-    }
-
-    fn begin_auth(
-        &self,
-        cx: &Call<'_>,
-        method: &AuthMethod,
-        input: AuthInput,
-    ) -> Result<AuthStep, ProviderError> {
-        let input = AuthInput {
-            connection: Some(self.connection.clone()),
-            ..input
-        };
-        self.inner.begin_auth(cx, method, input)
-    }
-
-    fn continue_auth(
-        &self,
-        cx: &Call<'_>,
-        flow: &FlowId,
-        answer: AuthAnswer,
-    ) -> Result<AuthStep, ProviderError> {
-        self.inner.continue_auth(cx, flow, answer)
-    }
-
-    fn auth_status(&self, cx: &Call<'_>, _connection: Option<&ConnectionId>) -> AuthStatus {
-        self.inner.auth_status(cx, Some(&self.connection))
-    }
-
-    fn sign_out(
-        &self,
-        cx: &Call<'_>,
-        _connection: Option<&ConnectionId>,
-    ) -> Result<(), ProviderError> {
-        self.inner.sign_out(cx, Some(&self.connection))
-    }
-
     fn console_url(
         &self,
         _connection: &ConnectionId,
@@ -243,5 +212,57 @@ impl Provider for ScopedProvider {
 
     fn inspector(&self, kind: &KindId) -> Vec<InspectorSectionDef> {
         self.inner.inspector(kind)
+    }
+}
+
+impl Auth for ScopedProvider {
+    fn auth_methods(&self) -> Vec<AuthMethod> {
+        self.inner.auth().unwrap_or(&NoAuth).auth_methods()
+    }
+
+    fn begin_auth(
+        &self,
+        cx: &Call<'_>,
+        method: &AuthMethod,
+        input: AuthInput,
+    ) -> Result<AuthStep, ProviderError> {
+        let input = AuthInput {
+            connection: Some(self.connection.clone()),
+            ..input
+        };
+        self.inner
+            .auth()
+            .unwrap_or(&NoAuth)
+            .begin_auth(cx, method, input)
+    }
+
+    fn continue_auth(
+        &self,
+        cx: &Call<'_>,
+        flow: &FlowId,
+        answer: AuthAnswer,
+    ) -> Result<AuthStep, ProviderError> {
+        self.inner
+            .auth()
+            .unwrap_or(&NoAuth)
+            .continue_auth(cx, flow, answer)
+    }
+
+    fn auth_status(&self, cx: &Call<'_>, _connection: Option<&ConnectionId>) -> AuthStatus {
+        self.inner
+            .auth()
+            .unwrap_or(&NoAuth)
+            .auth_status(cx, Some(&self.connection))
+    }
+
+    fn sign_out(
+        &self,
+        cx: &Call<'_>,
+        _connection: Option<&ConnectionId>,
+    ) -> Result<(), ProviderError> {
+        self.inner
+            .auth()
+            .unwrap_or(&NoAuth)
+            .sign_out(cx, Some(&self.connection))
     }
 }

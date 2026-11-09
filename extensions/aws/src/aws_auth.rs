@@ -10,10 +10,10 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::SystemTime;
 
 use clouddeck_provider_api::{
-    AuthAnswer, AuthInput, AuthMethod, AuthStatus, AuthStep, Call, Connection, ConnectionId,
-    ErrorKind, FieldDef, FlowId, InspectorSectionDef, Instance, KindId, KindInfo, ListResult,
-    Provider, ProviderError, ProviderInfo, Selection, SettingDef, SettingKind, SettingOption,
-    SettingValue,
+    Auth, AuthAnswer, AuthInput, AuthMethod, AuthStatus, AuthStep, Browse, Call, Config,
+    Connection, ConnectionId, ErrorKind, FieldDef, FlowId, InspectorSectionDef, Instance, KindId,
+    KindInfo, ListResult, Provider, ProviderError, ProviderInfo, Selection, SettingDef,
+    SettingKind, SettingOption, SettingValue,
 };
 
 use clouddeck_provider_kit::{
@@ -329,10 +329,16 @@ impl Provider for AwsProvider {
         self.inner.info()
     }
 
-    fn settings(&self) -> Vec<SettingDef> {
-        setting_defs()
+    fn auth(&self) -> Option<&dyn Auth> {
+        Some(self)
     }
 
+    fn config(&self) -> Option<&dyn Config> {
+        Some(self)
+    }
+}
+
+impl Browse for AwsProvider {
     fn connections(&self, cx: &Call<'_>) -> Result<Vec<Connection>, ProviderError> {
         let profiles = load_profiles_for(config_setting(cx).as_deref()).unwrap_or_default();
         Ok(profiles
@@ -390,7 +396,9 @@ impl Provider for AwsProvider {
     fn inspector(&self, kind: &KindId) -> Vec<InspectorSectionDef> {
         self.inner.inspector(kind)
     }
+}
 
+impl Auth for AwsProvider {
     fn auth_methods(&self) -> Vec<AuthMethod> {
         self.auth.methods()
     }
@@ -451,6 +459,12 @@ impl Provider for AwsProvider {
                 custom_config_file(cx),
             ),
         )
+    }
+}
+
+impl Config for AwsProvider {
+    fn settings(&self) -> Vec<SettingDef> {
+        setting_defs()
     }
 }
 
@@ -674,7 +688,9 @@ mod conformance {
     use std::time::Duration;
 
     use clouddeck_extension_api::conformance::{check_manifest_settings, check_provider};
-    use clouddeck_provider_api::{ExtrasSection, Host, LogLevel, ProviderError, ResourceId};
+    use clouddeck_provider_api::{
+        ExtrasSection, Host, LogLevel, NoAuth, NoConfig, ProviderError, ResourceId,
+    };
     use clouddeck_provider_kit::{
         BoxError, CloudDeckError, ComputeInstanceFilters, ComputeInstanceLoadResult,
         ComputeService, EC2Instance,
@@ -847,6 +863,16 @@ sso_role_name = Admin
             self.inner.info()
         }
 
+        fn auth(&self) -> Option<&dyn Auth> {
+            Some(self)
+        }
+
+        fn config(&self) -> Option<&dyn Config> {
+            Some(self)
+        }
+    }
+
+    impl Browse for Pinned {
         fn connections(&self, cx: &Call<'_>) -> Result<Vec<Connection>, ProviderError> {
             self.with_host(cx, |cx| self.inner.connections(cx))
         }
@@ -883,48 +909,6 @@ sso_role_name = Admin
             self.with_host(cx, |cx| self.inner.describe(cx, connection, kind, id))
         }
 
-        fn settings(&self) -> Vec<SettingDef> {
-            self.inner.settings()
-        }
-
-        fn settings_changed(&self, cx: &Call<'_>, changed: &[String]) {
-            self.with_host(cx, |cx| self.inner.settings_changed(cx, changed))
-        }
-
-        fn auth_methods(&self) -> Vec<AuthMethod> {
-            self.inner.auth_methods()
-        }
-
-        fn begin_auth(
-            &self,
-            cx: &Call<'_>,
-            method: &AuthMethod,
-            input: AuthInput,
-        ) -> Result<AuthStep, ProviderError> {
-            self.with_host(cx, |cx| self.inner.begin_auth(cx, method, input))
-        }
-
-        fn continue_auth(
-            &self,
-            cx: &Call<'_>,
-            flow: &FlowId,
-            answer: AuthAnswer,
-        ) -> Result<AuthStep, ProviderError> {
-            self.with_host(cx, |cx| self.inner.continue_auth(cx, flow, answer))
-        }
-
-        fn auth_status(&self, cx: &Call<'_>, connection: Option<&ConnectionId>) -> AuthStatus {
-            self.with_host(cx, |cx| self.inner.auth_status(cx, connection))
-        }
-
-        fn sign_out(
-            &self,
-            cx: &Call<'_>,
-            connection: Option<&ConnectionId>,
-        ) -> Result<(), ProviderError> {
-            self.with_host(cx, |cx| self.inner.sign_out(cx, connection))
-        }
-
         fn console_url(
             &self,
             connection: &ConnectionId,
@@ -941,6 +925,62 @@ sso_role_name = Admin
         fn inspector(&self, kind: &KindId) -> Vec<InspectorSectionDef> {
             self.inner.inspector(kind)
         }
+    }
+
+    impl Auth for Pinned {
+        fn auth_methods(&self) -> Vec<AuthMethod> {
+            self.inner.auth().unwrap_or(&NoAuth).auth_methods()
+        }
+
+        fn begin_auth(
+            &self,
+            cx: &Call<'_>,
+            method: &AuthMethod,
+            input: AuthInput,
+        ) -> Result<AuthStep, ProviderError> {
+            self.with_host(cx, |cx| {
+                self.inner
+                    .auth()
+                    .unwrap_or(&NoAuth)
+                    .begin_auth(cx, method, input)
+            })
+        }
+
+        fn continue_auth(
+            &self,
+            cx: &Call<'_>,
+            flow: &FlowId,
+            answer: AuthAnswer,
+        ) -> Result<AuthStep, ProviderError> {
+            self.with_host(cx, |cx| {
+                self.inner
+                    .auth()
+                    .unwrap_or(&NoAuth)
+                    .continue_auth(cx, flow, answer)
+            })
+        }
+
+        fn auth_status(&self, cx: &Call<'_>, connection: Option<&ConnectionId>) -> AuthStatus {
+            self.with_host(cx, |cx| {
+                self.inner
+                    .auth()
+                    .unwrap_or(&NoAuth)
+                    .auth_status(cx, connection)
+            })
+        }
+
+        fn sign_out(
+            &self,
+            cx: &Call<'_>,
+            connection: Option<&ConnectionId>,
+        ) -> Result<(), ProviderError> {
+            self.with_host(cx, |cx| {
+                self.inner
+                    .auth()
+                    .unwrap_or(&NoAuth)
+                    .sign_out(cx, connection)
+            })
+        }
 
         fn identity(
             &self,
@@ -948,7 +988,12 @@ sso_role_name = Admin
             connection: &ConnectionId,
             selection: &Selection,
         ) -> Result<String, ProviderError> {
-            self.with_host(cx, |cx| self.inner.identity(cx, connection, selection))
+            self.with_host(cx, |cx| {
+                self.inner
+                    .auth()
+                    .unwrap_or(&NoAuth)
+                    .identity(cx, connection, selection)
+            })
         }
 
         fn check_access(
@@ -959,7 +1004,25 @@ sso_role_name = Admin
             selection: &Selection,
         ) -> Result<(), ProviderError> {
             self.with_host(cx, |cx| {
-                self.inner.check_access(cx, connection, kind, selection)
+                self.inner
+                    .auth()
+                    .unwrap_or(&NoAuth)
+                    .check_access(cx, connection, kind, selection)
+            })
+        }
+    }
+
+    impl Config for Pinned {
+        fn settings(&self) -> Vec<SettingDef> {
+            self.inner.config().unwrap_or(&NoConfig).settings()
+        }
+
+        fn settings_changed(&self, cx: &Call<'_>, changed: &[String]) {
+            self.with_host(cx, |cx| {
+                self.inner
+                    .config()
+                    .unwrap_or(&NoConfig)
+                    .settings_changed(cx, changed)
             })
         }
     }

@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use crate::{AuthInput, AuthStep, Call, FlowId, Provider, ProviderError};
+use crate::{AuthInput, AuthStep, Call, FlowId, NoAuth, Provider, ProviderError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SignInAction {
@@ -46,12 +46,13 @@ pub fn sign_in_action(step: AuthStep) -> SignInAction {
 }
 
 pub fn start_sign_in(provider: &dyn Provider, call: &Call<'_>) -> Result<AuthStep, ProviderError> {
-    let method = provider
+    let auth = provider.auth().unwrap_or(&NoAuth);
+    let method = auth
         .auth_methods()
         .into_iter()
         .next()
         .ok_or_else(ProviderError::unsupported)?;
-    provider.begin_auth(
+    auth.begin_auth(
         call,
         &method,
         AuthInput {
@@ -84,8 +85,8 @@ pub fn sign_in_failed_message(provider_name: &str, error: &ProviderError) -> Str
 mod tests {
     use super::*;
     use crate::{
-        AuthMethod, Connection, ConnectionId, Dimension, ErrorKind, FieldDef, Host, Instance,
-        KindId, KindInfo, ListResult, LogLevel, ProviderInfo, Selection,
+        Auth, AuthMethod, Browse, Connection, ConnectionId, Dimension, ErrorKind, FieldDef, Host,
+        Instance, KindId, KindInfo, ListResult, LogLevel, ProviderInfo, Selection,
     };
     use std::path::PathBuf;
     use std::time::Duration;
@@ -136,6 +137,12 @@ mod tests {
             }
         }
 
+        fn auth(&self) -> Option<&dyn Auth> {
+            Some(self)
+        }
+    }
+
+    impl Browse for SignInProvider {
         fn connections(&self, _cx: &Call<'_>) -> Result<Vec<Connection>, ProviderError> {
             Ok(vec![])
         }
@@ -174,7 +181,9 @@ mod tests {
         fn fields(&self, _kind: &KindId) -> Vec<FieldDef> {
             vec![]
         }
+    }
 
+    impl Auth for SignInProvider {
         fn auth_methods(&self) -> Vec<AuthMethod> {
             if self.methods {
                 vec![AuthMethod::new(

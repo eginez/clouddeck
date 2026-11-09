@@ -9,8 +9,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use clouddeck_core::{
-    AuthAnswer, AuthStep, ErrorKind, FlowId, Provider, ProviderError, SignInAction, sign_in_action,
-    sign_in_failed_message, sign_in_message, start_sign_in,
+    AuthAnswer, AuthStep, ErrorKind, FlowId, NoAuth, Provider, ProviderError, SignInAction,
+    sign_in_action, sign_in_failed_message, sign_in_message, start_sign_in,
 };
 use gpui::{App, AsyncApp, Entity};
 
@@ -90,7 +90,15 @@ async fn drive(provider: Arc<dyn Provider>, fleet: &Entity<FleetState>, cx: &mut
                 }
                 let polled = off_thread(cx, {
                     let provider = provider.clone();
-                    move || with_call(|call| provider.continue_auth(call, &flow, AuthAnswer::Poll))
+                    move || {
+                        with_call(|call| {
+                            provider.auth().unwrap_or(&NoAuth).continue_auth(
+                                call,
+                                &flow,
+                                AuthAnswer::Poll,
+                            )
+                        })
+                    }
                 })
                 .await;
                 match polled {
@@ -115,7 +123,12 @@ pub(crate) fn expired_error() -> ProviderError {
 
 pub(crate) async fn cancel_flow(provider: Arc<dyn Provider>, flow: FlowId, cx: &AsyncApp) {
     let _ = off_thread(cx, move || {
-        with_call(|call| provider.continue_auth(call, &flow, AuthAnswer::Cancel))
+        with_call(|call| {
+            provider
+                .auth()
+                .unwrap_or(&NoAuth)
+                .continue_auth(call, &flow, AuthAnswer::Cancel)
+        })
     })
     .await;
 }
@@ -137,9 +150,9 @@ mod tests {
     use std::time::Duration;
 
     use clouddeck_core::{
-        AuthInput, AuthMethod, AuthStep, Call, Connection, ConnectionId, Dimension, ErrorKind,
-        FieldDef, Instance, InstanceListViewModel, KindId, KindInfo, ListResult, ProviderError,
-        ProviderInfo, Selection,
+        Auth, AuthInput, AuthMethod, AuthStep, Browse, Call, Connection, ConnectionId, Dimension,
+        ErrorKind, FieldDef, Instance, InstanceListViewModel, KindId, KindInfo, ListResult,
+        ProviderError, ProviderInfo, Selection,
     };
     use gpui::{AppContext as _, TestAppContext};
 
@@ -175,6 +188,12 @@ mod tests {
             }
         }
 
+        fn auth(&self) -> Option<&dyn Auth> {
+            Some(self)
+        }
+    }
+
+    impl Browse for FakeSignIn {
         fn connections(&self, _cx: &Call<'_>) -> Result<Vec<Connection>, ProviderError> {
             Ok(vec![])
         }
@@ -213,7 +232,9 @@ mod tests {
         fn fields(&self, _kind: &KindId) -> Vec<FieldDef> {
             vec![]
         }
+    }
 
+    impl Auth for FakeSignIn {
         fn auth_methods(&self) -> Vec<AuthMethod> {
             vec![AuthMethod::new(
                 "browser".to_string(),

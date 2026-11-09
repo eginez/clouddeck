@@ -5,11 +5,11 @@ use std::time::Duration;
 use clouddeck_extension_api::conformance::check_provider;
 use clouddeck_extension_api::wire::{Method, Request, decode, dispatch, encode};
 use clouddeck_extension_api::{
-    AuthAnswer, AuthInput, AuthMethod, AuthStatus, AuthStep, Call, CellFailure, Connection,
-    ConnectionId, CoreField, DimValue, Dimension, ErrorKind, Extension, ExtrasSection, FieldDef,
-    FieldKind, FieldSource, FlowId, Host, INSTANCES, Instance, KindId, KindInfo, ListResult,
-    LogLevel, MatchMode, PromptField, Provider, ProviderError, ProviderInfo, ResourceId, Selection,
-    ValueId,
+    Auth, AuthAnswer, AuthInput, AuthMethod, AuthStatus, AuthStep, Browse, Call, CellFailure,
+    Connection, ConnectionId, CoreField, DimValue, Dimension, ErrorKind, Extension, ExtrasSection,
+    FieldDef, FieldKind, FieldSource, FlowId, Host, INSTANCES, Instance, KindId, KindInfo,
+    ListResult, LogLevel, MatchMode, PromptField, Provider, ProviderError, ProviderInfo,
+    ResourceId, Selection, ValueId,
 };
 
 const REGION_TREE: [(&str, Option<&str>); 3] =
@@ -126,14 +126,12 @@ impl Provider for Fake {
         }
     }
 
-    fn auth_status(&self, _: &Call<'_>, _: Option<&ConnectionId>) -> AuthStatus {
-        if self.signed_out {
-            AuthStatus::SignedOut
-        } else {
-            AuthStatus::SignedIn { expires: None }
-        }
+    fn auth(&self) -> Option<&dyn Auth> {
+        Some(self)
     }
+}
 
+impl Browse for Fake {
     fn connections(&self, _: &Call<'_>) -> Result<Vec<Connection>, ProviderError> {
         if self.signed_out {
             return Err(ProviderError::of(ErrorKind::Auth));
@@ -233,6 +231,16 @@ impl Provider for Fake {
                 ),
             ],
             false => vec![],
+        }
+    }
+}
+
+impl Auth for Fake {
+    fn auth_status(&self, _: &Call<'_>, _: Option<&ConnectionId>) -> AuthStatus {
+        if self.signed_out {
+            AuthStatus::SignedOut
+        } else {
+            AuthStatus::SignedIn { expires: None }
         }
     }
 

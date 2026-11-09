@@ -10,10 +10,10 @@ mod routing;
 use std::sync::Arc;
 
 use clouddeck_extension_api::{
-    AuthAnswer, AuthInput, AuthMethod, AuthStatus, AuthStep, Call, Connection, ConnectionId,
-    Dimension, Extension, ExtrasSection, FieldDef, FlowId, InspectorSectionDef, Instance, KindId,
-    KindInfo, ListResult, Provider, ProviderError, ProviderInfo, ResourceId, Selection, SettingDef,
-    register_extension,
+    Auth, AuthAnswer, AuthInput, AuthMethod, AuthStatus, AuthStep, Browse, Call, Config,
+    Connection, ConnectionId, Dimension, Extension, ExtrasSection, FieldDef, FlowId,
+    InspectorSectionDef, Instance, KindId, KindInfo, ListResult, NoAuth, NoConfig, Provider,
+    ProviderError, ProviderInfo, ResourceId, Selection, SettingDef, register_extension,
 };
 
 pub use aws_auth::aws_provider;
@@ -44,14 +44,16 @@ impl Provider for Shared {
         self.0.info()
     }
 
-    fn settings(&self) -> Vec<SettingDef> {
-        self.0.settings()
+    fn auth(&self) -> Option<&dyn Auth> {
+        self.0.auth().map(|_| self as &dyn Auth)
     }
 
-    fn settings_changed(&self, cx: &Call<'_>, changed: &[String]) {
-        self.0.settings_changed(cx, changed)
+    fn config(&self) -> Option<&dyn Config> {
+        self.0.config().map(|_| self as &dyn Config)
     }
+}
 
+impl Browse for Shared {
     fn connections(&self, cx: &Call<'_>) -> Result<Vec<Connection>, ProviderError> {
         self.0.connections(cx)
     }
@@ -88,59 +90,6 @@ impl Provider for Shared {
         self.0.describe(cx, connection, kind, id)
     }
 
-    fn identity(
-        &self,
-        cx: &Call<'_>,
-        connection: &ConnectionId,
-        selection: &Selection,
-    ) -> Result<String, ProviderError> {
-        self.0.identity(cx, connection, selection)
-    }
-
-    fn check_access(
-        &self,
-        cx: &Call<'_>,
-        connection: &ConnectionId,
-        kind: &KindId,
-        selection: &Selection,
-    ) -> Result<(), ProviderError> {
-        self.0.check_access(cx, connection, kind, selection)
-    }
-
-    fn auth_methods(&self) -> Vec<AuthMethod> {
-        self.0.auth_methods()
-    }
-
-    fn begin_auth(
-        &self,
-        cx: &Call<'_>,
-        method: &AuthMethod,
-        input: AuthInput,
-    ) -> Result<AuthStep, ProviderError> {
-        self.0.begin_auth(cx, method, input)
-    }
-
-    fn continue_auth(
-        &self,
-        cx: &Call<'_>,
-        flow: &FlowId,
-        answer: AuthAnswer,
-    ) -> Result<AuthStep, ProviderError> {
-        self.0.continue_auth(cx, flow, answer)
-    }
-
-    fn auth_status(&self, cx: &Call<'_>, connection: Option<&ConnectionId>) -> AuthStatus {
-        self.0.auth_status(cx, connection)
-    }
-
-    fn sign_out(
-        &self,
-        cx: &Call<'_>,
-        connection: Option<&ConnectionId>,
-    ) -> Result<(), ProviderError> {
-        self.0.sign_out(cx, connection)
-    }
-
     fn console_url(
         &self,
         connection: &ConnectionId,
@@ -156,6 +105,86 @@ impl Provider for Shared {
 
     fn inspector(&self, kind: &KindId) -> Vec<InspectorSectionDef> {
         self.0.inspector(kind)
+    }
+}
+
+impl Auth for Shared {
+    fn auth_methods(&self) -> Vec<AuthMethod> {
+        self.0.auth().unwrap_or(&NoAuth).auth_methods()
+    }
+
+    fn begin_auth(
+        &self,
+        cx: &Call<'_>,
+        method: &AuthMethod,
+        input: AuthInput,
+    ) -> Result<AuthStep, ProviderError> {
+        self.0
+            .auth()
+            .unwrap_or(&NoAuth)
+            .begin_auth(cx, method, input)
+    }
+
+    fn continue_auth(
+        &self,
+        cx: &Call<'_>,
+        flow: &FlowId,
+        answer: AuthAnswer,
+    ) -> Result<AuthStep, ProviderError> {
+        self.0
+            .auth()
+            .unwrap_or(&NoAuth)
+            .continue_auth(cx, flow, answer)
+    }
+
+    fn auth_status(&self, cx: &Call<'_>, connection: Option<&ConnectionId>) -> AuthStatus {
+        self.0.auth().unwrap_or(&NoAuth).auth_status(cx, connection)
+    }
+
+    fn sign_out(
+        &self,
+        cx: &Call<'_>,
+        connection: Option<&ConnectionId>,
+    ) -> Result<(), ProviderError> {
+        self.0.auth().unwrap_or(&NoAuth).sign_out(cx, connection)
+    }
+
+    fn identity(
+        &self,
+        cx: &Call<'_>,
+        connection: &ConnectionId,
+        selection: &Selection,
+    ) -> Result<String, ProviderError> {
+        self.0
+            .auth()
+            .unwrap_or(&NoAuth)
+            .identity(cx, connection, selection)
+    }
+
+    fn check_access(
+        &self,
+        cx: &Call<'_>,
+        connection: &ConnectionId,
+        kind: &KindId,
+        selection: &Selection,
+    ) -> Result<(), ProviderError> {
+        self.0
+            .auth()
+            .unwrap_or(&NoAuth)
+            .check_access(cx, connection, kind, selection)
+    }
+}
+
+impl Config for Shared {
+    fn settings(&self) -> Vec<SettingDef> {
+        self.0.config().unwrap_or(&NoConfig).settings()
+    }
+
+    fn settings_changed(&self, cx: &Call<'_>, changed: &[String]) {
+        self.0
+            .config()
+            .unwrap_or(&NoConfig)
+            .settings_changed(cx, changed)
     }
 }
 

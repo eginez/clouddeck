@@ -27,7 +27,8 @@ use crate::account_window::{AccountBrowserLoginPrompt, AccountConnectionError, A
 use crate::provider_sign_in::{cancel_flow, deadline_passed};
 use clouddeck_core::{
     AuthAnswer, AuthInput, AuthStep, AwsCredentialKind, Call, ConnectionId, FlowId, Host, KindId,
-    LogLevel, LoginGuidance, Provider, ProviderError, REGION, Selection, ValueId, login_guidance,
+    LogLevel, LoginGuidance, NoAuth, Provider, ProviderError, REGION, Selection, ValueId,
+    login_guidance,
 };
 
 const AWS_PROVIDER_ID: &str = "aws";
@@ -302,7 +303,14 @@ async fn await_browser_approval(
         let polled = off_thread(cx, {
             let provider = provider.clone();
             let flow = flow.clone();
-            move || with_call(|call| provider.continue_auth(call, &flow, AuthAnswer::Poll))
+            move || {
+                with_call(|call| {
+                    provider
+                        .auth()
+                        .unwrap_or(&NoAuth)
+                        .continue_auth(call, &flow, AuthAnswer::Poll)
+                })
+            }
         })
         .await;
         match polled {
@@ -317,13 +325,14 @@ async fn await_browser_approval(
 }
 
 fn begin_device_flow(provider: &dyn Provider, profile: &str) -> Result<AuthStep, ProviderError> {
-    let method = provider
+    let auth = provider.auth().unwrap_or(&NoAuth);
+    let method = auth
         .auth_methods()
         .into_iter()
         .next()
         .ok_or_else(ProviderError::unsupported)?;
     with_call(|call| {
-        provider.begin_auth(
+        auth.begin_auth(
             call,
             &method,
             AuthInput {
@@ -418,7 +427,14 @@ async fn run_identity_and_access_check(
         let provider = provider.clone();
         let connection = connection.clone();
         let selection = selection.clone();
-        move || with_call(|call| provider.identity(call, &connection, &selection))
+        move || {
+            with_call(|call| {
+                provider
+                    .auth()
+                    .unwrap_or(&NoAuth)
+                    .identity(call, &connection, &selection)
+            })
+        }
     })
     .await;
 
@@ -442,7 +458,14 @@ async fn run_identity_and_access_check(
     }
 
     let access_result = off_thread(cx, move || {
-        with_call(|call| provider.check_access(call, &connection, &KindId::instances(), &selection))
+        with_call(|call| {
+            provider.auth().unwrap_or(&NoAuth).check_access(
+                call,
+                &connection,
+                &KindId::instances(),
+                &selection,
+            )
+        })
     })
     .await;
 

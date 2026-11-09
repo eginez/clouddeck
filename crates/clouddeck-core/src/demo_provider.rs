@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use clouddeck_provider_api::{
-    AuthAnswer, AuthInput, AuthMethod, AuthStatus, AuthStep, Call, CellFailure, Connection,
-    ConnectionId, DimValue, Dimension, DimensionId, ErrorKind, ExtrasSection, FieldDef, FlowId,
-    INSTANCES, InspectorSectionDef, Instance, KindId, KindInfo, ListResult, Provider,
+    Auth, AuthAnswer, AuthInput, AuthMethod, AuthStatus, AuthStep, Browse, Call, CellFailure,
+    Connection, ConnectionId, DimValue, Dimension, DimensionId, ErrorKind, ExtrasSection, FieldDef,
+    FlowId, INSTANCES, InspectorSectionDef, Instance, KindId, KindInfo, ListResult, Provider,
     ProviderError, ProviderInfo, ResourceId, Selection, ValueId,
 };
 
@@ -139,6 +139,12 @@ impl Provider for DemoProvider {
         }
     }
 
+    fn auth(&self) -> Option<&dyn Auth> {
+        Some(self)
+    }
+}
+
+impl Browse for DemoProvider {
     fn connections(&self, _cx: &Call<'_>) -> Result<Vec<Connection>, ProviderError> {
         Ok(self
             .profiles
@@ -220,6 +226,33 @@ impl Provider for DemoProvider {
             .ok_or_else(not_found)
     }
 
+    fn console_url(
+        &self,
+        _connection: &ConnectionId,
+        _kind: &KindId,
+        _resource: &Instance,
+    ) -> Option<String> {
+        None
+    }
+
+    fn fields(&self, kind: &KindId) -> Vec<FieldDef> {
+        if kind.as_str() == INSTANCES {
+            crate::aws_fields()
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn inspector(&self, kind: &KindId) -> Vec<InspectorSectionDef> {
+        if kind.as_str() == INSTANCES {
+            crate::aws_inspector::aws_inspector()
+        } else {
+            Vec::new()
+        }
+    }
+}
+
+impl Auth for DemoProvider {
     fn auth_methods(&self) -> Vec<AuthMethod> {
         vec![AuthMethod::new(
             DEMO_METHOD.to_string(),
@@ -262,30 +295,5 @@ impl Provider for DemoProvider {
         _connection: Option<&ConnectionId>,
     ) -> Result<(), ProviderError> {
         Ok(())
-    }
-
-    fn console_url(
-        &self,
-        _connection: &ConnectionId,
-        _kind: &KindId,
-        _resource: &Instance,
-    ) -> Option<String> {
-        None
-    }
-
-    fn fields(&self, kind: &KindId) -> Vec<FieldDef> {
-        if kind.as_str() == INSTANCES {
-            crate::aws_fields()
-        } else {
-            Vec::new()
-        }
-    }
-
-    fn inspector(&self, kind: &KindId) -> Vec<InspectorSectionDef> {
-        if kind.as_str() == INSTANCES {
-            crate::aws_inspector::aws_inspector()
-        } else {
-            Vec::new()
-        }
     }
 }

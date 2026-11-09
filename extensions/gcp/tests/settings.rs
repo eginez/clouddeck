@@ -5,7 +5,7 @@ use std::sync::Arc;
 use clouddeck_core::extension_host::Manifest;
 use clouddeck_extension_api::conformance::check_manifest_settings;
 use clouddeck_extension_api::{
-    AuthStatus, ConnectionId, ErrorKind, KindId, Provider, ProviderError, Selection,
+    Auth, AuthStatus, Browse, ConnectionId, ErrorKind, KindId, ProviderError, Selection,
 };
 use common::{FakeHttp, SettingsHost, call, provider, provider_with};
 

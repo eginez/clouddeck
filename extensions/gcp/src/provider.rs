@@ -4,10 +4,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use clouddeck_extension_api::{
-    AuthAnswer, AuthInput, AuthMethod, AuthStatus, AuthStep, Call, CellFailure, Connection,
-    ConnectionId, Dimension, ErrorKind, ExtrasSection, FieldDef, FlowId, INSTANCES, Instance,
-    KindId, KindInfo, ListResult, Provider, ProviderError, ProviderInfo, ResourceId, Selection,
-    SettingDef,
+    Auth, AuthAnswer, AuthInput, AuthMethod, AuthStatus, AuthStep, Browse, Call, CellFailure,
+    Connection, ConnectionId, Dimension, ErrorKind, ExtrasSection, FieldDef, FlowId, INSTANCES,
+    Instance, KindId, KindInfo, ListResult, Provider, ProviderError, ProviderInfo, ResourceId,
+    Selection, SettingDef,
 };
 use serde::de::DeserializeOwned;
 
@@ -228,10 +228,22 @@ impl Provider for GcpProvider {
         }
     }
 
+    fn auth(&self) -> Option<&dyn Auth> {
+        Some(self)
+    }
+
+    fn config(&self) -> Option<&dyn clouddeck_extension_api::Config> {
+        Some(self)
+    }
+}
+
+impl clouddeck_extension_api::Config for GcpProvider {
     fn settings(&self) -> Vec<SettingDef> {
         config::setting_defs()
     }
+}
 
+impl Browse for GcpProvider {
     fn connections(&self, cx: &Call<'_>) -> Result<Vec<Connection>, ProviderError> {
         let config = Config::from_host(cx.host)?;
         let url = format!(
@@ -292,7 +304,9 @@ impl Provider for GcpProvider {
     fn fields(&self, _kind: &KindId) -> Vec<FieldDef> {
         instance_fields()
     }
+}
 
+impl Auth for GcpProvider {
     fn auth_methods(&self) -> Vec<AuthMethod> {
         vec![AuthMethod::new(
             ADC_METHOD.to_string(),
