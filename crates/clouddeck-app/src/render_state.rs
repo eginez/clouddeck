@@ -20,6 +20,8 @@ pub(crate) enum State {
     MainEmpty,
     /// Fleet load failed outright.
     MainFailure,
+    /// The same failed load as `MainFailure`, in the dark palette.
+    MainFailureDark,
     /// Two regions where one fails.
     MainPartial,
     /// A fleet of 120 instances.
@@ -76,6 +78,8 @@ pub(crate) enum State {
     MainGcpActive,
     /// Google Cloud alone while signed out, so the sign-in button shows in the bar.
     MainGcpSignIn,
+    /// The Google Cloud table as `MainGcpActive`, in the dark palette.
+    MainGcpActiveDark,
     /// Region picker over a Google Cloud region tree, with zones indented under their regions.
     OverlayDimensionTree,
     /// Region picker over a single-select region dimension, with no checkboxes.
@@ -135,11 +139,12 @@ pub(crate) enum State {
 }
 
 impl State {
-    pub(crate) const ALL: [State; 63] = [
+    pub(crate) const ALL: [State; 65] = [
         State::MainIdle,
         State::MainRowSelected,
         State::MainEmpty,
         State::MainFailure,
+        State::MainFailureDark,
         State::MainPartial,
         State::MainLarge,
         State::MainStateGrouped,
@@ -168,6 +173,7 @@ impl State {
         State::MainAllProvidersCompact,
         State::MainGcpActive,
         State::MainGcpSignIn,
+        State::MainGcpActiveDark,
         State::OverlayDimensionTree,
         State::OverlayDimensionSingle,
         State::Welcome,
@@ -208,6 +214,7 @@ impl State {
             State::MainRowSelected => "MainRowSelected",
             State::MainEmpty => "MainEmpty",
             State::MainFailure => "MainFailure",
+            State::MainFailureDark => "MainFailureDark",
             State::MainPartial => "MainPartial",
             State::MainLarge => "MainLarge",
             State::MainStateGrouped => "MainStateGrouped",
@@ -236,6 +243,7 @@ impl State {
             State::MainAllProvidersCompact => "MainAllProvidersCompact",
             State::MainGcpActive => "MainGcpActive",
             State::MainGcpSignIn => "MainGcpSignIn",
+            State::MainGcpActiveDark => "MainGcpActiveDark",
             State::OverlayDimensionTree => "OverlayDimensionTree",
             State::OverlayDimensionSingle => "OverlayDimensionSingle",
             State::Welcome => "Welcome",
@@ -294,6 +302,8 @@ impl State {
                 | State::MainAllProvidersNoColumnDark
                 | State::MainAllProvidersFailedGroupDark
                 | State::MainAllProvidersGroupedDark
+                | State::MainFailureDark
+                | State::MainGcpActiveDark
         )
     }
 
@@ -359,7 +369,7 @@ impl State {
     pub(crate) fn demo_scenario(self) -> DemoFleet {
         match self {
             State::MainEmpty => DemoFleet::Empty,
-            State::MainFailure => DemoFleet::Failure,
+            State::MainFailure | State::MainFailureDark => DemoFleet::Failure,
             State::MainPartial | State::OverlayFailure => DemoFleet::Partial,
             State::MainLarge => DemoFleet::Large,
             _ => DemoFleet::Happy,
@@ -454,6 +464,7 @@ pub(crate) fn apply_render_state(
         State::MainIdle
         | State::MainEmpty
         | State::MainFailure
+        | State::MainFailureDark
         | State::MainPartial
         | State::MainLarge
         | State::MainAllProviders
@@ -462,6 +473,7 @@ pub(crate) fn apply_render_state(
         | State::MainAllProvidersCompact
         | State::MainGcpActive
         | State::MainGcpSignIn
+        | State::MainGcpActiveDark
         | State::Welcome
         | State::AboutLight
         | State::AboutDark

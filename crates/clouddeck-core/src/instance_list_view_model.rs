@@ -4,11 +4,12 @@ use std::time::SystemTime;
 
 use crate::instance::{Instance, native_id};
 use crate::service_provider::{LoadHost, REGION, cloud_deck_error, join_failure};
+use crate::table::{Column, header_field};
 use crate::{
     Call, CellFailure, CloudDeckError, CompiledQuery, ComputeServicePartialFailure, ConnectionId,
-    KindId, ListResult, Provider, ProviderError, ProviderFacet, ProviderInfo, QueryError,
-    SearchIndex, Selection, StateFacetCounts, merge_with_previous, provider_facet_counts,
-    state_facet_counts_indexed, type_facet_counts_indexed,
+    FieldSource, KindId, ListResult, Provider, ProviderError, ProviderFacet, ProviderInfo,
+    QueryError, SearchIndex, Selection, StateFacetCounts, merge_with_previous,
+    provider_facet_counts, state_facet_counts_indexed, type_facet_counts_indexed,
 };
 
 /// Rust port of the Swift oracle's `InstanceListViewModel`
@@ -113,6 +114,19 @@ impl InstanceListViewModel {
         self.error.as_ref()
     }
 
+    /// The first cell failure of the last load, when that load returned no rows.
+    pub fn load_failure(&self) -> Option<&ProviderError> {
+        let result = self.last_result.as_ref()?;
+        if !result.resources.is_empty() {
+            return None;
+        }
+        let cells = self.selection.values(REGION).len().max(1);
+        if result.failures.len() < cells {
+            return None;
+        }
+        result.failures.first().map(|failure| &failure.error)
+    }
+
     // Not yet read by any view: the partial-failure banner in
     // `instance_list.rs` is not wired to a live per-region failure feed
     // yet (this bead's `default_compute_service()` never reports partial
@@ -187,6 +201,25 @@ impl InstanceListViewModel {
 
     pub fn provider_info(&self) -> ProviderInfo {
         self.provider.info()
+    }
+
+    pub fn kind_label(&self) -> String {
+        self.provider
+            .kinds()
+            .into_iter()
+            .find(|kind| kind.id == KindId::instances())
+            .map_or_else(|| "Instances".to_string(), |kind| kind.label)
+    }
+
+    pub fn header(&self, column: Column) -> String {
+        header_field(column)
+            .and_then(|core| {
+                self.provider
+                    .fields(&KindId::instances())
+                    .into_iter()
+                    .find(|field| field.column && field.source == FieldSource::Core(core))
+            })
+            .map_or_else(|| column.title().to_string(), |field| field.label)
     }
 
     pub fn row_provider_id(&self) -> String {
@@ -497,6 +530,7 @@ fn normalized_selection(selected: &str) -> HashSet<String> {
 mod tests {
     use super::*;
     use crate::ComputeService;
+    use crate::center_state::{CenterInput, CenterState, center_state};
     use crate::query::fixtures::bare_ec2;
     use crate::service_provider::{service_provider, whole_load_failure};
     use crate::{
@@ -1226,6 +1260,120 @@ mod tests {
         assert_eq!(vm.error_message(), None);
         assert_eq!(vm.partial_failures().len(), 1);
         assert_eq!(vm.partial_failures()[0].region, "eu-west-1");
+    }
+
+    #[test]
+    fn kind_label_comes_from_the_provider() {
+        let aws = InstanceListViewModel::new(Arc::new(crate::ComputeServiceProvider::new(
+            "aws",
+            vec![],
+            vec![],
+            |_, _| Box::new(crate::MockComputeService::new(vec![], None)),
+        )));
+        assert_eq!(aws.kind_label(), "EC2 Instances");
+
+        let generic = InstanceListViewModel::new(service_provider(Box::new(
+            crate::MockComputeService::new(vec![], None),
+        )));
+        assert_eq!(generic.kind_label(), "Instances");
+    }
+
+    #[test]
+    fn single_provider_headers_without_field_labels_keep_column_titles() {
+        let vm = InstanceListViewModel::new(Arc::new(crate::ComputeServiceProvider::new(
+            "aws",
+            vec![],
+            vec![],
+            |_, _| Box::new(crate::MockComputeService::new(vec![], None)),
+        )));
+        assert_eq!(vm.header(Column::InstanceId), "Instance ID");
+        assert_eq!(vm.header(Column::Az), "AZ");
+        assert_eq!(vm.header(Column::PublicIp), "Public IP");
+    }
+
+    #[test]
+    fn load_failure_is_the_first_cell_failure_when_no_rows_came_back() {
+        let mut vm = InstanceListViewModel::new(service_provider(Box::new(
+            crate::MockComputeService::new(vec![], None),
+        )));
+        let failure = ProviderError::new(ErrorKind::Throttled, "eu-west-1 is throttled");
+        vm.finish_load(ListResult {
+            resources: Vec::new(),
+            failures: vec![CellFailure {
+                cell: Selection::new().with("region", vec![ValueId::from("eu-west-1")]),
+                error: failure.clone(),
+            }],
+        });
+
+        assert_eq!(vm.load_failure(), Some(&failure));
+    }
+
+    #[test]
+    fn load_failure_is_none_when_a_cell_returned_rows() {
+        let mut vm = InstanceListViewModel::new(service_provider(Box::new(
+            crate::MockComputeService::new(vec![], None),
+        )));
+        vm.finish_load(ListResult {
+            resources: vec![Instance::from(&bare_ec2("us-east-1", "i-1"))],
+            failures: vec![CellFailure {
+                cell: Selection::new().with("region", vec![ValueId::from("eu-west-1")]),
+                error: ProviderError::new(ErrorKind::Throttled, "eu-west-1 is throttled"),
+            }],
+        });
+
+        assert_eq!(vm.load_failure(), None);
+    }
+
+    #[test]
+    fn load_failure_is_none_when_another_selected_cell_loaded_empty() {
+        let mut vm = InstanceListViewModel::new(service_provider(Box::new(
+            crate::MockComputeService::new(vec![], None),
+        )));
+        vm.selection = Selection::new().with(
+            "region",
+            vec![ValueId::from("us-east-1"), ValueId::from("eu-west-1")],
+        );
+        vm.finish_load(ListResult {
+            resources: Vec::new(),
+            failures: vec![CellFailure {
+                cell: Selection::new().with("region", vec![ValueId::from("eu-west-1")]),
+                error: ProviderError::new(ErrorKind::Throttled, "eu-west-1 is throttled"),
+            }],
+        });
+
+        assert_eq!(vm.load_failure(), None);
+    }
+
+    #[test]
+    fn partial_cell_failure_with_no_rows_shows_the_failure_state() {
+        let mut vm = InstanceListViewModel::new(service_provider(Box::new(
+            crate::MockComputeService::new(vec![], None),
+        )));
+        vm.finish_load(ListResult {
+            resources: Vec::new(),
+            failures: vec![CellFailure {
+                cell: Selection::new().with("region", vec![ValueId::from("eu-west-1")]),
+                error: ProviderError {
+                    advice: Some("Try another region.".to_string()),
+                    ..ProviderError::new(ErrorKind::Throttled, "eu-west-1 is throttled")
+                },
+            }],
+        });
+
+        let input = CenterInput {
+            is_loading: false,
+            loaded_count: vm.instances().len(),
+            shown_count: 0,
+            error: vm.error().cloned(),
+            failure: vm.load_failure().cloned(),
+        };
+        assert_eq!(
+            center_state(&input),
+            Some(CenterState::Error {
+                message: "eu-west-1 is throttled".to_string(),
+                advice: Some("Try another region.".to_string()),
+            })
+        );
     }
 
     #[test]

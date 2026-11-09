@@ -12,7 +12,8 @@ use clouddeck_core::{
     ALL_PROVIDERS, Call, Column, ContextModel, DemoFleet, FLEET_REGIONS, InstanceListViewModel,
     ListView, LoadHost, PROVIDER_SINGLE_COLUMN_KEY, ProfileInput, Provider, ProviderEntry, REGION,
     Settings, UiState, ValueId, WindowFrame, WorkspaceContext, all_providers_view, demo_profiles,
-    demo_region_names, settings_path, short_name, switch_active_provider, workspace_provider_for,
+    demo_region_names, provider_signed_in, settings_path, short_name, switch_active_provider,
+    workspace_provider_for,
 };
 use gpui::{
     AnyWindowHandle, App, Bounds, Context, Entity, IntoElement, KeyBinding, ParentElement, Render,
@@ -525,7 +526,7 @@ impl AppShell {
             host: &LoadHost,
         };
         model.set_connections(provider.connections(&call));
-        model.set_signed_in(&active, !model.needs_sign_in());
+        model.set_signed_in(&active, provider_signed_in(provider.as_ref()));
     }
 
     fn load_dimensions(model: &mut ContextModel, providers: &[std::sync::Arc<dyn Provider>]) {
@@ -916,6 +917,10 @@ impl AppShell {
                             .map(|region| ValueId::from(region.as_str()))
                             .collect()
                     });
+                    if result.failures.is_empty() {
+                        let active = this.context_model.active_provider().to_string();
+                        this.context_model.set_signed_in(&active, true);
+                    }
                     Self::sync_provider_view(&this.main_window, &this.context_model, cx);
                 }
             }

@@ -54,7 +54,7 @@ fn service_for(state: State) -> (Arc<dyn Provider>, Vec<String>) {
             us_east,
         ),
         State::MainEmpty => (fixture_fleet::static_provider(vec![]), us_east),
-        State::MainFailure => (
+        State::MainFailure | State::MainFailureDark => (
             fixture_fleet::failing_provider("Simulated demo load failure"),
             us_east,
         ),
@@ -82,6 +82,7 @@ fn service_for(state: State) -> (Arc<dyn Provider>, Vec<String>) {
         | State::MainAllProvidersCompact
         | State::MainGcpActive
         | State::MainGcpSignIn
+        | State::MainGcpActiveDark
         | State::OverlayDimensionTree
         | State::OverlayDimensionSingle => {
             unreachable!("provider-list states are built by multi_setup")
@@ -190,7 +191,7 @@ fn multi_setup(state: State) -> Option<MultiSetup> {
             vec![aws(), fixture_fleet::gcp_provider(gcp_instances(), None)],
             us_east,
         )),
-        State::MainGcpActive => Some(gcp_single(false, gcp_instances())),
+        State::MainGcpActive | State::MainGcpActiveDark => Some(gcp_single(false, gcp_instances())),
         State::MainGcpSignIn => Some(gcp_single(true, Vec::new())),
         State::OverlayDimensionTree => Some(gcp_single(false, gcp_instances())),
         State::OverlayDimensionSingle => Some(MultiSetup {
@@ -683,11 +684,12 @@ mod tests {
     /// One key element per state that `apply_render_state` must produce.
     #[gpui::test]
     fn every_state_shows_its_key_element(cx: &mut TestAppContext) {
-        let key_elements: [(State, &str); 62] = [
+        let key_elements: [(State, &str); 64] = [
             (State::MainIdle, "main.root"),
             (State::MainRowSelected, "main.inspector"),
             (State::MainEmpty, "main.center-state"),
             (State::MainFailure, "main.center-state"),
+            (State::MainFailureDark, "main.center-state"),
             (State::MainPartial, "bar.failure"),
             (State::MainLarge, "main.root"),
             (State::MainStateGrouped, "table.group.Running"),
@@ -716,6 +718,7 @@ mod tests {
             (State::MainAllProvidersCompact, "table.header.0"),
             (State::MainGcpActive, "table.header.0"),
             (State::MainGcpSignIn, "bar.sign-in"),
+            (State::MainGcpActiveDark, "table.header.0"),
             (State::OverlayDimensionTree, "main.overlay.region"),
             (State::OverlayDimensionSingle, "dimension-picker.row.0"),
             (State::AboutLight, "about.title"),

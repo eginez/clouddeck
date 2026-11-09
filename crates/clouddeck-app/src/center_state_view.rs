@@ -204,6 +204,7 @@ mod tests {
             CenterState::Throttled,
             CenterState::Error {
                 message: "boom".to_string(),
+                advice: None,
             },
         ]
     }
@@ -309,6 +310,7 @@ mod tests {
             (
                 CenterState::Error {
                     message: "boom".to_string(),
+                    advice: None,
                 },
                 palette.err,
             ),

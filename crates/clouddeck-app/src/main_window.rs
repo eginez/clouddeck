@@ -911,6 +911,7 @@ impl MainWindow {
             loaded_count: fleet.view_model.instances().len(),
             shown_count: fleet.visible_rows().len(),
             error: fleet.view_model.error().cloned(),
+            failure: fleet.view_model.load_failure().cloned(),
         };
         let state = center_state(&input)?;
         let context = CenterContext {

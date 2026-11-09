@@ -1,4 +1,5 @@
 use crate::CloudDeckError;
+use clouddeck_provider_api::ProviderError;
 
 /// The centered state shown in the main area when the table has nothing to show.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -15,8 +16,11 @@ pub enum CenterState {
     Offline,
     /// The load failed because the service throttled the request.
     Throttled,
-    /// The load failed for another reason; carries the user-facing message.
-    Error { message: String },
+    /// The load failed for another reason; carries the user-facing message and advice.
+    Error {
+        message: String,
+        advice: Option<String>,
+    },
 }
 
 /// Inputs that decide which centered state applies.
@@ -30,6 +34,8 @@ pub struct CenterInput {
     pub shown_count: usize,
     /// The last load's error, if the whole load failed.
     pub error: Option<CloudDeckError>,
+    /// The first failed cell's error, when every cell failed and none returned rows.
+    pub failure: Option<ProviderError>,
 }
 
 /// Returns the centered state to show, or `None` when the table should be shown.
@@ -52,8 +58,15 @@ pub fn center_state(input: &CenterInput) -> Option<CenterState> {
         Some(CloudDeckError::Throttled) => Some(CenterState::Throttled),
         Some(error) => Some(CenterState::Error {
             message: error.user_message(),
+            advice: None,
         }),
-        None => Some(CenterState::EmptyFleet),
+        None => match &input.failure {
+            Some(failure) => Some(CenterState::Error {
+                message: failure.message.clone(),
+                advice: failure.advice.clone(),
+            }),
+            None => Some(CenterState::EmptyFleet),
+        },
     }
 }
 
@@ -170,9 +183,15 @@ pub fn center_text(state: &CenterState, ctx: &CenterContext) -> CenterText {
                 },
             )
         },
-        CenterState::Error { message } => CenterText {
+        CenterState::Error { message, advice } => CenterText {
             action: Some("Retry".to_string()),
-            ..text("Couldn’t load instances", message.clone())
+            ..text(
+                "Couldn’t load instances",
+                match advice {
+                    Some(advice) => format!("{message} {advice}"),
+                    None => message.clone(),
+                },
+            )
         },
     }
 }
@@ -218,7 +237,41 @@ mod tests {
             loaded_count: 0,
             shown_count: 0,
             error: None,
+            failure: None,
         }
+    }
+
+    fn provider_failure(message: &str, advice: Option<&str>) -> ProviderError {
+        ProviderError {
+            advice: advice.map(str::to_string),
+            ..ProviderError::new(clouddeck_provider_api::ErrorKind::Other, message)
+        }
+    }
+
+    #[test]
+    fn failed_cells_without_rows_show_error_with_first_failure() {
+        let input = CenterInput {
+            failure: Some(provider_failure("Zone is unreachable", Some("Try again."))),
+            ..input()
+        };
+        assert_eq!(
+            center_state(&input),
+            Some(CenterState::Error {
+                message: "Zone is unreachable".to_string(),
+                advice: Some("Try again.".to_string()),
+            })
+        );
+    }
+
+    #[test]
+    fn failed_cells_with_rows_keep_the_table() {
+        let input = CenterInput {
+            loaded_count: 3,
+            shown_count: 3,
+            failure: Some(provider_failure("Zone is unreachable", None)),
+            ..input()
+        };
+        assert_eq!(center_state(&input), None);
     }
 
     #[test]
@@ -319,6 +372,7 @@ mod tests {
             center_state(&input),
             Some(CenterState::Error {
                 message: CloudDeckError::Permission.user_message(),
+                advice: None,
             })
         );
     }
@@ -333,6 +387,7 @@ mod tests {
             center_state(&input),
             Some(CenterState::Error {
                 message: "boom".to_string(),
+                advice: None,
             })
         );
     }
@@ -347,6 +402,7 @@ mod tests {
             center_state(&input),
             Some(CenterState::Error {
                 message: CloudDeckError::Timeout.user_message(),
+                advice: None,
             })
         );
     }
@@ -511,11 +567,31 @@ mod tests {
         assert_eq!(
             center_text(
                 &CenterState::Error {
-                    message: "boom".to_string()
+                    message: "boom".to_string(),
+                    advice: None,
                 },
                 &ctx()
             ),
             expected("Couldn’t load instances", "boom", Some("Retry"), None)
+        );
+    }
+
+    #[test]
+    fn error_text_appends_advice_to_message() {
+        assert_eq!(
+            center_text(
+                &CenterState::Error {
+                    message: "boom".to_string(),
+                    advice: Some("Check the emulator.".to_string()),
+                },
+                &ctx()
+            ),
+            expected(
+                "Couldn’t load instances",
+                "boom Check the emulator.",
+                Some("Retry"),
+                None
+            )
         );
     }
 
@@ -546,7 +622,8 @@ mod tests {
         assert_eq!(
             error_strip_text(
                 &CenterState::Error {
-                    message: "boom".to_string()
+                    message: "boom".to_string(),
+                    advice: None,
                 },
                 &ctx()
             ),

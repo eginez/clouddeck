@@ -2,7 +2,7 @@
 
 use clouddeck_core::{
     CellText, Column, DisplayRow, GroupBy, GroupHeader, Instance, SortState, cell_text,
-    column_header, display_index_of, is_stale_instance, layout_rules, provider_cell_text,
+    display_index_of, is_stale_instance, layout_rules, provider_cell_text,
 };
 use gpui::{
     ClickEvent, Context, Div, Entity, EventEmitter, FocusHandle, Focusable, FontWeight, Hsla,
@@ -179,7 +179,10 @@ impl Render for InstanceTable {
             }
         }
         let columns = state.table_columns(window_width, pane_width);
-        let mixed = state.view_model.is_all();
+        let headers: Vec<String> = columns
+            .iter()
+            .map(|column| state.view_model.header(*column))
+            .collect();
         let shown: Vec<Column> = Column::ALL
             .into_iter()
             .filter(|column| state.column_shown(*column))
@@ -194,12 +197,12 @@ impl Render for InstanceTable {
         let column_menu_open = state.column_menu_open;
         let column_menu_focus = state.column_menu_focus;
 
-        for (ix, column) in columns.iter().enumerate() {
+        for (ix, header) in headers.iter().enumerate() {
             record(
                 cx,
                 format!("table.header.{ix}"),
                 Recorded {
-                    text: Some(column_header(*column, mixed).to_string()),
+                    text: Some(header.clone()),
                     fg: Some("dim"),
                     ..Default::default()
                 },
@@ -291,7 +294,14 @@ impl Render for InstanceTable {
             .border_b_1()
             .border_color(palette.line)
             .children(columns.iter().enumerate().map(|(ix, column)| {
-                header_cell(ix, *column, mixed, sort, palette, entity.clone())
+                header_cell(
+                    ix,
+                    *column,
+                    headers[ix].clone(),
+                    sort,
+                    palette,
+                    entity.clone(),
+                )
             }));
 
         let toolbar = group_by_toolbar(group_by, palette, entity.clone(), columns_button);
@@ -495,7 +505,7 @@ fn cell_frame(column: Column) -> Div {
 fn header_cell(
     ix: usize,
     column: Column,
-    mixed: bool,
+    header: String,
     sort: SortState,
     palette: Palette,
     state: Entity<FleetState>,
@@ -514,7 +524,7 @@ fn header_cell(
                 .overflow_hidden()
                 .text_ellipsis()
                 .whitespace_nowrap()
-                .child(column_header(column, mixed)),
+                .child(header),
         );
     if sort.column == column {
         let icon = if sort.ascending {

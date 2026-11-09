@@ -185,7 +185,7 @@ impl Browse for DemoProvider {
     fn kinds(&self) -> Vec<KindInfo> {
         vec![KindInfo {
             id: KindId::instances(),
-            label: "Instances".to_string(),
+            label: "EC2 Instances".to_string(),
         }]
     }
 

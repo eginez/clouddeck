@@ -4,7 +4,7 @@ use std::cmp::Ordering;
 use std::net::Ipv4Addr;
 
 use chrono::{DateTime, Utc};
-use clouddeck_provider_api::ProviderInfo;
+use clouddeck_provider_api::{CoreField, ProviderInfo};
 
 use crate::context_model::{short_name, short_name_for};
 use crate::instance::native_id;
@@ -127,7 +127,7 @@ pub fn cell_text(instance: &Instance, column: Column) -> CellText {
             },
         },
         Column::InstanceId => plain_or_dash(Some(native_id(instance).to_string())),
-        Column::State => plain_or_dash(Some(capitalize_first(&instance.state.raw))),
+        Column::State => plain_or_dash(Some(sentence_case(&instance.state.raw))),
         Column::Type => plain_or_dash(instance.instance_type.clone()),
         Column::Az => plain_or_dash(instance.location.clone()),
         Column::PrivateIp => {
@@ -159,6 +159,21 @@ pub fn column_header(column: Column, mixed: bool) -> &'static str {
         Column::PrivateIp => "Private IP",
         Column::PublicIp => "Public IP",
         Column::Launched => "Launched",
+    }
+}
+
+/// The provider field whose label titles a column in a single-provider view.
+pub fn header_field(column: Column) -> Option<CoreField> {
+    match column {
+        Column::InstanceId => Some(CoreField::Id),
+        Column::Name => Some(CoreField::Name),
+        Column::State => Some(CoreField::State),
+        Column::Az => Some(CoreField::Location),
+        Column::Type
+        | Column::Provider
+        | Column::PrivateIp
+        | Column::PublicIp
+        | Column::Launched => None,
     }
 }
 
@@ -342,8 +357,9 @@ fn plain_or_dash(value: Option<String>) -> CellText {
     }
 }
 
-fn capitalize_first(value: &str) -> String {
-    let mut chars = value.chars();
+fn sentence_case(value: &str) -> String {
+    let lower = value.to_lowercase();
+    let mut chars = lower.chars();
     match chars.next() {
         Some(first) => first.to_uppercase().chain(chars).collect(),
         None => String::new(),
@@ -412,6 +428,17 @@ mod tests {
         let fleet = fixtures::fleet_instances();
         assert_eq!(cell_text(&fleet[0], Column::State).text, "Running");
         assert_eq!(cell_text(&fleet[2], Column::State).text, "Pending");
+    }
+
+    #[test]
+    fn upper_case_provider_states_show_in_sentence_case() {
+        let mut instance = fixtures::fleet_instances()[0].clone();
+        instance.state.raw = "RUNNING".to_string();
+        assert_eq!(cell_text(&instance, Column::State).text, "Running");
+        instance.state.raw = "TERMINATED".to_string();
+        assert_eq!(cell_text(&instance, Column::State).text, "Terminated");
+        instance.state.raw = "STAGING".to_string();
+        assert_eq!(cell_text(&instance, Column::State).text, "Staging");
     }
 
     #[test]

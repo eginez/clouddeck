@@ -20,7 +20,11 @@ fn field(name: &str, label: &str, kind: FieldKind, core: CoreField, facet: bool)
 pub fn instance_fields() -> Vec<FieldDef> {
     use CoreField as C;
     use FieldKind as K;
+    let mut id = field("id", "ID", K::Text, C::Id, false);
+    id.query = false;
+    id.search = false;
     let mut fields = vec![
+        id,
         field("name", "Name", K::Text, C::Name, false),
         field("state", "State", K::Enum, C::State, true),
         field("type", "Machine type", K::Text, C::Type, true),
@@ -33,4 +37,29 @@ pub fn instance_fields() -> Vec<FieldDef> {
     labels.column = false;
     fields.push(labels);
     fields
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn column_headers_use_zone_and_id() {
+        let fields = instance_fields();
+        let label = |core: CoreField| {
+            fields
+                .iter()
+                .find(|field| field.column && field.source == FieldSource::Core(core))
+                .map(|field| field.label.clone())
+        };
+        assert_eq!(label(CoreField::Location).as_deref(), Some("Zone"));
+        assert_eq!(label(CoreField::Id).as_deref(), Some("ID"));
+    }
+
+    #[test]
+    fn id_is_a_header_only_field() {
+        let fields = instance_fields();
+        let id = fields.iter().find(|field| field.name == "id").unwrap();
+        assert!(!id.query && !id.search);
+    }
 }

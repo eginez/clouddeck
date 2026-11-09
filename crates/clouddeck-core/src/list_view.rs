@@ -7,6 +7,7 @@ use clouddeck_provider_api::{AuthStatus, NoAuth};
 use clouddeck_provider_kit::scoped_provider::{ScopeSettings, scoped_provider};
 
 use crate::service_provider::{LoadHost, REGION};
+use crate::table::Column;
 use crate::{
     Call, CloudDeckError, ComputeServicePartialFailure, DemoFleet, ErrorKind, Instance,
     InstanceListViewModel, ListResult, LoadRequest, MergedListViewModel, Provider, ProviderError,
@@ -57,6 +58,27 @@ impl ListView {
     pub fn error(&self) -> Option<&CloudDeckError> {
         match self {
             Self::Single(view_model) => view_model.error(),
+            Self::All(_) => None,
+        }
+    }
+
+    pub fn header(&self, column: Column) -> String {
+        match self {
+            Self::Single(view_model) => view_model.header(column),
+            Self::All(merged) => merged.header(column).to_string(),
+        }
+    }
+
+    pub fn kind_label(&self) -> String {
+        match self {
+            Self::Single(view_model) => view_model.kind_label(),
+            Self::All(_) => "Instances".to_string(),
+        }
+    }
+
+    pub fn load_failure(&self) -> Option<&ProviderError> {
+        match self {
+            Self::Single(view_model) => view_model.load_failure(),
             Self::All(_) => None,
         }
     }
@@ -302,11 +324,36 @@ pub fn all_providers_view(
     ListView::All(MergedListViewModel::new(members).with_unavailable(unavailable))
 }
 
+/// Whether the provider reports a usable session, as the picker and sign-in state see it.
+pub fn provider_signed_in(provider: &dyn Provider) -> bool {
+    let call = Call {
+        deadline: None,
+        host: &LoadHost,
+    };
+    matches!(
+        provider.auth().unwrap_or(&NoAuth).auth_status(&call, None),
+        AuthStatus::SignedIn { .. }
+    )
+}
+
 fn setup_failure(info: ProviderInfo, error: ProviderError) -> ProviderFailure {
     ProviderFailure {
         needs_sign_in: error.kind == ErrorKind::Auth,
         message: error.message,
         provider_id: info.id,
         provider_name: info.name,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn provider_without_auth_counts_as_signed_in() {
+        let provider = crate::ComputeServiceProvider::new("aws", vec![], vec![], |_, _| {
+            Box::new(crate::MockComputeService::new(vec![], None))
+        });
+        assert!(provider_signed_in(&provider));
     }
 }

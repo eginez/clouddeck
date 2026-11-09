@@ -278,5 +278,29 @@ pub(crate) fn rules() -> Vec<Rule> {
             why: "message stops at the status bar",
             known_bug: None,
         },
+        Rule {
+            id: "main-fail-dark-state",
+            state: State::MainFailureDark,
+            window: (1280.0, 760.0),
+            check: Check::Present("main.center-state"),
+            why: "failed load shows the centre message in the dark palette",
+            known_bug: None,
+        },
+        Rule {
+            id: "main-fail-dark-no-table",
+            state: State::MainFailureDark,
+            window: (1280.0, 760.0),
+            check: Check::Absent("main.table"),
+            why: "centre message replaces the table in the dark palette",
+            known_bug: None,
+        },
+        Rule {
+            id: "main-gcp-dark-header",
+            state: State::MainGcpActiveDark,
+            window: (1280.0, 760.0),
+            check: Check::Present("table.header.0"),
+            why: "Google Cloud table shows its headers in the dark palette",
+            known_bug: None,
+        },
     ]
 }

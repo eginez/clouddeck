@@ -104,7 +104,12 @@ impl Render for Toolbar {
             .border_color(palette.line)
             .when_some(self.app_menu.clone(), |bar, app_menu| bar.child(app_menu))
             .child(sidebar_button(&palette, cx))
-            .when(rules.show_title, |bar| bar.child(title(&palette)))
+            .when(rules.show_title, |bar| {
+                bar.child(title(
+                    &palette,
+                    &self.state.read(cx).view_model.kind_label(),
+                ))
+            })
             .child(div().flex_1().when(linux, |spacer| {
                 spacer.on_mouse_down(MouseButton::Left, |_, window, _| window.start_window_move())
             }))
@@ -134,13 +139,13 @@ fn sidebar_button(palette: &Palette, cx: &Context<Toolbar>) -> impl IntoElement 
         .child(AppIcon::PanelLeft.icon().small().text_color(palette.dim))
 }
 
-fn title(palette: &Palette) -> impl IntoElement {
+fn title(palette: &Palette, label: &str) -> impl IntoElement {
     div()
         .debug_selector(|| "toolbar.title".into())
         .text_size(px(TITLE_FONT_SIZE))
         .font_weight(FontWeight::SEMIBOLD)
         .text_color(palette.text)
-        .child("EC2 Instances")
+        .child(label.to_string())
 }
 
 fn filters_button(
