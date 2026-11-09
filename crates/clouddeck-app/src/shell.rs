@@ -223,6 +223,22 @@ fn reload_target(
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    static TEST_CONTEXT_PATH: PathBuf = std::env::temp_dir().join(format!(
+        "clouddeck-test-context-{}-{:?}.json",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+}
+
+fn saved_context_path() -> PathBuf {
+    #[cfg(test)]
+    return TEST_CONTEXT_PATH.with(PathBuf::clone);
+    #[cfg(not(test))]
+    clouddeck_core::context_path()
+}
+
 fn should_remember_context(demo: bool, usable: bool) -> bool {
     !demo && usable
 }
@@ -583,7 +599,7 @@ impl AppShell {
             .map(|e| format!("Could not read AWS profiles: {e}"));
         let profiles = loaded.unwrap_or_default();
         let saved = (!demo)
-            .then(|| WorkspaceContext::load(&clouddeck_core::context_path()))
+            .then(|| WorkspaceContext::load(&saved_context_path()))
             .flatten()
             .filter(|s| s.provider != "aws" || profiles.iter().any(|p| p.name == s.profile));
         let launch_provider = settings
@@ -1094,7 +1110,7 @@ impl AppShell {
         should_remember_context(self.demo, self.context.is_usable()).then(|| {
             self.message = self
                 .context
-                .save(&clouddeck_core::context_path())
+                .save(&saved_context_path())
                 .err()
                 .map(|e| format!("Could not remember this context: {e}"))
         });
@@ -1727,6 +1743,123 @@ mod provider_switch_tests {
             assert_eq!(shell.context_model.active_provider(), "gcp");
         });
         assert_eq!(scoped_provider_id(&shell, cx), "gcp");
+    }
+
+    fn fresh_context_file() -> PathBuf {
+        let path = TEST_CONTEXT_PATH.with(PathBuf::clone);
+        let _ = std::fs::remove_file(&path);
+        path
+    }
+
+    fn open_connect_view(
+        cx: &mut gpui::VisualTestContext,
+    ) -> gpui::Entity<crate::connect_window::ConnectWindow> {
+        cx.update(|_, app| {
+            app.windows().into_iter().find_map(|window| {
+                let root = window.downcast::<gpui_component::Root>()?;
+                root.read(app)
+                    .ok()?
+                    .view()
+                    .clone()
+                    .downcast::<crate::connect_window::ConnectWindow>()
+                    .ok()
+            })
+        })
+        .expect("a connect window is open")
+    }
+
+    fn sign_in_and_finish(cx: &mut gpui::VisualTestContext, shell: &Entity<AppShell>, id: &str) {
+        shell.update(cx, |shell, cx| shell.sign_in(id, cx));
+        let connect = open_connect_view(cx);
+        connect.update(cx, |_, cx| {
+            cx.emit(ConnectEvent::SignedIn {
+                provider: id.to_string(),
+            })
+        });
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    fn explore_demo_from_connect_turns_demo_mode_on(cx: &mut TestAppContext) {
+        let context_file = fresh_context_file();
+        install_registry(cx, crate::test_support::auth_provider("gcp", &["default"]));
+        let (shell, cx) = add_rooted_shell(cx, |window, cx| {
+            AppShell::build_with_profiles(
+                window,
+                false,
+                DemoFleet::Happy,
+                Ok(Vec::new()),
+                None,
+                Settings::default(),
+                cx,
+            )
+        });
+        shell.read_with(cx, |shell, _| assert!(!shell.demo));
+
+        shell.update(cx, |shell, cx| shell.sign_in("gcp", cx));
+        let connect = open_connect_view(cx);
+        connect.update(cx, |_, cx| cx.emit(ConnectEvent::ExploreDemo));
+        cx.run_until_parked();
+
+        shell.read_with(cx, |shell, _| assert!(shell.demo));
+        let _ = std::fs::remove_file(&context_file);
+    }
+
+    #[gpui::test]
+    fn signing_in_loads_connections_and_keeps_the_current_one(cx: &mut TestAppContext) {
+        let context_file = fresh_context_file();
+        install_registry(
+            cx,
+            crate::test_support::auth_provider("gcp", &["default", "team"]),
+        );
+        let settings = Settings {
+            active_provider: Some("gcp".to_string()),
+            ..Settings::default()
+        };
+        let (shell, cx) = add_rooted_shell(cx, move |window, cx| {
+            AppShell::build_with_profiles(
+                window,
+                false,
+                DemoFleet::Happy,
+                Ok(Vec::new()),
+                None,
+                settings,
+                cx,
+            )
+        });
+        shell.update_in(cx, |shell, window, cx| {
+            shell.apply_context(
+                WorkspaceContext {
+                    provider: "gcp".into(),
+                    profile: String::new(),
+                },
+                window,
+                cx,
+            )
+        });
+
+        sign_in_and_finish(cx, &shell, "gcp");
+
+        shell.read_with(cx, |shell, _| {
+            assert_eq!(shell.context_model.connections().len(), 2);
+            assert_eq!(shell.context.profile, "default");
+        });
+
+        shell.update_in(cx, |shell, window, cx| {
+            shell.apply_context(
+                WorkspaceContext {
+                    provider: "gcp".into(),
+                    profile: "team".into(),
+                },
+                window,
+                cx,
+            )
+        });
+
+        sign_in_and_finish(cx, &shell, "gcp");
+
+        shell.read_with(cx, |shell, _| assert_eq!(shell.context.profile, "team"));
+        let _ = std::fs::remove_file(&context_file);
     }
 
     struct Unauthenticated(std::sync::Arc<dyn Provider>);

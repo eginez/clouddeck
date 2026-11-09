@@ -682,10 +682,7 @@ pub fn open_connect_window(
     connection: Option<ConnectionId>,
     on_event: impl Fn(ConnectEvent, &mut App) + 'static,
 ) -> Option<WindowHandle<Root>> {
-    let providers: Vec<Arc<dyn Provider>> = app_providers::providers(cx)
-        .into_iter()
-        .filter(|provider| provider.auth().is_some())
-        .collect();
+    let providers = app_providers::providers(cx);
     let registry = app_providers::registry(cx);
     open_window(
         cx,
@@ -727,6 +724,10 @@ fn open_window(
     prepare: impl FnOnce(&mut ConnectWindow, &mut Context<ConnectWindow>) + 'static,
     on_event: impl Fn(ConnectEvent, &mut App) + 'static,
 ) -> Option<WindowHandle<Root>> {
+    let providers: Vec<Arc<dyn Provider>> = providers
+        .into_iter()
+        .filter(|provider| provider.auth().is_some())
+        .collect();
     if !providers
         .iter()
         .any(|provider| provider.info().id == provider_id)
@@ -776,4 +777,61 @@ fn open_window(
     })
     .detach();
     Some(handle)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::provider_sign_in::Progress;
+    use crate::test_support::{auth_provider, plain_provider};
+    use clouddeck_core::SignInAction;
+    use clouddeck_core::extension_host::ProviderRegistry;
+    use gpui::{TestAppContext, VisualTestContext};
+
+    fn registry() -> Arc<ProviderRegistry> {
+        Arc::new(ProviderRegistry::default())
+    }
+
+    #[gpui::test]
+    fn window_opens_only_for_a_provider_with_auth(cx: &mut TestAppContext) {
+        cx.update(gpui_component::init);
+        cx.update(|app| {
+            let plain = vec![plain_provider("plain", &["default"])];
+            assert!(open_window_for(app, plain, registry(), "plain", |_, _| {}).is_none());
+
+            let signing_in = vec![auth_provider("fake", &["default"])];
+            assert!(open_window_for(app, signing_in, registry(), "fake", |_, _| {}).is_some());
+        });
+    }
+
+    #[gpui::test]
+    fn cancelling_a_waiting_flow_stops_its_late_progress(cx: &mut TestAppContext) {
+        cx.update(gpui_component::init);
+        let providers = vec![auth_provider("fake", &["default"])];
+        let handle = cx
+            .update(|app| open_window_for(app, providers, registry(), "fake", |_, _| {}))
+            .expect("connect window opens");
+        let view = handle
+            .update(cx, |root, _, _| {
+                root.view().clone().downcast::<ConnectWindow>().ok()
+            })
+            .expect("window is open")
+            .expect("root is the connect window");
+        let cx = VisualTestContext::from_window(handle.into(), cx).into_mut();
+
+        view.update(cx, |view, _| {
+            view.show_waiting("ABCD-1234", "https://example.test/device")
+        });
+        let attempt = view.read_with(cx, |view, _| view.attempt);
+        view.update_in(cx, |view, window, cx| view.cancel(window, cx));
+
+        view.read_with(cx, |view, _| {
+            assert_eq!(view.phase, Phase::Idle);
+            assert_ne!(view.attempt, attempt);
+        });
+        let continues = view.update(cx, |view, cx| {
+            view.progress(attempt, Progress::Action(SignInAction::Finish), cx)
+        });
+        assert!(!continues);
+    }
 }
