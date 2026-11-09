@@ -10,6 +10,12 @@ repository = "https://github.com/eginez/clouddeck"
 name = "Google Cloud"
 
 [[settings]]
+key = "config_dir"
+label = "Config folder"
+description = "A gcloud-style folder with application_default_credentials.json and optionally emulator.json. Empty uses GOOGLE_APPLICATION_CREDENTIALS or ~/.config/gcloud."
+kind = "folder"
+
+[[settings]]
 key = "compute_endpoint"
 label = "Compute Engine endpoint"
 description = "Must be https://, or a local emulator address."

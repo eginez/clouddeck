@@ -9,7 +9,7 @@ mod provider;
 
 use std::sync::Arc;
 
-pub use auth::{AdcCreds, TokenSource, parse_adc};
+pub use auth::{AdcCreds, TokenSource, load_adc, parse_adc};
 pub use http::{Http, HttpError, Request, UreqHttp};
 pub use map::{
     ProjectsPage, ZonesPage, console_url, map_connections, map_instance, map_state, region_of,
@@ -27,7 +27,7 @@ pub struct Gcp {
 impl Extension for Gcp {
     fn new() -> Self {
         let http: Arc<dyn Http> = Arc::new(UreqHttp::new());
-        let tokens = Arc::new(TokenSource::from_env(Arc::clone(&http)));
+        let tokens = Arc::new(TokenSource::new(Arc::clone(&http), Box::new(load_adc)));
         Gcp { http, tokens }
     }
 

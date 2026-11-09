@@ -99,6 +99,6 @@ fn adc_authorized_user_parses_and_other_types_are_refused() {
     assert_eq!(error.kind, ErrorKind::Auth);
     assert_eq!(
         error.advice.as_deref(),
-        Some("run: gcloud auth application-default login")
+        Some("run: gcloud auth application-default login, or choose a Config folder")
     );
 }

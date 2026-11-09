@@ -1,6 +1,6 @@
 //! Application Default Credentials: locate, parse, refresh, and cache the access token.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -10,7 +10,8 @@ use serde::Deserialize;
 use crate::config::{AuthMode, Config, EMULATOR_TOKEN};
 use crate::http::Http;
 
-const ADVICE: &str = "run: gcloud auth application-default login";
+const ADC_FILE: &str = "application_default_credentials.json";
+const ADVICE: &str = "run: gcloud auth application-default login, or choose a Config folder";
 /// Refresh this long before the token really expires.
 const EXPIRY_SLACK: Duration = Duration::from_secs(60);
 
@@ -76,12 +77,22 @@ pub fn adc_path(explicit: Option<String>, home: Option<String>) -> Option<PathBu
     Some(PathBuf::from(home).join(".config/gcloud/application_default_credentials.json"))
 }
 
-pub fn load_adc_from_env() -> Result<AdcCreds, ProviderError> {
-    let explicit = std::env::var("GOOGLE_APPLICATION_CREDENTIALS").ok();
-    let path = adc_path(explicit, std::env::var("HOME").ok())
-        .ok_or_else(|| auth_error("no Application Default Credentials found"))?;
-    let text = std::fs::read_to_string(&path)
-        .map_err(|e| auth_error(&format!("cannot read {}: {e}", path.display())))?;
+/// Reads the credentials from the config folder when one is set, else from the environment default.
+pub fn load_adc(folder: Option<&Path>) -> Result<AdcCreds, ProviderError> {
+    let path = match folder {
+        Some(dir) => dir.join(ADC_FILE),
+        None => {
+            let explicit = std::env::var("GOOGLE_APPLICATION_CREDENTIALS").ok();
+            adc_path(explicit, std::env::var("HOME").ok())
+                .ok_or_else(|| auth_error("no Application Default Credentials found"))?
+        }
+    };
+    let text = std::fs::read_to_string(&path).map_err(|e| {
+        let looked_in = path.parent().unwrap_or(&path).display();
+        auth_error(&format!(
+            "no Application Default Credentials in {looked_in}: {e}"
+        ))
+    })?;
     parse_adc(&text)
 }
 
@@ -93,10 +104,11 @@ pub fn parse_token_response(body: &str) -> Result<(String, Duration), ProviderEr
     Ok((parsed.access_token, lifetime))
 }
 
-type Loader = Box<dyn Fn() -> Result<AdcCreds, ProviderError> + Send + Sync>;
+type Loader = Box<dyn Fn(Option<&Path>) -> Result<AdcCreds, ProviderError> + Send + Sync>;
 
 struct Cached {
     token_url: String,
+    folder: Option<PathBuf>,
     token: Token,
     expiry: Instant,
 }
@@ -117,10 +129,6 @@ impl TokenSource {
         }
     }
 
-    pub fn from_env(http: Arc<dyn Http>) -> Self {
-        Self::new(http, Box::new(load_adc_from_env))
-    }
-
     pub fn token(&self, timeout: Duration, config: &Config) -> Result<Token, ProviderError> {
         if config.auth == AuthMode::Emulator {
             return Ok(Token {
@@ -129,16 +137,16 @@ impl TokenSource {
             });
         }
         let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(cached) = cache
-            .as_ref()
-            .filter(|c| c.token_url == config.token && c.expiry > Instant::now())
-        {
+        if let Some(cached) = cache.as_ref().filter(|c| {
+            c.token_url == config.token && c.folder == config.folder && c.expiry > Instant::now()
+        }) {
             return Ok(cached.token.clone());
         }
-        let creds = (self.load)()?;
+        let creds = (self.load)(config.folder.as_deref())?;
         let (token, lifetime) = self.refresh(&creds, &config.token, timeout)?;
         *cache = Some(Cached {
             token_url: config.token.clone(),
+            folder: config.folder.clone(),
             token: token.clone(),
             expiry: Instant::now() + lifetime.saturating_sub(EXPIRY_SLACK),
         });

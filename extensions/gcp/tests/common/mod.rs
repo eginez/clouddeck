@@ -1,11 +1,11 @@
 #![allow(dead_code)]
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use clouddeck_extension_api::{Call, Host, LogLevel, ProviderError};
-use clouddeck_gcp::{GcpProvider, Http, HttpError, Request, TokenSource, parse_adc};
+use clouddeck_gcp::{GcpProvider, Http, HttpError, Request, TokenSource, load_adc, parse_adc};
 
 pub fn fixture(name: &str) -> String {
     match name {
@@ -120,13 +120,28 @@ impl Http for FakeHttp {
 
 pub fn provider_with(http: Arc<FakeHttp>, adc: Result<String, ProviderError>) -> GcpProvider {
     let shared: Arc<dyn Http> = http;
-    let load = Box::new(move || parse_adc(&adc.clone()?));
+    let load = Box::new(move |_: Option<&Path>| parse_adc(&adc.clone()?));
     let tokens = Arc::new(TokenSource::new(Arc::clone(&shared), load));
     GcpProvider::new(shared, tokens)
 }
 
 pub fn provider(http: Arc<FakeHttp>) -> GcpProvider {
     provider_with(http, Ok(fixture("adc_authorized_user.json")))
+}
+
+/// Reads credentials from disk, as the shipped plugin does.
+pub fn provider_on_disk(http: Arc<FakeHttp>) -> GcpProvider {
+    let shared: Arc<dyn Http> = http;
+    let tokens = Arc::new(TokenSource::new(Arc::clone(&shared), Box::new(load_adc)));
+    GcpProvider::new(shared, tokens)
+}
+
+/// An empty folder under the system temp dir, cleared of any earlier run.
+pub fn temp_folder(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("clouddeck-gcp-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
 }
 
 pub struct TestHost;
@@ -166,6 +181,34 @@ impl Host for SettingsHost {
             .iter()
             .find(|(k, _)| *k == key)
             .map(|(_, v)| v.to_string())
+    }
+    fn secret(&self, _: &str) -> Option<String> {
+        None
+    }
+    fn set_secret(&self, _: &str, _: Option<&str>) -> Result<(), ProviderError> {
+        Ok(())
+    }
+    fn open_url(&self, _: &str) -> Result<(), ProviderError> {
+        Ok(())
+    }
+    fn cancelled(&self) -> bool {
+        false
+    }
+}
+
+/// Like `SettingsHost`, for values that are only known at run time, such as a temp folder.
+pub struct OwnedSettingsHost(pub Vec<(&'static str, String)>);
+
+impl Host for OwnedSettingsHost {
+    fn log(&self, _: LogLevel, _: &str) {}
+    fn data_dir(&self) -> PathBuf {
+        PathBuf::new()
+    }
+    fn setting(&self, key: &str) -> Option<String> {
+        self.0
+            .iter()
+            .find(|(k, _)| *k == key)
+            .map(|(_, v)| v.clone())
     }
     fn secret(&self, _: &str) -> Option<String> {
         None

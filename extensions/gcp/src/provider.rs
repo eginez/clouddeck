@@ -12,7 +12,7 @@ use clouddeck_extension_api::{
 use serde::de::DeserializeOwned;
 
 use crate::auth::{Token, TokenSource};
-use crate::config::{self, Config};
+use crate::config::{self, CONFIG_DIR_SETTING, Config};
 use crate::fields::instance_fields;
 use crate::http::{Http, Request};
 use crate::map::{self, AggregatedPage, GceInstance, ProjectsPage, ZONE_DIM, ZonesPage};
@@ -308,10 +308,16 @@ impl Browse for GcpProvider {
 
 impl Auth for GcpProvider {
     fn auth_methods(&self) -> Vec<AuthMethod> {
-        vec![AuthMethod::new(
+        let mut method = AuthMethod::new(
             ADC_METHOD.to_string(),
-            "Application Default Credentials (gcloud)".to_string(),
-        )]
+            "Use gcloud application-default credentials".to_string(),
+        );
+        method.description = Some(
+            "Reads the credentials from the config folder. Browser sign-in for Google is not available yet."
+                .to_string(),
+        );
+        method.settings = vec![CONFIG_DIR_SETTING.to_string()];
+        vec![method]
     }
 
     fn begin_auth(
