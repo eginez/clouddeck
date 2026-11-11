@@ -1,0 +1,5 @@
+{
+  "dimension_selections": {"region": ["us-east-1"]},
+  "hidden_columns": ["instance_id", "private_ip", "public_ip", "launched"],
+  "inspector_open": false
+}

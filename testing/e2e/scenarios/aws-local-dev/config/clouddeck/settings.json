@@ -1,0 +1,11 @@
+{
+  "active_provider": "aws",
+  "show_updated_time": false,
+  "auto_refresh": false,
+  "refresh_on_focus": false,
+  "check_for_updates": false,
+  "providers": {
+    "aws": {"config_dir": {"text": "@EMULATORS@/aws"}},
+    "gcp": {"config_dir": {"text": "@EMULATORS@/gcp"}}
+  }
+}

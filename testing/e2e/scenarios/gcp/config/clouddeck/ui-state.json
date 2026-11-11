@@ -1,0 +1,5 @@
+{
+  "dimension_selections": {"zone": ["us-central1-a", "us-central1-b", "europe-west1-b"]},
+  "hidden_columns": ["instance_id", "private_ip", "public_ip", "launched"],
+  "inspector_open": false
+}
