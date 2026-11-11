@@ -11,7 +11,7 @@ are fake.
 Install one of:
 
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/), or
-- [OrbStack](https://orbstack.dev/) (lighter on a Mac)
+
 
 Start it and wait until it reports that it is running.
 
