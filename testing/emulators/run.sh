@@ -79,21 +79,21 @@ print_hint() { # cloud
         aws)
             echo
             echo "AWS emulator is up at http://localhost:4566 with 12 seeded EC2 instances."
-            echo "In the shell you start CloudDeck from, run:"
-            echo "  export AWS_CONFIG_FILE=$emulators_dir/aws/config AWS_SHARED_CREDENTIALS_FILE=$emulators_dir/aws/credentials"
-            echo "  clouddeck    (or: cargo run -p clouddeck-app, after scripts/stage-bundled-extensions.sh debug)"
+            echo "In CloudDeck: Connect (first run, or the provider picker, Connect again), choose Amazon Web Services,"
+            echo "method Use an AWS profile, Config folder: $emulators_dir/aws, pick local-dev, Connect."
             echo "You should see profiles local-dev (us-east-1) and local-prod (eu-west-1) with instances,"
             echo "and local-down failing, because nothing listens on port 4599."
+            echo "or, without the app setting: in the shell you start CloudDeck from, run:"
+            echo "  export AWS_CONFIG_FILE='$emulators_dir/aws/config' AWS_SHARED_CREDENTIALS_FILE='$emulators_dir/aws/credentials'"
+            echo "  clouddeck    (or: cargo run -p clouddeck-app, after scripts/stage-bundled-extensions.sh debug)"
             ;;
         gcp)
             echo
             echo "GCP emulator is up at http://localhost:4588 with projects demo-web and demo-data."
-            echo "The GCP Config folder setting is not wired up yet. Until it is, set these in the GCP provider settings"
-            echo "(group 'Advanced: endpoints'):"
-            echo "  compute_endpoint = http://localhost:4588"
-            echo "  resource_manager_endpoint = http://localhost:4588"
-            echo "  token_endpoint = http://localhost:4588"
-            echo "  auth_mode = emulator"
+            echo "In CloudDeck: Connect (first run, or the provider picker, Connect again), choose Google Cloud,"
+            echo "method Use gcloud application-default credentials, Config folder: $emulators_dir/gcp, Connect."
+            echo "You should see projects demo-web and demo-data with a region and zone tree of instances."
+            echo "The All providers view shows both the AWS and GCP instances."
             ;;
     esac
 }

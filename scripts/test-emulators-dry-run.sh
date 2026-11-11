@@ -51,7 +51,12 @@ aws_only="$T/start-aws.txt"
 PATH="$T/bin:$PATH" bash "$EMU/run.sh" start aws --dry-run >"$aws_only" 2>&1
 check "start aws touches only the AWS project" bash -c "! grep -q clouddeck-gcp '$aws_only'"
 
-check "AWS hint exports both config variables" grep -q "export AWS_CONFIG_FILE=$EMU/aws/config AWS_SHARED_CREDENTIALS_FILE=$EMU/aws/credentials" "$aws_only"
+check "AWS hint exports both config variables" grep -q "export AWS_CONFIG_FILE='$EMU/aws/config' AWS_SHARED_CREDENTIALS_FILE='$EMU/aws/credentials'" "$aws_only"
+check "AWS hint names the in-app Config folder" grep -q "method Use an AWS profile, Config folder: $EMU/aws, pick local-dev, Connect." "$aws_only"
+check "AWS env-var fallback is labelled" grep -q "^or, without the app setting:" "$aws_only"
+check "GCP hint names the in-app method and Config folder" grep -q "method Use gcloud application-default credentials, Config folder: $EMU/gcp, Connect." "$out"
+check "GCP hint has no endpoint overrides" bash -c "! grep -q 'compute_endpoint' '$out'"
+check "README has the reset step" grep -q "Reset the app to your real account" "$EMU/README.md"
 
 if python3 -c 'import json,sys; [json.load(open(p)) for p in sys.argv[1:]]' \
     "$EMU/gcp/emulator.json" "$EMU/gcp/application_default_credentials.json" 2>/dev/null; then

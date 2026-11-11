@@ -31,37 +31,45 @@ are quick.
 
 ## 3. Run CloudDeck
 
-AWS: in the same shell you start CloudDeck from, run the two `export` lines
-that `start` printed, then start CloudDeck:
+AWS, in CloudDeck:
+
+1. Choose Connect (on first run, or from the provider picker, Connect again).
+2. Choose Amazon Web Services, then the method Use an AWS profile.
+3. Set Config folder to `/path/to/repo/testing/emulators/aws` (Browse, or type it).
+4. Pick `local-dev` and choose Connect.
+
+You should see the profiles `local-dev` (us-east-1) and `local-prod` (eu-west-1),
+each with EC2 instances in Running, Stopped and Terminated states, and
+`local-down` failing to load, on purpose: nothing listens on port 4599.
+
+GCP, in CloudDeck:
+
+1. Choose Connect, then Google Cloud.
+2. Choose the method Use gcloud application-default credentials.
+3. Set Config folder to `/path/to/repo/testing/emulators/gcp`.
+4. Choose Connect.
+
+You should see the projects `demo-web` and `demo-data` with a region and zone
+tree of instances. The All providers view shows both AWS and GCP.
+
+Without the app setting, AWS can also read the emulator profiles from the
+environment. In the shell you start CloudDeck from, run:
 
 ```sh
 export AWS_CONFIG_FILE=/path/to/repo/testing/emulators/aws/config AWS_SHARED_CREDENTIALS_FILE=/path/to/repo/testing/emulators/aws/credentials
 clouddeck
 ```
 
-Or build and run from source:
+Or build and run from source, after the `export` line:
 
 ```sh
 scripts/stage-bundled-extensions.sh debug
 cargo run -p clouddeck-app
 ```
 
-You should see:
-
-- the profiles `local-dev` (us-east-1) and `local-prod` (eu-west-1), each with
-  EC2 instances in Running, Stopped and Terminated states
-- `local-down` failing to load, on purpose: nothing listens on port 4599
-
-GCP: the Config folder setting is not in the app yet. Until it is, open the GCP
-provider settings, group "Advanced: endpoints", and set:
-
-- Compute Engine endpoint: `http://localhost:4588`
-- Resource Manager endpoint: `http://localhost:4588`
-- Token endpoint: `http://localhost:4588`
-- Authentication: Local emulator (fixed token)
-
-You should see the projects `demo-web` and `demo-data` (and `floci-local`),
-with instances in us-central1 and europe-west1.
+Reset the app to your real account: open Settings, clear the Config folder
+fields for Amazon Web Services and Google Cloud, then sign in to your own
+accounts as usual.
 
 ## 4. Stop
 
