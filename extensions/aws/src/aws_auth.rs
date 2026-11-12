@@ -381,7 +381,7 @@ impl Browse for AwsProvider {
                 ..
             }) => list_scenario(demo, connection, kind, selection, fleet),
             Some(settings) => routed_list(cx, connection, kind, selection, &settings),
-            None => self.inner.list(cx, connection, kind, selection),
+            None => instances_provider(aws_files(cx)).list(cx, connection, kind, selection),
         }
     }
 
@@ -477,11 +477,15 @@ pub fn aws_provider() -> Arc<dyn Provider> {
     Arc::from(boxed_aws_provider())
 }
 
-pub(crate) fn boxed_aws_provider() -> Box<dyn Provider> {
+fn instances_provider(files: AwsFiles) -> ComputeServiceProvider {
     let regions = REGIONS.iter().map(|region| (*region).to_string()).collect();
-    let inner = ComputeServiceProvider::new("aws", Vec::new(), regions, |profile, region| {
-        Box::new(AwsSdkComputeService::new(profile, region))
-    });
+    ComputeServiceProvider::new("aws", Vec::new(), regions, move |profile, region| {
+        Box::new(AwsSdkComputeService::new(profile, region).with_files(files.clone()))
+    })
+}
+
+pub(crate) fn boxed_aws_provider() -> Box<dyn Provider> {
+    let inner = instances_provider(AwsFiles::default());
     let auth = AwsAuth::new(home_dir(), AwsSsoLoginService::new());
     Box::new(AwsProvider { inner, auth })
 }
@@ -703,7 +707,7 @@ mod conformance {
 
     use clouddeck_extension_api::conformance::{check_manifest_settings, check_provider};
     use clouddeck_provider_api::{
-        ExtrasSection, Host, LogLevel, NoAuth, NoConfig, ProviderError, ResourceId,
+        ExtrasSection, Host, LogLevel, NoAuth, NoConfig, ProviderError, ResourceId, ValueId,
     };
     use clouddeck_provider_kit::{
         BoxError, CloudDeckError, ComputeInstanceFilters, ComputeInstanceLoadResult,
@@ -1094,5 +1098,93 @@ sso_role_name = Admin
             .map(|profile| profile.name)
             .collect();
         assert_eq!(scan, ["conformance"]);
+    }
+
+    fn folder_with_local_dev(endpoint: &str) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("config"),
+            format!("[profile local-dev]\nregion = us-east-1\nendpoint_url = {endpoint}\n"),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("credentials"),
+            "[local-dev]\naws_access_key_id = test\naws_secret_access_key = test\n",
+        )
+        .unwrap();
+        dir
+    }
+
+    fn list_local_dev_instances(folder: &Path) -> ListResult {
+        let host = PinnedHost {
+            base: &NoHost,
+            folder,
+        };
+        let selection = Selection::new().with(REGION, vec![ValueId::from("us-east-1")]);
+        boxed_aws_provider().list(
+            &Call {
+                deadline: None,
+                host: &host,
+            },
+            &ConnectionId::from("local-dev"),
+            &KindId::instances(),
+            &selection,
+        )
+    }
+
+    #[test]
+    fn listing_with_only_the_config_folder_uses_its_endpoint_and_keys() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let (seen_tx, seen_rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            use std::io::{Read, Write};
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = Vec::new();
+            let mut buf = [0u8; 4096];
+            while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                let n = stream.read(&mut buf).unwrap();
+                if n == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buf[..n]);
+            }
+            seen_tx.send(String::from_utf8_lossy(&request).to_string()).unwrap();
+            let body = "<DescribeInstancesResponse xmlns=\"http://ec2.amazonaws.com/doc/2016-11-15/\"><reservationSet/></DescribeInstancesResponse>";
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+        });
+        let folder = folder_with_local_dev(&endpoint);
+
+        let result = list_local_dev_instances(folder.path());
+        let request = seen_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the folder endpoint should receive the listing request");
+
+        assert!(result.failures.is_empty(), "{:?}", result.failures);
+        assert!(request.contains("Credential=test/"), "{request}");
+    }
+
+    #[test]
+    fn listing_an_unreachable_folder_endpoint_is_not_an_auth_failure() {
+        let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoint = format!("http://{}", closed.local_addr().unwrap());
+        drop(closed);
+        let folder = folder_with_local_dev(&endpoint);
+
+        let result = list_local_dev_instances(folder.path());
+
+        assert_eq!(result.failures.len(), 1, "{:?}", result.failures);
+        let error = &result.failures[0].error;
+        assert!(
+            matches!(error.kind, ErrorKind::Network | ErrorKind::Timeout),
+            "{:?}: {}",
+            error.kind,
+            error.message
+        );
     }
 }
