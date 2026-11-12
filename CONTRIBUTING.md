@@ -88,6 +88,12 @@ guidance.
 
 - Follow "Build and test" and "Code quality gate" above. Do not copy their
   commands elsewhere, and keep them in step with the checks CI runs.
+- To keep test and clippy output out of your context, run `scripts/test-quiet.sh`
+  and `scripts/clippy-quiet.sh` instead of the bare cargo commands. They run the
+  same checks (the test script adds `--no-fail-fast` so every failure is
+  reported), print only failing tests, diagnostics and one summary line, and
+  exit with the underlying command's code. `scripts/test-quiet-scripts.sh`
+  checks them against passing and failing fixture crates.
 - Never set `CLOUDDECK_SKIP_QUALITY`, and never edit `.rustqual-baseline.json`.
 - Keep the read only guarantee: add no cloud mutations, store no credentials,
   and write no tests that need real AWS credentials or network access.
