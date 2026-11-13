@@ -152,6 +152,7 @@ impl AppShell {
     pub(super) fn load_connections(
         model: &mut ContextModel,
         providers: &[std::sync::Arc<dyn Provider>],
+        saved: &WorkspaceContext,
     ) {
         let active = model.active_provider().to_string();
         let Some(provider) = providers.iter().find(|p| p.info().id == active) else {
@@ -162,7 +163,12 @@ impl AppShell {
             host: &LoadHost,
         };
         model.set_connections(provider.connections(&call));
-        model.set_signed_in(&active, provider_signed_in(provider.as_ref()));
+        let connection = (saved.provider == active && !saved.profile.is_empty())
+            .then(|| ConnectionId::from(saved.profile.as_str()));
+        model.set_signed_in(
+            &active,
+            provider_signed_in(provider.as_ref(), connection.as_ref()),
+        );
     }
 
     pub(super) fn load_dimensions(
@@ -322,7 +328,7 @@ impl AppShell {
             launch_provider.as_deref(),
             "aws",
         );
-        Self::load_connections(&mut context_model, &providers);
+        Self::load_connections(&mut context_model, &providers, &context);
         Self::load_dimensions(&mut context_model, &providers);
         ensure_region_dimension(&mut context_model, &available);
         set_region_values(&mut context_model, &saved_regions);

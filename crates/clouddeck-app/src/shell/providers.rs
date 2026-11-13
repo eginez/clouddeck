@@ -70,7 +70,7 @@ impl AppShell {
         cx: &mut Context<Self>,
     ) {
         let regions = region_values(&self.context_model);
-        Self::load_connections(&mut self.context_model, providers);
+        Self::load_connections(&mut self.context_model, providers, &self.context);
         Self::load_dimensions(&mut self.context_model, providers);
         let available = Self::available_regions(self.demo, self.demo_scenario);
         ensure_region_dimension(&mut self.context_model, &available);

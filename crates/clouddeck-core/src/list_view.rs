@@ -330,13 +330,16 @@ pub fn all_providers_view(
 }
 
 /// Whether the provider reports a usable session, as the picker and sign-in state see it.
-pub fn provider_signed_in(provider: &dyn Provider) -> bool {
+pub fn provider_signed_in(provider: &dyn Provider, connection: Option<&ConnectionId>) -> bool {
     let call = Call {
         deadline: None,
         host: &LoadHost,
     };
     matches!(
-        provider.auth().unwrap_or(&NoAuth).auth_status(&call, None),
+        provider
+            .auth()
+            .unwrap_or(&NoAuth)
+            .auth_status(&call, connection),
         AuthStatus::SignedIn { .. }
     )
 }
@@ -505,6 +508,6 @@ mod tests {
         let provider = crate::ComputeServiceProvider::new("aws", vec![], vec![], |_, _| {
             Box::new(crate::MockComputeService::new(vec![], None))
         });
-        assert!(provider_signed_in(&provider));
+        assert!(provider_signed_in(&provider, None));
     }
 }
