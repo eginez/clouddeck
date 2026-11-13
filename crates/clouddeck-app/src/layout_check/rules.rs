@@ -19,6 +19,9 @@ use super::rules_table;
 use super::states::State;
 use crate::ui_record::Recorded;
 
+/// Glyph advance per font-size point, matching the headless test text system.
+const TEXT_ADVANCE_EM: f32 = 0.6;
+
 /// One geometric assertion over the debug-selector boxes of a named state.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Check {
@@ -62,6 +65,12 @@ pub(crate) enum Check {
     BottomEdgeAtWindow(&'static str),
     /// The box's left edge is on the window's left edge.
     LeftEdgeAtWindow(&'static str),
+    /// The box is wide enough for `text` at `font_size`, estimated per character.
+    TextFits {
+        target: &'static str,
+        text: &'static str,
+        font_size: f32,
+    },
     /// The box width is within the given range.
     WidthBetween(&'static str, f32, f32),
     /// The box height is within the given range.
@@ -163,6 +172,21 @@ pub(crate) fn evaluate(
         }
         Check::LeftEdgeAtWindow(sel) => {
             geometry::left_edge_at_window(sel, get(lookup, sel)?, window, TOL)
+        }
+        Check::TextFits {
+            target,
+            text,
+            font_size,
+        } => {
+            let needed = text.chars().count() as f32 * TEXT_ADVANCE_EM * font_size;
+            let width = f32::from(get(lookup, target)?.size.width);
+            if width >= needed {
+                Ok(())
+            } else {
+                Err(format!(
+                    "{target} is {width}pt wide, \"{text}\" needs about {needed}pt at {font_size}pt"
+                ))
+            }
         }
         Check::WidthBetween(sel, min, max) => {
             geometry::width_between(sel, get(lookup, sel)?, min, max)

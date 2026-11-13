@@ -412,25 +412,18 @@ impl PluginsWindowView {
             .gap(px(2.))
             .child(
                 div()
-                    .flex()
-                    .items_center()
-                    .gap(px(6.))
-                    .min_w(px(0.))
-                    .child(
-                        div()
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .overflow_hidden()
-                            .text_ellipsis()
-                            .child(row.name.clone()),
-                    )
-                    .child(
-                        div()
-                            .flex_none()
-                            .text_size(px(11.))
-                            .font_family(MONO_FONT)
-                            .text_color(palette.dim)
-                            .child(row.version.clone()),
-                    ),
+                    .debug_selector(move || format!("plugins.row.{ix}.name"))
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .overflow_hidden()
+                    .text_ellipsis()
+                    .child(row.name.clone()),
+            )
+            .child(
+                div()
+                    .text_size(px(11.))
+                    .font_family(MONO_FONT)
+                    .text_color(palette.dim)
+                    .child(row.version.clone()),
             )
             .child(
                 div()
@@ -879,8 +872,8 @@ pub(crate) mod fixtures {
     /// The bundled aws, gcp and demo plugins.
     pub(crate) fn bundled_set() -> Vec<PluginEntry> {
         vec![
-            plugin("aws", "AWS", PluginOrigin::Bundled),
-            plugin("gcp", "GCP", PluginOrigin::Bundled),
+            plugin("aws", "Amazon Web Services", PluginOrigin::Bundled),
+            plugin("gcp", "Google Cloud", PluginOrigin::Bundled),
             plugin("demo", "Demo", PluginOrigin::Bundled),
         ]
     }
