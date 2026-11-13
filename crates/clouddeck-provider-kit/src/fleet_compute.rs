@@ -186,9 +186,9 @@ fn aggregate_regions(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fixtures::running_ec2;
     use crate::mock::MockComputeService;
     use crate::models::EC2Instance;
-    use crate::query::fixtures::running_ec2;
     use std::sync::Arc;
 
     fn factory_for(
@@ -394,7 +394,10 @@ mod tests {
     async fn partial_failures_sorted_when_mixed_with_success() {
         let service = FleetComputeService::new(
             vec!["Zeta".to_string(), "alpha".to_string(), "beta".to_string()],
-            factory_for(vec![("beta", vec![running_ec2("i-1")])], vec!["Zeta", "alpha"]),
+            factory_for(
+                vec![("beta", vec![running_ec2("i-1")])],
+                vec!["Zeta", "alpha"],
+            ),
         );
 
         let result = service.list_instances(None).await.unwrap();

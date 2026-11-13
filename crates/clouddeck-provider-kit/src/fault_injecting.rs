@@ -175,9 +175,9 @@ impl ComputeService for FaultInjectingComputeService {
 mod tests {
     use super::*;
     use crate::error::CloudDeckError;
+    use crate::fixtures::running_ec2;
     use crate::mock::MockComputeService;
     use crate::models::EC2Instance;
-    use crate::query::fixtures::running_ec2;
     use std::sync::{Arc, Mutex};
 
     fn stopped_instance(instance_id: &str) -> EC2Instance {

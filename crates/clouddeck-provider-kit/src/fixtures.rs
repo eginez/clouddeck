@@ -183,7 +183,7 @@ pub fn bare_ec2(region: &str, instance_id: &str) -> EC2Instance {
 }
 
 /// A running instance with no region, for tests that only need an id.
-pub(crate) fn running_ec2(instance_id: &str) -> EC2Instance {
+pub fn running_ec2(instance_id: &str) -> EC2Instance {
     EC2Instance {
         region: None,
         state: Some("running".to_string()),

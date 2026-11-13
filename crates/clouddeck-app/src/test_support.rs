@@ -195,8 +195,10 @@ where
     let events: Rc<RefCell<Vec<E>>> = Rc::new(RefCell::new(Vec::new()));
     let sink = events.clone();
     cx.update(|_, cx| {
-        cx.subscribe(&view, move |_, event: &E, _| sink.borrow_mut().push(event.clone()))
-            .detach();
+        cx.subscribe(&view, move |_, event: &E, _| {
+            sink.borrow_mut().push(event.clone())
+        })
+        .detach();
     });
     (view, events, cx)
 }

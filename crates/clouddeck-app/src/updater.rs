@@ -320,10 +320,10 @@ mod tests {
     use std::fs;
     use std::sync::atomic::AtomicUsize;
 
+    use crate::test_support::{tar_gz_with_binary, updater_sandbox};
     use clouddeck_core::release::manifest::{Manifest, to_canonical_json};
     use clouddeck_core::release::sign::{generate_keypair, sign_bytes};
     use clouddeck_core::release::verify::sha256_hex;
-    use crate::test_support::{tar_gz_with_binary, updater_sandbox};
     use gpui::TestAppContext;
 
     struct FakeSource {

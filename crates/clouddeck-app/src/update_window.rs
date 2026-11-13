@@ -230,12 +230,12 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
 
+    use crate::test_support::{tar_gz_with_binary, updater_sandbox};
     use clouddeck_core::release::manifest::{Asset, Manifest, to_canonical_json};
     use clouddeck_core::release::sign::sign_bytes;
     use clouddeck_core::release::source::{FetchedRelease, UpdateSource};
     use clouddeck_core::release::target::Target;
     use clouddeck_core::release::verify::sha256_hex;
-    use crate::test_support::{tar_gz_with_binary, updater_sandbox};
     use gpui::{TestAppContext, VisualTestContext};
     use semver::Version;
 
