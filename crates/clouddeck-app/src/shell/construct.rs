@@ -329,7 +329,12 @@ impl AppShell {
         let fleet_regions = Self::fleet_regions_for(&context_model);
         let remembered_regions = Some(Self::remembered_regions_for(&context_model));
         let view: ListView = if context_model.shows_all_providers() {
-            all_providers_view(&providers, demo.then_some(demo_scenario), request_timeout)
+            all_providers_view(
+                &providers,
+                demo.then_some(demo_scenario),
+                request_timeout,
+                &context,
+            )
         } else {
             InstanceListViewModel::new(Self::provider_for_id(
                 context_model.active_provider(),

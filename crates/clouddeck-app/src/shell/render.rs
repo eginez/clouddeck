@@ -11,6 +11,7 @@ impl AppShell {
                 providers,
                 self.demo.then_some(self.demo_scenario),
                 self.request_timeout,
+                &self.context,
             )
         } else {
             self.active_provider_view(providers, fleet_regions)

@@ -12,7 +12,7 @@ use clouddeck_core::{
     ALL_PROVIDERS, Auth, AuthAnswer, AuthInput, AuthMethod, AuthStep, Browse, Call, Config,
     ConnectError, Connection, ConnectionId, ContextModel, Dimension, ErrorKind, FieldDef, FlowId,
     Instance, KindId, KindInfo, ListResult, ListView, Provider, ProviderEntry, ProviderError,
-    ProviderInfo, Selection, SettingDef, SettingKind, Settings, TestScenarioKind,
+    ProviderInfo, Selection, SettingDef, SettingKind, Settings, TestScenarioKind, WorkspaceContext,
     all_providers_view, fixture_fleet,
 };
 use gpui::{AppContext, Bounds, Entity, TestAppContext, VisualTestContext, point, px, size};
@@ -217,7 +217,11 @@ fn multi_setup(state: State) -> Option<MultiSetup> {
 
 fn list_view(setup: &MultiSetup) -> ListView {
     if setup.persisted == ALL_PROVIDERS {
-        return all_providers_view(&setup.providers, None, LIST_TIMEOUT);
+        let saved = WorkspaceContext {
+            provider: String::new(),
+            profile: String::new(),
+        };
+        return all_providers_view(&setup.providers, None, LIST_TIMEOUT, &saved);
     }
     let provider = setup
         .providers

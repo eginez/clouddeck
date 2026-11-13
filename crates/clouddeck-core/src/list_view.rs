@@ -9,10 +9,10 @@ use clouddeck_provider_kit::scoped_provider::{ScopeSettings, scoped_provider};
 use crate::service_provider::{LoadHost, REGION};
 use crate::table::Column;
 use crate::{
-    Call, CloudDeckError, ComputeServicePartialFailure, DemoFleet, ErrorKind, Instance,
-    InstanceListViewModel, ListResult, LoadRequest, MergedListViewModel, Provider, ProviderError,
-    ProviderFacet, ProviderFailure, ProviderInfo, ProviderRow, QueryError, StateFacetCounts,
-    default_selection,
+    Call, CloudDeckError, ComputeServicePartialFailure, Connection, ConnectionId, DemoFleet,
+    ErrorKind, Instance, InstanceListViewModel, ListResult, LoadRequest, MergedListViewModel,
+    Provider, ProviderError, ProviderFacet, ProviderFailure, ProviderInfo, ProviderRow, QueryError,
+    StateFacetCounts, WorkspaceContext, default_selection,
 };
 
 /// The instance list for the active provider, or for every signed-in provider at once.
@@ -254,14 +254,16 @@ impl ListView {
     }
 }
 
-/// The All-providers list: each provider that is signed in, on its default connection and selection.
+/// The All-providers list: each provider that is signed in, on its saved or first connection.
 ///
-/// A provider that is signed out is listed as needing sign-in, and one whose connections or
-/// dimensions cannot be read becomes a failed member, so neither hides the other providers' rows.
+/// The saved context's connection is used for the provider it belongs to. A provider that is
+/// signed out is listed as needing sign-in, and one whose connections or dimensions cannot be
+/// read becomes a failed member, so neither hides the other providers' rows.
 pub fn all_providers_view(
     providers: &[Arc<dyn Provider>],
     demo: Option<DemoFleet>,
     request_timeout: Duration,
+    saved: &WorkspaceContext,
 ) -> ListView {
     let call = Call {
         deadline: None,
@@ -274,8 +276,27 @@ pub fn all_providers_view(
         .filter(|provider| (provider.info().id == "demo") == demo.is_some())
     {
         let info = provider.info();
+        let connections = match provider.connections(&call) {
+            Ok(connections) => connections,
+            Err(error) => {
+                unavailable.push(setup_failure(info, error));
+                continue;
+            }
+        };
+        let Some(connection) = preferred_connection(&info.id, saved, &connections) else {
+            unavailable.push(ProviderFailure {
+                message: format!("{} has no connections to list.", info.name),
+                provider_id: info.id,
+                provider_name: info.name,
+                needs_sign_in: false,
+            });
+            continue;
+        };
         if matches!(
-            provider.auth().unwrap_or(&NoAuth).auth_status(&call, None),
+            provider
+                .auth()
+                .unwrap_or(&NoAuth)
+                .auth_status(&call, Some(&connection)),
             AuthStatus::SignedOut | AuthStatus::Expired
         ) {
             unavailable.push(ProviderFailure {
@@ -286,22 +307,6 @@ pub fn all_providers_view(
             });
             continue;
         }
-        let connections = match provider.connections(&call) {
-            Ok(connections) => connections,
-            Err(error) => {
-                unavailable.push(setup_failure(info, error));
-                continue;
-            }
-        };
-        let Some(connection) = connections.first().map(|connection| connection.id.clone()) else {
-            unavailable.push(ProviderFailure {
-                message: format!("{} has no connections to list.", info.name),
-                provider_id: info.id,
-                provider_name: info.name,
-                needs_sign_in: false,
-            });
-            continue;
-        };
         let selection = match provider.dimensions(&call, &connection) {
             Ok(dimensions) => default_selection(&dimensions),
             Err(error) => {
@@ -336,6 +341,23 @@ pub fn provider_signed_in(provider: &dyn Provider) -> bool {
     )
 }
 
+fn preferred_connection(
+    provider_id: &str,
+    saved: &WorkspaceContext,
+    connections: &[Connection],
+) -> Option<ConnectionId> {
+    let saved_match = (saved.provider == provider_id)
+        .then(|| {
+            connections
+                .iter()
+                .find(|connection| connection.id.as_str() == saved.profile)
+        })
+        .flatten();
+    saved_match
+        .or_else(|| connections.first())
+        .map(|connection| connection.id.clone())
+}
+
 fn setup_failure(info: ProviderInfo, error: ProviderError) -> ProviderFailure {
     ProviderFailure {
         needs_sign_in: error.kind == ErrorKind::Auth,
@@ -348,6 +370,135 @@ fn setup_failure(info: ProviderInfo, error: ProviderError) -> ProviderFailure {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct SignedInOnConnection {
+        inner: crate::ComputeServiceProvider,
+        connection: &'static str,
+    }
+
+    impl Provider for SignedInOnConnection {
+        fn info(&self) -> ProviderInfo {
+            self.inner.info()
+        }
+
+        fn auth(&self) -> Option<&dyn clouddeck_provider_api::Auth> {
+            Some(self)
+        }
+    }
+
+    impl clouddeck_provider_api::Auth for SignedInOnConnection {
+        fn auth_status(&self, _cx: &Call<'_>, connection: Option<&ConnectionId>) -> AuthStatus {
+            if connection.is_some_and(|id| id.as_str() == self.connection) {
+                AuthStatus::SignedIn { expires: None }
+            } else {
+                AuthStatus::SignedOut
+            }
+        }
+    }
+
+    impl clouddeck_provider_api::Browse for SignedInOnConnection {
+        fn connections(&self, cx: &Call<'_>) -> Result<Vec<crate::Connection>, ProviderError> {
+            self.inner.connections(cx)
+        }
+
+        fn dimensions(
+            &self,
+            cx: &Call<'_>,
+            connection: &ConnectionId,
+        ) -> Result<Vec<crate::Dimension>, ProviderError> {
+            self.inner.dimensions(cx, connection)
+        }
+
+        fn kinds(&self) -> Vec<crate::KindInfo> {
+            self.inner.kinds()
+        }
+
+        fn list(
+            &self,
+            cx: &Call<'_>,
+            connection: &ConnectionId,
+            kind: &clouddeck_provider_api::KindId,
+            selection: &clouddeck_provider_api::Selection,
+        ) -> ListResult {
+            self.inner.list(cx, connection, kind, selection)
+        }
+
+        fn console_url(
+            &self,
+            connection: &ConnectionId,
+            kind: &clouddeck_provider_api::KindId,
+            resource: &Instance,
+        ) -> Option<String> {
+            self.inner.console_url(connection, kind, resource)
+        }
+
+        fn fields(&self, kind: &clouddeck_provider_api::KindId) -> Vec<crate::FieldDef> {
+            self.inner.fields(kind)
+        }
+    }
+
+    fn connection(id: &str) -> crate::Connection {
+        crate::Connection {
+            id: id.into(),
+            display_name: id.to_string(),
+        }
+    }
+
+    fn service_provider_with(
+        id: &str,
+        connections: Vec<crate::Connection>,
+    ) -> crate::ComputeServiceProvider {
+        crate::ComputeServiceProvider::new(
+            id,
+            connections,
+            vec!["us-east-1".to_string()],
+            |_, _| Box::new(crate::MockComputeService::new(vec![], None)),
+        )
+    }
+
+    #[test]
+    fn all_view_checks_each_provider_on_the_saved_connection() {
+        let aws = SignedInOnConnection {
+            inner: service_provider_with(
+                "aws",
+                vec![connection("demo-a"), connection("local-dev")],
+            ),
+            connection: "local-dev",
+        };
+        let gcp =
+            service_provider_with("gcp", vec![connection("demo-data"), connection("demo-web")]);
+        let providers: Vec<Arc<dyn Provider>> = vec![Arc::new(aws), Arc::new(gcp)];
+        let saved = WorkspaceContext {
+            provider: "aws".into(),
+            profile: "local-dev".into(),
+        };
+
+        let view = all_providers_view(&providers, None, Duration::from_secs(5), &saved);
+
+        assert!(view.provider_failures().is_empty());
+        let names: Vec<String> = view.provider_names().into_keys().collect();
+        assert_eq!(names, ["aws", "gcp"]);
+    }
+
+    #[test]
+    fn provider_signed_out_on_its_saved_connection_needs_sign_in() {
+        let aws = SignedInOnConnection {
+            inner: service_provider_with("aws", vec![connection("demo-a")]),
+            connection: "local-dev",
+        };
+        let providers: Vec<Arc<dyn Provider>> = vec![Arc::new(aws)];
+        let saved = WorkspaceContext {
+            provider: "aws".into(),
+            profile: "missing".into(),
+        };
+
+        let view = all_providers_view(&providers, None, Duration::from_secs(5), &saved);
+
+        let failures = view.provider_failures();
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0].provider_id, "aws");
+        assert!(failures[0].needs_sign_in);
+    }
 
     #[test]
     fn provider_without_auth_counts_as_signed_in() {
