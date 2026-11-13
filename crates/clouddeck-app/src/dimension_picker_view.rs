@@ -328,12 +328,12 @@ mod tests {
     use std::rc::Rc;
 
     use super::*;
+    use crate::test_support::open_with_query;
     use clouddeck_core::{
         CellFailure, DimValue, Dimension, DimensionId, ErrorKind, Instance, ListResult,
         ProviderError, Selection,
     };
     use gpui::{TestAppContext, VisualTestContext};
-    use gpui_component::Root;
 
     type Events = Rc<RefCell<Vec<DimensionPickerEvent>>>;
 
@@ -385,33 +385,12 @@ mod tests {
         dimension: &'static str,
         query: &'static str,
     ) -> (Entity<DimensionPicker>, Events, &'a mut VisualTestContext) {
-        let slot = Rc::new(RefCell::new(None));
-        let slot_for_window = slot.clone();
-        let (_root, cx) = cx.add_window_view(move |window, cx| {
-            gpui_component::init(cx);
-            let picker = cx.new(|cx| DimensionPicker::new(model, dimension, window, cx));
-            picker.update(cx, |picker, cx| {
-                picker
-                    .filter
-                    .update(cx, |input, cx| input.set_value(query, window, cx));
-            });
-            *slot_for_window.borrow_mut() = Some(picker.clone());
-            Root::new(picker, window, cx)
-        });
-        let picker = slot
-            .borrow()
-            .as_ref()
-            .expect("picker entity should be created")
-            .clone();
-        let events: Events = Rc::new(RefCell::new(Vec::new()));
-        let sink = events.clone();
-        cx.update(|_, cx| {
-            cx.subscribe(&picker, move |_, event: &DimensionPickerEvent, _| {
-                sink.borrow_mut().push(event.clone())
-            })
-            .detach();
-        });
-        (picker, events, cx)
+        open_with_query(
+            cx,
+            query,
+            |window, cx| DimensionPicker::new(model, dimension, window, cx),
+            |picker| &picker.filter,
+        )
     }
 
     fn open_region<'a>(
