@@ -406,17 +406,6 @@ pub fn load_profile_auth_for(files: &AwsFiles) -> std::io::Result<Vec<AwsProfile
     read_profile_auth(&files.config, &files.credentials)
 }
 
-/// Only profile names and region metadata are retained; secret values are ignored.
-pub fn parse_profiles(
-    config: &str,
-    credentials: &str,
-) -> Result<Vec<AwsProfile>, AwsConfigParseError> {
-    Ok(parse_profile_auth(config, credentials)?
-        .into_iter()
-        .map(AwsProfile::from)
-        .collect())
-}
-
 pub fn load_profiles_for(files: &AwsFiles) -> std::io::Result<Vec<AwsProfile>> {
     Ok(load_profile_auth_for(files)?
         .into_iter()
@@ -540,10 +529,11 @@ mod tests {
     use super::*;
     #[test]
     fn profiles_merge_without_secrets_and_ignore_sso_sessions() {
-        let profiles = parse_profiles(
+        let profiles = parse_profile_auth(
             "[profile team]\nregion=eu-west-1\nsso_session=corp\n[sso-session corp]\nsso_region=us-east-1\n[default]\nregion=us-west-2",
             "[team]\naws_secret_access_key=never-retain\nregion=us-east-1",
         )
+        .map(|profiles| profiles.into_iter().map(AwsProfile::from).collect::<Vec<_>>())
         .unwrap();
         assert_eq!(
             profiles,
@@ -563,10 +553,11 @@ mod tests {
 
     #[test]
     fn profile_parser_ignores_non_profile_sections_and_inline_comments() {
-        let profiles = parse_profiles(
+        let profiles = parse_profile_auth(
             "[profile team]\nregion = eu-west-1 # primary\n[sso-session corp]\nregion = should-not-appear\n[services custom]\nregion = should-not-appear",
             "[default]\nregion=us-east-1\n[profile team]\nregion=wrong\n[sso-session corp]\nregion=also-wrong",
         )
+        .map(|profiles| profiles.into_iter().map(AwsProfile::from).collect::<Vec<_>>())
         .unwrap();
         assert_eq!(
             profiles,

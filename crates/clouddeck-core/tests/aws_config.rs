@@ -1,6 +1,6 @@
 use clouddeck_core::{
     AwsConfigFile, AwsCredentialKind, AwsProfile, AwsProfileAuth, AwsSsoConfiguration,
-    parse_profile_auth, parse_profiles, read_profile_auth,
+    parse_profile_auth, read_profile_auth,
 };
 
 const LEGACY_SSO: &str = include_str!("fixtures/aws/legacy-sso-start-url.config");
@@ -253,10 +253,6 @@ fn malformed_ini_inputs_return_errors_without_panicking() {
             parse_profile_auth(input, "").is_err(),
             "expected error for {input:?}"
         );
-        assert!(
-            parse_profiles(input, "").is_err(),
-            "expected error for {input:?}"
-        );
     }
 }
 
@@ -299,10 +295,11 @@ fn read_profile_auth_treats_missing_files_as_empty() {
 
 #[test]
 fn profile_auth_converts_to_secret_free_profile() {
-    let profiles: Vec<AwsProfile> = parse_profiles(
+    let profiles: Vec<AwsProfile> = parse_profile_auth(
         "[profile team]\nregion = eu-west-1\nsso_start_url = https://team.awsapps.com/start\nsso_region = eu-west-1\n",
         "",
     )
+    .map(|profiles| profiles.into_iter().map(AwsProfile::from).collect())
     .unwrap();
 
     assert_eq!(
