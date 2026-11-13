@@ -1,12 +1,12 @@
 //! Scripted flow runner.
 
 use std::cell::RefCell;
-use std::collections::HashSet;
 
 use gpui::{
     Entity, Modifiers, MouseButton, Pixels, Point, TestAppContext, VisualTestContext, px, size,
 };
 
+use super::assert_unique_ids;
 use super::flows_overlays;
 use super::flows_search;
 use super::rules::{Check, evaluate};
@@ -160,28 +160,11 @@ fn check(
     }
 }
 
-/// Panics listing every script id that appears more than once.
-fn assert_unique_ids(scripts: &[Script]) {
-    let mut seen = HashSet::new();
-    let mut duplicates: Vec<&str> = scripts
-        .iter()
-        .filter(|script| !seen.insert(script.id))
-        .map(|script| script.id)
-        .collect();
-    duplicates.sort_unstable();
-    duplicates.dedup();
-    assert!(
-        duplicates.is_empty(),
-        "duplicate script ids: {}",
-        duplicates.join(", ")
-    );
-}
-
 #[gpui::test]
 fn scripts_hold(cx: &mut TestAppContext) {
     let mut scripts = flows_overlays::scripts();
     scripts.extend(flows_search::scripts());
-    assert_unique_ids(&scripts);
+    assert_unique_ids(&scripts, |script| script.id, "script");
 
     let mut problems = Vec::new();
     for script in &scripts {

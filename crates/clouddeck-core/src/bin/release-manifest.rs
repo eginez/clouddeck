@@ -376,33 +376,26 @@ mod tests {
         assert_eq!(code, 2);
     }
 
-    #[test]
-    fn build_rejects_non_semver_version() {
+    fn assert_build_rejects_replaced_arg(original: &str, replacement: &str) {
         let dir = tempfile::tempdir().unwrap();
         let (key, _) = keygen_in(dir.path());
         let asset = write_asset(dir.path(), MAC_ASSET);
         let spec = format!("macos-aarch64={}", asset.display());
         let mut values = build_args(dir.path(), &key, &[spec]);
-        let index = values.iter().position(|value| value == "0.2.0").unwrap();
-        values[index] = "v0.2.0".into();
+        let index = values.iter().position(|value| value == original).unwrap();
+        values[index] = replacement.into();
         let (code, _) = run(&values, NOW).unwrap_err();
         assert_eq!(code, 2);
     }
 
     #[test]
+    fn build_rejects_non_semver_version() {
+        assert_build_rejects_replaced_arg("0.2.0", "v0.2.0");
+    }
+
+    #[test]
     fn build_rejects_non_rfc3339_published_at() {
-        let dir = tempfile::tempdir().unwrap();
-        let (key, _) = keygen_in(dir.path());
-        let asset = write_asset(dir.path(), MAC_ASSET);
-        let spec = format!("macos-aarch64={}", asset.display());
-        let mut values = build_args(dir.path(), &key, &[spec]);
-        let index = values
-            .iter()
-            .position(|value| value == "2026-10-24T12:00:00Z")
-            .unwrap();
-        values[index] = "yesterday".into();
-        let (code, _) = run(&values, NOW).unwrap_err();
-        assert_eq!(code, 2);
+        assert_build_rejects_replaced_arg("2026-10-24T12:00:00Z", "yesterday");
     }
 
     #[test]

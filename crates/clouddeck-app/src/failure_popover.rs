@@ -458,24 +458,33 @@ mod tests {
         );
     }
 
-    #[gpui::test]
-    fn copy_error_writes_region_and_message_to_clipboard(cx: &mut TestAppContext) {
-        let (_, events, cx) = open_popover(
-            cx,
-            vec![failure("eu-central-1", "AccessDenied: not allowed")],
-        );
+    fn assert_copy_writes(
+        cx: &mut TestAppContext,
+        failures: Vec<RegionFailure>,
+        expected_clipboard: &str,
+    ) {
+        let (_, events, cx) = open_popover(cx, failures);
 
         let copy = cx
             .debug_bounds("failure.copy")
-            .expect("copy error button renders");
+            .expect("copy button renders");
         cx.simulate_click(copy.center(), Default::default());
         cx.run_until_parked();
 
         assert_eq!(
             cx.read_from_clipboard().and_then(|item| item.text()),
-            Some("eu-central-1: AccessDenied: not allowed".to_string())
+            Some(expected_clipboard.to_string())
         );
         assert_eq!(*events.borrow(), vec![FailurePopoverEvent::Copied]);
+    }
+
+    #[gpui::test]
+    fn copy_error_writes_region_and_message_to_clipboard(cx: &mut TestAppContext) {
+        assert_copy_writes(
+            cx,
+            vec![failure("eu-central-1", "AccessDenied: not allowed")],
+            "eu-central-1: AccessDenied: not allowed",
+        );
     }
 
     #[gpui::test]
@@ -540,25 +549,14 @@ mod tests {
 
     #[gpui::test]
     fn copy_errors_writes_every_region_to_clipboard(cx: &mut TestAppContext) {
-        let (_, events, cx) = open_popover(
+        assert_copy_writes(
             cx,
             vec![
                 failure("us-west-2", "Throttled"),
                 failure("eu-west-1", "AccessDenied"),
             ],
+            "us-west-2: Throttled\neu-west-1: AccessDenied",
         );
-
-        let copy = cx
-            .debug_bounds("failure.copy")
-            .expect("copy errors button renders");
-        cx.simulate_click(copy.center(), Default::default());
-        cx.run_until_parked();
-
-        assert_eq!(
-            cx.read_from_clipboard().and_then(|item| item.text()),
-            Some("us-west-2: Throttled\neu-west-1: AccessDenied".to_string())
-        );
-        assert_eq!(*events.borrow(), vec![FailurePopoverEvent::Copied]);
     }
 
     #[gpui::test]

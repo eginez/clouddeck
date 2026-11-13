@@ -87,6 +87,20 @@ fn center_state_of(main: &Entity<MainWindow>, cx: &mut VisualTestContext) -> Opt
     })
 }
 
+fn click_retry_and_expect_reload(
+    main: &Entity<MainWindow>,
+    calls: &Arc<AtomicUsize>,
+    cx: &mut VisualTestContext,
+) {
+    click_center_of("center.action", cx);
+    wait_until(cx, |cx| {
+        loads(calls) == 2 && main.read_with(cx, |main, cx| main.center_state_for(cx).is_none())
+    });
+
+    assert_eq!(loads(calls), 2);
+    assert_eq!(center_state_of(main, cx), None);
+}
+
 #[gpui::test]
 fn throttled_load_shows_the_throttled_centered_state(cx: &mut TestAppContext) {
     let provider = fixtures::failing_provider("Rate exceeded");
@@ -114,13 +128,7 @@ fn signed_out_retry_reloads_the_fleet(cx: &mut TestAppContext) {
     let (_fleet, main, cx) = rooted_main_window_with_service(cx, service, 1280.0, 760.0);
     assert_eq!(center_state_of(&main, cx), Some(CenterState::SignedOut));
 
-    click_center_of("center.action", cx);
-    wait_until(cx, |cx| {
-        loads(&calls) == 2 && main.read_with(cx, |main, cx| main.center_state_for(cx).is_none())
-    });
-
-    assert_eq!(loads(&calls), 2);
-    assert_eq!(center_state_of(&main, cx), None);
+    click_retry_and_expect_reload(&main, &calls, cx);
 }
 
 #[gpui::test]
@@ -133,13 +141,7 @@ fn error_retry_reloads_the_fleet(cx: &mut TestAppContext) {
         Some(CenterState::Error { .. })
     ));
 
-    click_center_of("center.action", cx);
-    wait_until(cx, |cx| {
-        loads(&calls) == 2 && main.read_with(cx, |main, cx| main.center_state_for(cx).is_none())
-    });
-
-    assert_eq!(loads(&calls), 2);
-    assert_eq!(center_state_of(&main, cx), None);
+    click_retry_and_expect_reload(&main, &calls, cx);
 }
 
 #[gpui::test]
@@ -149,13 +151,7 @@ fn throttled_retry_now_reloads_the_fleet(cx: &mut TestAppContext) {
     let (_fleet, main, cx) = rooted_main_window_with_service(cx, service, 1280.0, 760.0);
     assert_eq!(center_state_of(&main, cx), Some(CenterState::Throttled));
 
-    click_center_of("center.action", cx);
-    wait_until(cx, |cx| {
-        loads(&calls) == 2 && main.read_with(cx, |main, cx| main.center_state_for(cx).is_none())
-    });
-
-    assert_eq!(loads(&calls), 2);
-    assert_eq!(center_state_of(&main, cx), None);
+    click_retry_and_expect_reload(&main, &calls, cx);
 }
 
 #[gpui::test]

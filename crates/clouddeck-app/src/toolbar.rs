@@ -319,30 +319,31 @@ mod tests {
         );
     }
 
-    #[gpui::test]
-    fn clicking_the_sidebar_button_emits_toggle_sidebar(cx: &mut TestAppContext) {
-        let (_state, _toolbar, events, cx) = rooted_toolbar(cx, 1280.0);
-
+    fn assert_click_emits(
+        cx: &mut VisualTestContext,
+        events: &Events,
+        debug_id: &'static str,
+        expected: ToolbarEvent,
+    ) {
         let button = cx
-            .debug_bounds("toolbar.sidebar")
-            .expect("sidebar button renders");
+            .debug_bounds(debug_id)
+            .unwrap_or_else(|| panic!("{debug_id} renders"));
         cx.simulate_click(button.center(), Default::default());
         cx.run_until_parked();
 
-        assert_eq!(*events.borrow(), vec![ToolbarEvent::ToggleSidebar]);
+        assert_eq!(*events.borrow(), vec![expected]);
+    }
+
+    #[gpui::test]
+    fn clicking_the_sidebar_button_emits_toggle_sidebar(cx: &mut TestAppContext) {
+        let (_state, _toolbar, events, cx) = rooted_toolbar(cx, 1280.0);
+        assert_click_emits(cx, &events, "toolbar.sidebar", ToolbarEvent::ToggleSidebar);
     }
 
     #[gpui::test]
     fn clicking_the_filters_button_emits_filters_clicked(cx: &mut TestAppContext) {
         let (_state, _toolbar, events, cx) = rooted_toolbar(cx, 1280.0);
-
-        let button = cx
-            .debug_bounds("toolbar.filters")
-            .expect("filters button renders");
-        cx.simulate_click(button.center(), Default::default());
-        cx.run_until_parked();
-
-        assert_eq!(*events.borrow(), vec![ToolbarEvent::FiltersClicked]);
+        assert_click_emits(cx, &events, "toolbar.filters", ToolbarEvent::FiltersClicked);
     }
 
     #[cfg(target_os = "linux")]

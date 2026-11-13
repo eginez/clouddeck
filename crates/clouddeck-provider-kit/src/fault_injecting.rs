@@ -175,38 +175,15 @@ impl ComputeService for FaultInjectingComputeService {
 mod tests {
     use super::*;
     use crate::error::CloudDeckError;
+    use crate::fixtures::running_ec2;
     use crate::mock::MockComputeService;
     use crate::models::EC2Instance;
     use std::sync::{Arc, Mutex};
 
-    fn instance(instance_id: &str) -> EC2Instance {
-        EC2Instance {
-            instance_id: instance_id.to_string(),
-            region: None,
-            instance_type: None,
-            state: Some("running".to_string()),
-            launch_time: None,
-            public_ip_address: None,
-            private_ip_address: None,
-            vpc_id: None,
-            subnet_id: None,
-            security_groups: vec![],
-            tags: vec![],
-            availability_zone: None,
-            image_id: None,
-            key_name: None,
-            architecture: None,
-            state_transition_reason: None,
-            iam_instance_profile_arn: None,
-            private_dns_name: None,
-            public_dns_name: None,
-        }
-    }
-
     fn stopped_instance(instance_id: &str) -> EC2Instance {
         EC2Instance {
             state: Some("stopped".to_string()),
-            ..instance(instance_id)
+            ..running_ec2(instance_id)
         }
     }
 
@@ -246,7 +223,7 @@ mod tests {
 
     #[tokio::test]
     async fn passthrough_forwards_call_and_result_unmodified() {
-        let base = MockComputeService::new(vec![instance("i-1"), instance("i-2")], None);
+        let base = MockComputeService::new(vec![running_ec2("i-1"), running_ec2("i-2")], None);
         let service = FaultInjectingComputeService::with_sleep(
             base,
             FaultInjectionBehavior::default(),
@@ -265,7 +242,7 @@ mod tests {
 
     #[tokio::test]
     async fn passthrough_forwards_filters_to_base() {
-        let base = MockComputeService::new(vec![instance("i-a"), stopped_instance("i-b")], None);
+        let base = MockComputeService::new(vec![running_ec2("i-a"), stopped_instance("i-b")], None);
         let service = FaultInjectingComputeService::with_sleep(
             base,
             FaultInjectionBehavior::default(),
@@ -291,7 +268,7 @@ mod tests {
         let error = CloudDeckError::Unknown("injected failure".to_string());
         // The base would succeed with an instance — any success here would
         // prove the wrapper forwarded the call to it.
-        let base = MockComputeService::new(vec![instance("i-1")], None);
+        let base = MockComputeService::new(vec![running_ec2("i-1")], None);
         let service = FaultInjectingComputeService::with_sleep(
             base,
             FaultInjectionBehavior::default()
@@ -314,7 +291,7 @@ mod tests {
             )));
 
         let service = FaultInjectingComputeService::with_sleep(
-            MockComputeService::new(vec![instance("i-1")], None),
+            MockComputeService::new(vec![running_ec2("i-1")], None),
             behavior,
             RecordingSleep {
                 observed: observed.clone(),
@@ -334,7 +311,7 @@ mod tests {
             FaultInjectionBehavior::default().with_delay(Some(Duration::from_millis(100)));
 
         let service = FaultInjectingComputeService::with_sleep(
-            MockComputeService::new(vec![instance("i-1")], None),
+            MockComputeService::new(vec![running_ec2("i-1")], None),
             behavior,
             RecordingSleep {
                 observed: observed.clone(),
@@ -351,7 +328,7 @@ mod tests {
     async fn no_delay_skips_sleep_entirely() {
         let called = Arc::new(Mutex::new(false));
         let service = FaultInjectingComputeService::with_sleep(
-            MockComputeService::new(vec![instance("i-1")], None),
+            MockComputeService::new(vec![running_ec2("i-1")], None),
             FaultInjectionBehavior::default(),
             SleepingSleep {
                 called: called.clone(),
