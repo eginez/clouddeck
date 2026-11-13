@@ -253,6 +253,15 @@ fn malformed_ini_inputs_return_errors_without_panicking() {
             parse_profile_auth(input, "").is_err(),
             "expected error for {input:?}"
         );
+        assert!(
+            parse_profile_auth(input, "")
+                .map(|profiles| profiles
+                    .into_iter()
+                    .map(AwsProfile::from)
+                    .collect::<Vec<_>>())
+                .is_err(),
+            "expected error for {input:?}"
+        );
     }
 }
 
