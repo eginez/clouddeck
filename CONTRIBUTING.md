@@ -104,6 +104,12 @@ guidance.
   and raise it with whoever assigned the work instead of changing the rule.
 - Task-specific instructions come from whoever assigned the work. This section
   covers only what holds for every change to this repository.
+- Navigate Rust by symbol, as the skill in `.claude/skills/code-nav/SKILL.md`
+  describes. Run `scripts/code-nav.sh outline <file>` or `def <symbol>` before
+  reading a file, and `show <symbol>` to read one item instead of the whole file.
+  Before an Edit, use a ranged Read covering only that item. Plain `refs` is a
+  text match; add `--precise` only when you need exact callers, since it builds a
+  5 GB index the first time. `scripts/test-code-nav.sh` checks the script.
 
 ## Licensing of contributions
 
