@@ -329,6 +329,7 @@ fn tags(instance: &aws_sdk_ec2::types::Instance) -> Vec<EC2InstanceTag> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aws_sdk_ec2::config::ProvideCredentials;
     use std::sync::Mutex;
 
     #[test]
@@ -340,6 +341,88 @@ mod tests {
         let loaded = format!("{:?}", profile_files(&files));
         assert!(loaded.contains("/srv/aws/config"), "{loaded}");
         assert!(loaded.contains("/srv/aws/credentials"), "{loaded}");
+    }
+
+    #[tokio::test]
+    async fn sdk_config_uses_the_profile_endpoint_and_keys_of_the_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("config");
+        let credentials = dir.path().join("credentials");
+        std::fs::write(
+            &config,
+            "[profile local-dev]\nregion = us-east-1\nendpoint_url = http://localhost:4566\n",
+        )
+        .unwrap();
+        std::fs::write(
+            &credentials,
+            "[local-dev]\naws_access_key_id = test\naws_secret_access_key = test\n",
+        )
+        .unwrap();
+        let files = AwsFiles { config, credentials };
+
+        let sdk = sdk_config("local-dev", "us-east-1", &files).await;
+        let provided = sdk
+            .credentials_provider()
+            .expect("credentials provider")
+            .provide_credentials()
+            .await
+            .expect("credentials from the folder");
+
+        assert_eq!(sdk.endpoint_url(), Some("http://localhost:4566"));
+        assert_eq!(provided.access_key_id(), "test");
+    }
+
+    #[tokio::test]
+    async fn listing_sends_the_folder_keys_to_the_folder_endpoint() {
+        use std::io::{Read, Write};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let (seen_tx, seen_rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = Vec::new();
+            let mut buf = [0u8; 4096];
+            while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                let n = stream.read(&mut buf).unwrap();
+                if n == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buf[..n]);
+            }
+            seen_tx.send(String::from_utf8_lossy(&request).to_string()).unwrap();
+            let body = "<DescribeInstancesResponse xmlns=\"http://ec2.amazonaws.com/doc/2016-11-15/\"><reservationSet/></DescribeInstancesResponse>";
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+        });
+
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("config");
+        let credentials = dir.path().join("credentials");
+        std::fs::write(
+            &config,
+            format!("[profile local-dev]\nregion = us-east-1\nendpoint_url = {endpoint}\n"),
+        )
+        .unwrap();
+        std::fs::write(
+            &credentials,
+            "[local-dev]\naws_access_key_id = test\naws_secret_access_key = test\n",
+        )
+        .unwrap();
+
+        let service = AwsSdkComputeService::new("local-dev", "us-east-1").with_files(AwsFiles {
+            config,
+            credentials,
+        });
+        let result = service.list_instances(None).await;
+        let request = seen_rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap();
+
+        assert!(result.is_ok(), "{:?}", result.err().map(|e| e.to_string()));
+        assert!(request.contains("Credential=test/"), "{request}");
     }
 
     struct Pages {
