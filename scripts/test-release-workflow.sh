@@ -80,6 +80,10 @@ check "publish sends the release notes file" grep -Fq 'gh release edit "$TAG" --
 check "draft assets are compared to the signed files before publishing" \
     bash -c "c=\$(grep -nF 'cmp \"\$f\"' '$WF' | head -n1 | cut -d: -f1); e=\$(grep -nF 'gh release edit' '$WF' | head -n1 | cut -d: -f1); [[ -n \"\$c\" && -n \"\$e\" && \"\$c\" -lt \"\$e\" ]]"
 check "sign-and-publish refuses an already-published tag" grep -Fq 'already published' "$WF"
+check "rerun: manifest pair upload uses --clobber" grep -Fq 'gh release upload "$TAG" dist/manifest.json dist/manifest.json.sig --clobber' "$WF"
+check "rerun: draft check downloads only CloudDeck-VERSION-* assets" grep -Fq -- '--pattern "CloudDeck-$VERSION-*"' "$WF"
+publish_draft_reuploads_with_clobber() { job_block publish-draft | grep -Fq 'gh release upload "$TAG" "${assets[@]}" --clobber'; }
+check "rerun: publish-draft re-uploads into an existing draft with --clobber" publish_draft_reuploads_with_clobber
 
 CI="$ROOT/.github/workflows/ci.yml"
 check "ci.yml is reusable and manual only" \
