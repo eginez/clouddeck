@@ -111,6 +111,18 @@ macro_rules! browse_rules {
                 known_bug: None,
             },
             Rule {
+                id: concat!($prefix, "-name-fits"),
+                state: $state,
+                window: WINDOW,
+                check: Check::TextFits {
+                    target: "plugins.row.0.name",
+                    text: "Amazon Web Services",
+                    font_size: 16.0,
+                },
+                why: "a bundled plugin name is not truncated in the list",
+                known_bug: None,
+            },
+            Rule {
                 id: concat!($prefix, "-row-no-action"),
                 state: $state,
                 window: WINDOW,
