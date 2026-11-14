@@ -21,9 +21,10 @@ pub fn fixture(name: &str) -> String {
     .to_string()
 }
 
-/// Serves recorded JSON by URL shape and remembers every URL it was asked for.
+/// Serves recorded JSON by URL shape and remembers every URL and form it was asked for.
 pub struct FakeHttp {
     pub urls: Mutex<Vec<String>>,
+    pub forms: Mutex<Vec<Vec<(String, String)>>>,
     pub bearer: &'static str,
     pub fail_token: bool,
     pub network_down: bool,
@@ -33,11 +34,23 @@ impl Default for FakeHttp {
     fn default() -> Self {
         Self {
             urls: Mutex::default(),
+            forms: Mutex::default(),
             bearer: "ya29.fake-access-token",
             fail_token: false,
             network_down: false,
         }
     }
+}
+
+/// A key file in the shape Google downloads, built from the test-only PEM so no key text is committed twice.
+pub fn service_account_key_json() -> String {
+    serde_json::json!({
+        "type": "service_account",
+        "project_id": "demo-prod",
+        "client_email": "reader@demo-prod.iam.gserviceaccount.com",
+        "private_key": include_str!("../fixtures/sa_test_key.pem"),
+    })
+    .to_string()
 }
 
 fn not_found(url: &str) -> HttpError {
@@ -99,14 +112,11 @@ impl Http for FakeHttp {
         _: Duration,
     ) -> Result<String, HttpError> {
         self.urls.lock().unwrap().push(url.to_string());
-        assert!(form.contains(&("grant_type", "refresh_token")));
-        if self.fail_token {
-            return Err(HttpError {
-                status: Some(400),
-                timed_out: false,
-                message: "invalid_grant".into(),
-            });
-        }
+        self.forms.lock().unwrap().push(
+            form.iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+        );
         if self.network_down {
             return Err(HttpError {
                 status: None,
@@ -114,7 +124,90 @@ impl Http for FakeHttp {
                 message: "connection reset".into(),
             });
         }
+        if url.ends_with("/tokeninfo") {
+            return Ok(r#"{"email":"esteban@example.com"}"#.to_string());
+        }
+        let grant = form
+            .iter()
+            .find(|(k, _)| *k == "grant_type")
+            .map(|(_, v)| *v);
+        match grant {
+            Some("refresh_token" | "urn:ietf:params:oauth:grant-type:jwt-bearer") => {}
+            _ => return Err(not_found(url)),
+        }
+        if self.fail_token {
+            return Err(HttpError {
+                status: Some(400),
+                timed_out: false,
+                message: "invalid_grant".into(),
+            });
+        }
         Ok(fixture("token.json"))
+    }
+}
+
+impl FakeHttp {
+    pub fn posted(&self) -> Vec<Vec<(String, String)>> {
+        self.forms.lock().unwrap().clone()
+    }
+}
+
+/// A host with a settings map and a secret store that `set_secret` really writes to.
+#[derive(Default)]
+pub struct MemoryHost {
+    pub settings: Mutex<Vec<(String, String)>>,
+    pub secrets: Mutex<Vec<(String, String)>>,
+}
+
+impl MemoryHost {
+    pub fn with_secret(key: &str, value: &str) -> Self {
+        let host = Self::default();
+        host.secrets
+            .lock()
+            .unwrap()
+            .push((key.to_string(), value.to_string()));
+        host
+    }
+
+    pub fn secret_value(&self, key: &str) -> Option<String> {
+        self.secrets
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.clone())
+    }
+}
+
+impl Host for MemoryHost {
+    fn log(&self, _: LogLevel, _: &str) {}
+    fn data_dir(&self) -> PathBuf {
+        PathBuf::new()
+    }
+    fn setting(&self, key: &str) -> Option<String> {
+        self.settings
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.clone())
+    }
+    fn secret(&self, key: &str) -> Option<String> {
+        self.secret_value(key)
+    }
+    fn set_secret(&self, key: &str, value: Option<&str>) -> Result<(), ProviderError> {
+        let mut secrets = self.secrets.lock().unwrap();
+        secrets.retain(|(k, _)| k != key);
+        if let Some(value) = value {
+            secrets.push((key.to_string(), value.to_string()));
+        }
+        Ok(())
+    }
+    fn open_url(&self, _: &str) -> Result<(), ProviderError> {
+        Ok(())
+    }
+    fn cancelled(&self) -> bool {
+        false
     }
 }
 

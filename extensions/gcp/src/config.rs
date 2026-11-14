@@ -15,6 +15,7 @@ pub const TOKEN_SETTING: &str = "token_endpoint";
 pub const AUTH_MODE_SETTING: &str = "auth_mode";
 
 pub const EMULATOR_TOKEN: &str = "floci-emulator";
+pub const KEY_FILE_SECRET: &str = "service_account_key_file";
 const EMULATOR_FILE: &str = "emulator.json";
 
 const GROUP: &str = "Advanced: endpoints";
@@ -41,6 +42,7 @@ pub struct Config {
     pub token: String,
     pub auth: AuthMode,
     pub folder: Option<PathBuf>,
+    pub key_file: Option<PathBuf>,
 }
 
 #[derive(Deserialize)]
@@ -80,6 +82,10 @@ impl Config {
             token: endpoint(host, TOKEN_SETTING, DEFAULT_TOKEN, None)?,
             auth,
             folder,
+            key_file: host
+                .secret(KEY_FILE_SECRET)
+                .filter(|p| !p.trim().is_empty())
+                .map(PathBuf::from),
         })
     }
 }

@@ -6,19 +6,28 @@ use std::time::{Duration, Instant};
 use clouddeck_extension_api::{
     Auth, AuthAnswer, AuthInput, AuthMethod, AuthStatus, AuthStep, Browse, Call, CellFailure,
     Connection, ConnectionId, Dimension, ErrorKind, ExtrasSection, FieldDef, FlowId, INSTANCES,
-    Instance, KindId, KindInfo, ListResult, Provider, ProviderError, ProviderInfo, ResourceId,
-    Selection, SettingDef,
+    Instance, KindId, KindInfo, ListResult, Onboarding, PromptField, Provider, ProviderError,
+    ProviderInfo, ResourceId, Selection, SettingDef,
 };
+use serde::Deserialize;
 use serde::de::DeserializeOwned;
 
-use crate::auth::{Token, TokenSource};
-use crate::config::{self, CONFIG_DIR_SETTING, Config};
+use crate::auth::{self, Token, TokenSource};
+use crate::config::{self, AuthMode, CONFIG_DIR_SETTING, Config, KEY_FILE_SECRET};
 use crate::fields::instance_fields;
 use crate::http::{Http, Request};
 use crate::map::{self, AggregatedPage, GceInstance, ProjectsPage, ZONE_DIM, ZonesPage};
+use crate::service_account;
 
 const MAX_CALL: Duration = Duration::from_secs(30);
 const ADC_METHOD: &str = "adc";
+const SERVICE_ACCOUNT_METHOD: &str = "service_account_key";
+const KEY_FILE_FIELD: &str = "key_file";
+
+#[derive(Deserialize)]
+struct TokenInfo {
+    email: Option<String>,
+}
 
 trait Paged: DeserializeOwned {
     fn next_token(&self) -> Option<&str>;
@@ -225,7 +234,17 @@ impl Provider for GcpProvider {
             name: "Google Cloud".into(),
             version: env!("CARGO_PKG_VERSION").into(),
             connection_label: "Project".into(),
-            onboarding: Default::default(),
+            onboarding: Onboarding {
+                title: None,
+                subtitle: Some(
+                    "Choose a project. Only ACTIVE projects your credentials can see are listed."
+                        .into(),
+                ),
+                footer: Some(
+                    "Credentials are read from gcloud’s Application Default Credentials. CloudDeck stores nothing."
+                        .into(),
+                ),
+            },
         }
     }
 
@@ -309,16 +328,22 @@ impl Browse for GcpProvider {
 
 impl Auth for GcpProvider {
     fn auth_methods(&self) -> Vec<AuthMethod> {
-        let mut method = AuthMethod::new(
+        let mut adc = AuthMethod::new(
             ADC_METHOD.to_string(),
             "Use gcloud application-default credentials".to_string(),
         );
-        method.description = Some(
+        adc.description = Some(
             "Reads the credentials from the config folder. Browser sign-in for Google is not available yet."
                 .to_string(),
         );
-        method.settings = vec![CONFIG_DIR_SETTING.to_string()];
-        vec![method]
+        adc.settings = vec![CONFIG_DIR_SETTING.to_string()];
+        let mut key = AuthMethod::new(
+            SERVICE_ACCOUNT_METHOD.to_string(),
+            "Service account key".to_string(),
+        );
+        key.description =
+            Some("Reads a JSON key file you downloaded from the Google Cloud console.".to_string());
+        vec![adc, key]
     }
 
     fn begin_auth(
@@ -327,20 +352,81 @@ impl Auth for GcpProvider {
         method: &AuthMethod,
         _input: AuthInput,
     ) -> Result<AuthStep, ProviderError> {
-        if method.id != ADC_METHOD {
-            return Err(ProviderError::unsupported());
+        match method.id.as_str() {
+            ADC_METHOD => {
+                let config = Config::from_host(cx.host)?;
+                self.token(cx, &config).map(|_| AuthStep::Done)
+            }
+            SERVICE_ACCOUNT_METHOD => Ok(AuthStep::Prompt {
+                flow: FlowId::from(SERVICE_ACCOUNT_METHOD),
+                fields: vec![PromptField {
+                    id: KEY_FILE_FIELD.into(),
+                    label: "Key file path".into(),
+                    secret: false,
+                }],
+            }),
+            _ => Err(ProviderError::unsupported()),
         }
-        let config = Config::from_host(cx.host)?;
-        self.token(cx, &config).map(|_| AuthStep::Done)
     }
 
     fn continue_auth(
         &self,
-        _cx: &Call<'_>,
-        _flow: &FlowId,
-        _answer: AuthAnswer,
+        cx: &Call<'_>,
+        flow: &FlowId,
+        answer: AuthAnswer,
     ) -> Result<AuthStep, ProviderError> {
-        Err(ProviderError::unsupported())
+        if flow.as_str() != SERVICE_ACCOUNT_METHOD {
+            return Err(ProviderError::unsupported());
+        }
+        let values = match answer {
+            AuthAnswer::Values(values) => values,
+            AuthAnswer::Cancel => {
+                return Err(ProviderError::new(ErrorKind::Auth, "sign-in cancelled"));
+            }
+            AuthAnswer::Poll => return Err(ProviderError::unsupported()),
+        };
+        let raw = values.get(KEY_FILE_FIELD).map_or("", |v| v.trim());
+        if raw.is_empty() {
+            return Err(ProviderError::new(
+                ErrorKind::Auth,
+                "enter the path to the key file",
+            ));
+        }
+        let home = std::env::var("HOME").ok();
+        let path = service_account::expand_home(raw, home.as_deref());
+        cx.host
+            .set_secret(KEY_FILE_SECRET, Some(&path.display().to_string()))?;
+        Ok(AuthStep::Done)
+    }
+
+    /// The service account's email from its key file, or the ADC user's email from tokeninfo.
+    fn identity(
+        &self,
+        cx: &Call<'_>,
+        _connection: &ConnectionId,
+        _selection: &Selection,
+    ) -> Result<String, ProviderError> {
+        let config = Config::from_host(cx.host)?;
+        if config.auth == AuthMode::Emulator {
+            return Err(ProviderError::unsupported());
+        }
+        if let Some(path) = &config.key_file {
+            return service_account::load_key(path).map(|key| key.client_email);
+        }
+        let token = self.token(cx, &config)?;
+        let body = self
+            .http
+            .post_form(
+                &auth::tokeninfo_url(&config.token),
+                &[("access_token", token.access.as_str())],
+                call_timeout(cx)?,
+            )
+            .map_err(|e| e.into_provider())?;
+        let info: TokenInfo = serde_json::from_str(&body).map_err(|e| {
+            ProviderError::new(ErrorKind::Other, format!("unexpected response: {e}"))
+        })?;
+        info.email
+            .ok_or_else(|| ProviderError::new(ErrorKind::Other, "token info has no email"))
     }
 
     /// Only an auth failure counts as signed out; any other failure is unknown, not signed in.
@@ -353,8 +439,9 @@ impl Auth for GcpProvider {
         }
     }
 
-    /// ADC is owned by gcloud, so this only drops the in-memory token.
-    fn sign_out(&self, _cx: &Call<'_>, _c: Option<&ConnectionId>) -> Result<(), ProviderError> {
+    /// ADC is owned by gcloud, so this only forgets the key file path and drops the in-memory token.
+    fn sign_out(&self, cx: &Call<'_>, _c: Option<&ConnectionId>) -> Result<(), ProviderError> {
+        cx.host.set_secret(KEY_FILE_SECRET, None)?;
         self.tokens.forget();
         Ok(())
     }

@@ -6,6 +6,7 @@ mod fields;
 mod http;
 mod map;
 mod provider;
+mod service_account;
 
 use std::sync::Arc;
 
@@ -16,6 +17,7 @@ pub use map::{
     zone_dimension,
 };
 pub use provider::GcpProvider;
+pub use service_account::{SaKey, parse_service_account, sign_jwt};
 
 use clouddeck_extension_api::{Extension, Provider, register_extension};
 
