@@ -682,11 +682,7 @@ impl OnboardingWindow {
         palette: &Palette,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let copy = error
-            .hint
-            .as_ref()
-            .and_then(|hint| hint.detail.clone())
-            .unwrap_or_else(|| error.message.clone());
+        let copy = error.message.clone();
         let file = error.hint.as_ref().and_then(|hint| hint.file.clone());
         div()
             .flex()

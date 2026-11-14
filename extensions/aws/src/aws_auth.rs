@@ -321,14 +321,16 @@ fn config_error(files: &AwsFiles, error: &std::io::Error) -> ProviderError {
         .find(|path| message.starts_with(&format!("{}: ", path.display())))
         .unwrap_or(&files.config);
     let shown = display_home(failing);
-    let detail = message
+    let parse = message
         .strip_prefix(&format!("{}: ", failing.display()))
         .unwrap_or(message.as_str());
     let mut failure = ProviderError::new(ErrorKind::Other, message.clone());
     failure.hint = Some(Box::new(ErrorHint {
         title: format!("CloudDeck couldn't read {shown}"),
-        detail: Some("Fix the file, then check again. No other provider is affected.".to_string()),
-        command: Some(format!("{shown}, {detail}")),
+        detail: Some(format!(
+            "{parse}. Fix the file, then check again. No other provider is affected."
+        )),
+        command: None,
         file: Some(failing.display().to_string()),
     }));
     failure
@@ -1195,7 +1197,7 @@ aws_access_key_id = AKIDEXAMPLE
             hint.file,
             Some(dir.path().join("config").display().to_string())
         );
-        assert!(hint.command.unwrap().contains("line 1"));
+        assert!(hint.detail.unwrap().contains("line 1"));
         assert!(error.message.contains("line 1"));
         assert!(error.kind != ErrorKind::Auth);
     }

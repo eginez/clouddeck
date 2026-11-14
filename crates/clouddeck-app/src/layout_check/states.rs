@@ -283,19 +283,17 @@ impl OnboardingFixture {
             State::OnboardingEmpty => Ok(vec![]),
             State::OnboardingError | State::OnboardingErrorNarrow => Err(ProviderError {
                 kind: ErrorKind::Other,
-                message: "The AWS config file could not be read".to_string(),
+                message: "The config file could not be read, line 14: expected ']'".to_string(),
                 advice: None,
                 retry_after: None,
                 hint: Some(Box::new(ErrorHint {
-                    title: "CloudDeck couldn't read ~/.aws/config".to_string(),
+                    title: "CloudDeck couldn't read the config file".to_string(),
                     detail: Some(
-                        "Fix the file, then check again. No other provider is affected.".to_string(),
-                    ),
-                    command: Some(
-                        "~/.aws/config, line 14:\n[profile data-platform\nexpected ']' at end of section header"
+                        "expected ']' at end of section header. Fix the file, then check again."
                             .to_string(),
                     ),
-                    file: Some("/home/example/.aws/config".to_string()),
+                    command: None,
+                    file: Some("/home/example/config".to_string()),
                 })),
             }),
             _ => Ok(vec![
