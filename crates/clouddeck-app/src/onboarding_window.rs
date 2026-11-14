@@ -10,8 +10,8 @@ use clouddeck_core::extension_manager::install::{EXTERNAL_EXTENSIONS_ALLOWED, Ma
 use clouddeck_core::extension_manager::plugins::load_entries;
 use clouddeck_core::{
     AuthAnswer, AuthMethod, AuthStatus, AuthStep, Call, ConnectError, Connection, ConnectionId,
-    FlowId, NoAuth, PromptField, Provider, ProviderError, Selection, SignInAction, connect_methods,
-    submit,
+    DimValue, FlowId, NoAuth, PromptField, Provider, ProviderError, REGION, Selection,
+    SignInAction, UiState, connect_methods, submit, ui_state_path,
 };
 use gpui::{
     AnyElement, App, Bounds, ClickEvent, ClipboardItem, Context, Entity, EventEmitter, FontWeight,
@@ -38,6 +38,7 @@ pub enum OnboardingEvent {
     Open {
         provider: String,
         connection: ConnectionId,
+        regions: Vec<String>,
     },
     SignedIn {
         provider: String,
@@ -69,9 +70,25 @@ pub(crate) struct Disabled {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Pane {
     Providers,
+    Scope,
     Disabled(usize),
     Demo,
     AddProvider,
+}
+
+#[derive(Debug, Clone)]
+struct Scope {
+    connection: ConnectionId,
+    name: String,
+    regions: Vec<ScopeRegion>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ScopeRegion {
+    id: String,
+    label: String,
+    count: Option<u64>,
+    selected: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,6 +118,7 @@ pub struct OnboardingWindow {
     disabled: Vec<Disabled>,
     pane: Pane,
     selected: Option<ConnectionId>,
+    scope: Option<Scope>,
     search: Entity<InputState>,
     query: String,
     phase: Phase,
@@ -169,6 +187,7 @@ impl OnboardingWindow {
             disabled: Vec::new(),
             pane: Pane::Providers,
             selected: connection,
+            scope: None,
             search: search.clone(),
             query: String::new(),
             phase: Phase::Idle,
@@ -263,13 +282,113 @@ impl OnboardingWindow {
         let Some(row) = self.selected_row() else {
             return;
         };
-        let name = row.connection.display_name.clone();
-        let connection = row.connection.id.clone();
+        let connection = row.connection.clone();
+        let provider = self.providers[self.chosen].clone();
+        let dimensions = match with_call(|call| provider.dimensions(call, &connection.id)) {
+            Ok(dimensions) => dimensions,
+            Err(error) => {
+                self.error = Some(ConnectError {
+                    message: format!(
+                        "Could not read regions for {}: {error}",
+                        connection.display_name
+                    ),
+                    advice: None,
+                });
+                cx.notify();
+                return;
+            }
+        };
+        let region = dimensions
+            .into_iter()
+            .find(|dimension| dimension.id.as_str() == REGION && !dimension.values.is_empty());
+        match region {
+            Some(dimension) => self.show_scope(&connection, dimension.values, cx),
+            None => self.emit_open(&connection.id, connection.display_name, Vec::new(), cx),
+        }
+    }
+
+    fn show_scope(
+        &mut self,
+        connection: &Connection,
+        values: Vec<DimValue>,
+        cx: &mut Context<Self>,
+    ) {
+        let provider = self.providers[self.chosen].info().id;
+        let saved = UiState::load(&ui_state_path());
+        let counts = saved.region_counts_for(&provider, connection.id.as_str());
+        let remembered = saved.dimension_selections.get(REGION);
+        let all_saved = remembered.is_none() && ui_state_path().exists();
+        self.scope = Some(Scope {
+            connection: connection.id.clone(),
+            name: connection.display_name.clone(),
+            regions: scope_regions(&values, remembered.map(Vec::as_slice), all_saved, &counts),
+        });
+        self.pane = Pane::Scope;
+        cx.notify();
+    }
+
+    fn load_scope(&mut self, cx: &mut Context<Self>) {
+        if self.phase != Phase::Idle {
+            return;
+        }
+        let Some(scope) = self.scope.as_ref() else {
+            return;
+        };
+        let regions: Vec<String> = scope
+            .regions
+            .iter()
+            .filter(|region| region.selected)
+            .map(|region| region.id.clone())
+            .collect();
+        if regions.is_empty() {
+            return;
+        }
+        let (connection, name) = (scope.connection.clone(), scope.name.clone());
+        self.emit_open(&connection, name, regions, cx);
+    }
+
+    fn toggle_region(&mut self, id: &str, cx: &mut Context<Self>) {
+        if let Some(region) = self
+            .scope
+            .as_mut()
+            .and_then(|scope| scope.regions.iter_mut().find(|region| region.id == id))
+        {
+            region.selected = !region.selected;
+        }
+        cx.notify();
+    }
+
+    fn select_all_regions(&mut self, cx: &mut Context<Self>) {
+        if let Some(scope) = self.scope.as_mut() {
+            for region in &mut scope.regions {
+                region.selected = true;
+            }
+        }
+        cx.notify();
+    }
+
+    fn back_to_profiles(&mut self, cx: &mut Context<Self>) {
+        if matches!(self.phase, Phase::Opening { .. }) {
+            return;
+        }
+        self.scope = None;
+        self.pane = Pane::Providers;
+        cx.notify();
+    }
+
+    fn emit_open(
+        &mut self,
+        connection: &ConnectionId,
+        name: String,
+        regions: Vec<String>,
+        cx: &mut Context<Self>,
+    ) {
         let provider = self.providers[self.chosen].info().id;
         self.phase = Phase::Opening { name };
         cx.emit(OnboardingEvent::Open {
             provider,
-            connection,
+            connection: connection.clone(),
+            regions,
         });
         cx.notify();
     }
@@ -610,7 +729,8 @@ impl OnboardingWindow {
             RailRow {
                 id: format!("onboarding-provider-{}", info.id),
                 selector: format!("onboarding.provider.{}", info.id),
-                selected: self.pane == Pane::Providers && index == self.chosen,
+                selected: matches!(self.pane, Pane::Providers | Pane::Scope)
+                    && index == self.chosen,
                 name: info.name.clone(),
                 dot,
                 status,
@@ -645,6 +765,7 @@ impl OnboardingWindow {
     fn pane(&self, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
         match self.pane {
             Pane::Providers => self.provider_pane(palette, cx),
+            Pane::Scope => self.scope_pane(palette, cx),
             Pane::Disabled(index) => match self.disabled.get(index) {
                 Some(entry) => self.disabled_pane(entry, palette, cx),
                 None => self.provider_pane(palette, cx),
@@ -727,6 +848,154 @@ impl OnboardingWindow {
             body,
             footer(palette, note, footer_action),
         )
+    }
+
+    fn scope_pane(&self, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
+        let Some(scope) = self.scope.as_ref() else {
+            return self.provider_pane(palette, cx);
+        };
+        let selected = scope
+            .regions
+            .iter()
+            .filter(|region| region.selected)
+            .count();
+        let total = scope.regions.len();
+        let select_all = link(
+            "onboarding-select-all".to_string(),
+            "onboarding.select-all".to_string(),
+            "Select all",
+            palette,
+            cx.listener(|this, _: &ClickEvent, _, cx| this.select_all_regions(cx)),
+        );
+        let body = match &self.phase {
+            Phase::Opening { name } => self.opening(name, palette, cx),
+            _ => div()
+                .id("onboarding-regions")
+                .debug_selector(|| "onboarding.regions".to_string())
+                .flex_1()
+                .min_h(px(0.))
+                .flex()
+                .flex_col()
+                .gap(px(2.))
+                .overflow_y_scroll()
+                .children(
+                    scope
+                        .regions
+                        .iter()
+                        .map(|region| self.scope_row(region, palette, cx)),
+                )
+                .into_any_element(),
+        };
+        let back = link(
+            "onboarding-back".to_string(),
+            "onboarding.back".to_string(),
+            "← Back to profiles",
+            palette,
+            cx.listener(|this, _: &ClickEvent, _, cx| this.back_to_profiles(cx)),
+        );
+        let enabled = selected > 0 && self.phase == Phase::Idle;
+        let load = accent_button(
+            "onboarding-load",
+            "onboarding.load",
+            format!("Load {selected} {} ↵", plural("region", selected)),
+            palette,
+        )
+        .when(!enabled, |button| button.opacity(0.45))
+        .when(enabled, |button| {
+            button
+                .cursor_pointer()
+                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.load_scope(cx)))
+        })
+        .into_any_element();
+        let summary = div()
+            .text_size(px(11.))
+            .text_color(palette.dim)
+            .child(format!("{selected} of {total} selected"));
+        let right = div()
+            .flex()
+            .items_center()
+            .gap(px(12.))
+            .child(summary)
+            .child(load)
+            .into_any_element();
+        frame(
+            palette,
+            header(
+                palette,
+                format!("Choose regions for {}", scope.name),
+                "Counts are from the last time you opened this profile. A region that fails will not hide the others.".to_string(),
+                Some(select_all),
+            ),
+            Vec::new(),
+            body,
+            footer_with(palette, back, right),
+        )
+    }
+
+    fn scope_row(
+        &self,
+        region: &ScopeRegion,
+        palette: &Palette,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let id = region.id.clone();
+        let toggle = region.id.clone();
+        let selector = format!("onboarding.region.{}", region.id);
+        let checked = region.selected;
+        div()
+            .id(SharedString::from(format!("onboarding-region-{id}")))
+            .debug_selector(move || selector)
+            .flex()
+            .items_center()
+            .gap(px(12.))
+            .px(px(10.))
+            .py(px(7.))
+            .rounded(px(7.))
+            .cursor_pointer()
+            .on_click(
+                cx.listener(move |this, _: &ClickEvent, _, cx| this.toggle_region(&toggle, cx)),
+            )
+            .child(
+                div()
+                    .size(px(16.))
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(4.))
+                    .border_1()
+                    .border_color(if checked {
+                        palette.accent
+                    } else {
+                        palette.line
+                    })
+                    .bg(if checked {
+                        palette.accent
+                    } else {
+                        palette.surf
+                    })
+                    .text_size(px(11.))
+                    .text_color(palette.win)
+                    .when(checked, |check| check.child("✓")),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.))
+                    .font_family("monospace")
+                    .text_size(px(12.))
+                    .text_color(palette.text)
+                    .text_ellipsis()
+                    .child(region.label.clone()),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .text_size(px(11.))
+                    .text_color(palette.dim)
+                    .child(count_label(region.count)),
+            )
+            .into_any_element()
     }
 
     fn listing(&self, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
@@ -1593,6 +1862,17 @@ fn header(
 }
 
 fn footer(palette: &Palette, note: String, action: AnyElement) -> AnyElement {
+    let note = div()
+        .min_w(px(0.))
+        .text_size(px(11.))
+        .text_color(palette.dim)
+        .text_ellipsis()
+        .child(note)
+        .into_any_element();
+    footer_with(palette, note, action)
+}
+
+fn footer_with(palette: &Palette, left: AnyElement, right: AnyElement) -> AnyElement {
     div()
         .debug_selector(|| "onboarding.footer".to_string())
         .h(px(FOOTER_HEIGHT))
@@ -1604,15 +1884,8 @@ fn footer(palette: &Palette, note: String, action: AnyElement) -> AnyElement {
         .px(px(22.))
         .border_t_1()
         .border_color(palette.line2)
-        .child(
-            div()
-                .min_w(px(0.))
-                .text_size(px(11.))
-                .text_color(palette.dim)
-                .text_ellipsis()
-                .child(note),
-        )
-        .child(action)
+        .child(left)
+        .child(right)
         .into_any_element()
 }
 
@@ -1773,7 +2046,7 @@ fn pill_button(
 fn accent_button(
     id: &'static str,
     selector: &'static str,
-    label: &'static str,
+    label: impl Into<SharedString>,
     palette: &Palette,
 ) -> gpui::Stateful<gpui::Div> {
     div()
@@ -1786,7 +2059,45 @@ fn accent_button(
         .bg(palette.accent)
         .text_size(px(12.))
         .text_color(palette.win)
-        .child(label)
+        .child(label.into())
+}
+
+fn scope_regions(
+    values: &[DimValue],
+    remembered: Option<&[String]>,
+    all_saved: bool,
+    counts: &BTreeMap<String, u64>,
+) -> Vec<ScopeRegion> {
+    let remembered = remembered.unwrap_or(&[]);
+    let remembered_applies = values
+        .iter()
+        .any(|value| remembered.iter().any(|id| id == value.id.as_str()));
+    values
+        .iter()
+        .map(|value| {
+            let id = value.id.as_str().to_string();
+            let selected = if all_saved {
+                true
+            } else if remembered_applies {
+                remembered.contains(&id)
+            } else {
+                value.default
+            };
+            ScopeRegion {
+                label: value.label.clone(),
+                count: counts.get(&id).copied(),
+                selected,
+                id,
+            }
+        })
+        .collect()
+}
+
+fn count_label(count: Option<u64>) -> String {
+    match count {
+        Some(instances @ 1..) => format!("{instances} {}", plural("instance", instances as usize)),
+        _ => "—".to_string(),
+    }
 }
 
 /// Opens the onboarding window with `provider_id` selected (the first provider when `None`)
@@ -1954,6 +2265,7 @@ fn open_window(
 mod tests {
     use super::*;
     use crate::test_support::{auth_provider, identified_provider, plain_provider, wait_until};
+    use clouddeck_core::ValueId;
     use gpui::{TestAppContext, VisualTestContext};
 
     #[test]
@@ -1962,6 +2274,68 @@ mod tests {
         assert_eq!(initials("prod-readonly"), "PR");
         assert_eq!(initials("sandbox"), "SA");
         assert_eq!(initials(""), "");
+    }
+
+    #[test]
+    fn scope_regions_select_the_remembered_regions_when_they_apply() {
+        let values = vec![dim_value("us-east-1", false), dim_value("eu-west-1", true)];
+        let counts = BTreeMap::from([("us-east-1".to_string(), 12)]);
+        let regions = scope_regions(&values, Some(&["us-east-1".to_string()]), false, &counts);
+        assert_eq!(
+            regions,
+            vec![
+                ScopeRegion {
+                    id: "us-east-1".into(),
+                    label: "us-east-1".into(),
+                    count: Some(12),
+                    selected: true,
+                },
+                ScopeRegion {
+                    id: "eu-west-1".into(),
+                    label: "eu-west-1".into(),
+                    count: None,
+                    selected: false,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn scope_regions_fall_back_to_provider_defaults_when_nothing_remembered_applies() {
+        let values = vec![dim_value("us-east-1", false), dim_value("eu-west-1", true)];
+        let regions = scope_regions(
+            &values,
+            Some(&["ap-south-1".to_string()]),
+            false,
+            &BTreeMap::new(),
+        );
+        let selected: Vec<bool> = regions.iter().map(|region| region.selected).collect();
+        assert_eq!(selected, vec![false, true]);
+    }
+
+    #[test]
+    fn scope_regions_select_every_region_when_saved_state_has_no_region_entry() {
+        let values = vec![dim_value("us-east-1", false), dim_value("eu-west-1", false)];
+        let regions = scope_regions(&values, None, true, &BTreeMap::new());
+        let selected: Vec<bool> = regions.iter().map(|region| region.selected).collect();
+        assert_eq!(selected, vec![true, true]);
+    }
+
+    #[test]
+    fn count_label_hides_zero_and_unknown_counts() {
+        assert_eq!(count_label(None), "—");
+        assert_eq!(count_label(Some(0)), "—");
+        assert_eq!(count_label(Some(1)), "1 instance");
+        assert_eq!(count_label(Some(12)), "12 instances");
+    }
+
+    fn dim_value(id: &str, default: bool) -> DimValue {
+        DimValue {
+            id: ValueId::from(id),
+            label: id.to_string(),
+            parent: None,
+            default,
+        }
     }
 
     #[test]

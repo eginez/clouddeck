@@ -70,7 +70,12 @@ pub struct UiState {
     pub window: Option<WindowFrame>,
     /// Column keys hidden by the column chooser.
     pub hidden_columns: Vec<String>,
+    /// Instance counts per region from the last load of each connection.
+    pub region_counts: RegionCounts,
 }
+
+/// Provider id, then connection id, then region id, to instance count.
+pub type RegionCounts = BTreeMap<String, BTreeMap<String, BTreeMap<String, u64>>>;
 
 impl Default for UiState {
     fn default() -> Self {
@@ -86,6 +91,7 @@ impl Default for UiState {
             inspector_width: 340.0,
             window: None,
             hidden_columns: Vec::new(),
+            region_counts: RegionCounts::new(),
         }
     }
 }
@@ -124,6 +130,15 @@ impl UiState {
             hidden_columns,
             ..self
         }
+    }
+
+    /// Region instance counts from the last load of one connection.
+    pub fn region_counts_for(&self, provider: &str, connection: &str) -> BTreeMap<String, u64> {
+        self.region_counts
+            .get(provider)
+            .and_then(|connections| connections.get(connection))
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// Takes the legacy region selection, if the file still carries one.
@@ -391,6 +406,28 @@ mod tests {
                 height: 400.0,
             })
         );
+    }
+
+    #[test]
+    fn region_counts_save_then_load_round_trips() {
+        let path = temp_path("region-counts");
+        let mut state = UiState::default();
+        state.region_counts.insert(
+            "aws".into(),
+            BTreeMap::from([(
+                "prod".into(),
+                BTreeMap::from([("us-east-1".into(), 12), ("eu-west-1".into(), 0)]),
+            )]),
+        );
+        state.save(&path).unwrap();
+        let loaded = UiState::load(&path);
+        assert_eq!(loaded, state);
+        assert_eq!(
+            loaded.region_counts_for("aws", "prod"),
+            BTreeMap::from([("us-east-1".into(), 12), ("eu-west-1".into(), 0)])
+        );
+        assert!(loaded.region_counts_for("aws", "missing").is_empty());
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]

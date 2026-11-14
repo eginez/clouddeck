@@ -9,10 +9,11 @@ use std::time::Instant;
 use std::time::{Duration, SystemTime};
 
 use clouddeck_core::{
-    CloudDeckError, Column, DisplayRow, GroupBy, Instance, ListView, PROVIDER_COLUMN_WIDTH,
-    ProviderRow, RECENT_INSTANCE_LIMIT, SortState, StateFacetCounts, build_display_rows,
-    compare_instances, join_failure, navigable_indices, provider_cell_text,
-    provider_column_default_visible, push_recent, throttle_retry_delay, visible_columns_fit_hidden,
+    CloudDeckError, Column, ConnectionId, DisplayRow, GroupBy, Instance, ListResult, ListView,
+    PROVIDER_COLUMN_WIDTH, ProviderRow, RECENT_INSTANCE_LIMIT, REGION, RegionCounts, SortState,
+    StateFacetCounts, ValueId, build_display_rows, compare_instances, join_failure,
+    navigable_indices, provider_cell_text, provider_column_default_visible, push_recent,
+    throttle_retry_delay, visible_columns_fit_hidden,
 };
 use gpui::{App, Context};
 
@@ -44,6 +45,8 @@ pub struct FleetState {
     pub recent_searches: Vec<String>,
     pub pinned_searches: Vec<String>,
     pub recent_instances: Vec<String>,
+    /// Per-region instance counts from the last load of each connection, saved with the UI state.
+    pub region_counts: RegionCounts,
     /// Column the table groups its rows by.
     pub group_by: GroupBy,
     /// Keys of the groups the user has collapsed.
@@ -85,6 +88,7 @@ impl FleetState {
             recent_searches: Vec::new(),
             pinned_searches: Vec::new(),
             recent_instances: Vec::new(),
+            region_counts: RegionCounts::new(),
             group_by: GroupBy::None,
             collapsed_groups: BTreeSet::new(),
             hidden_columns: Vec::new(),
@@ -390,6 +394,7 @@ impl FleetState {
         cx.notify();
         for (provider_id, request) in requests {
             let selection = request.selection().clone();
+            let connection = request.connection().clone();
             let task = crate::runtime::runtime().spawn_blocking(move || request.run());
             cx.spawn(async move |this, cx| {
                 let result = task
@@ -397,6 +402,13 @@ impl FleetState {
                     .unwrap_or_else(|error| join_failure(&selection, &error));
                 let _ = this.update(cx, |this, cx| {
                     let now = this.now(cx);
+                    record_region_counts(
+                        &mut this.region_counts,
+                        &provider_id,
+                        &connection,
+                        selection.values(REGION),
+                        &result,
+                    );
                     this.view_model.finish_load_for(&provider_id, result, now);
                     this.reconcile_selection();
                     this.after_load(cx);
@@ -461,6 +473,41 @@ impl FleetState {
     }
 }
 
+fn record_region_counts(
+    counts: &mut RegionCounts,
+    provider: &str,
+    connection: &ConnectionId,
+    requested: &[ValueId],
+    result: &ListResult,
+) {
+    if requested.is_empty() {
+        return;
+    }
+    let failed: Vec<&str> = result
+        .failures
+        .iter()
+        .flat_map(|failure| failure.cell.values(REGION))
+        .map(ValueId::as_str)
+        .collect();
+    let saved = counts
+        .entry(provider.to_string())
+        .or_default()
+        .entry(connection.as_str().to_string())
+        .or_default();
+    for region in requested {
+        let region = region.as_str();
+        if failed.contains(&region) {
+            continue;
+        }
+        let instances = result
+            .resources
+            .iter()
+            .filter(|instance| instance.region.as_deref() == Some(region))
+            .count();
+        saved.insert(region.to_string(), instances as u64);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -494,6 +541,66 @@ mod tests {
         state.read_with(cx, |state, _| {
             state.visible_rows().iter().map(|i| i.id.clone()).collect()
         })
+    }
+
+    #[test]
+    fn region_counts_record_each_requested_region_and_keep_failed_ones() {
+        let connection = ConnectionId::from("prod");
+        let requested = [ValueId::from("us-east-1"), ValueId::from("eu-west-1")];
+        let in_region = |region: &str, count: usize| {
+            (0..count)
+                .map(|n| {
+                    let mut instance =
+                        fleet::instance(&format!("i-{n}"), "api", "running", "t3.medium");
+                    instance.region = Some(region.to_string());
+                    instance
+                })
+                .collect::<Vec<_>>()
+        };
+        let mut counts = RegionCounts::new();
+        let first = ListResult {
+            resources: in_region("us-east-1", 2),
+            failures: Vec::new(),
+        };
+        record_region_counts(&mut counts, "aws", &connection, &requested, &first);
+        assert_eq!(
+            counts["aws"]["prod"],
+            std::collections::BTreeMap::from([
+                ("us-east-1".to_string(), 2),
+                ("eu-west-1".to_string(), 0)
+            ])
+        );
+
+        let second = ListResult {
+            resources: in_region("eu-west-1", 3),
+            failures: vec![clouddeck_core::CellFailure {
+                cell: clouddeck_core::Selection::new()
+                    .with(REGION, vec![ValueId::from("us-east-1")]),
+                error: clouddeck_core::ProviderError::unsupported(),
+            }],
+        };
+        record_region_counts(&mut counts, "aws", &connection, &requested, &second);
+        assert_eq!(
+            counts["aws"]["prod"],
+            std::collections::BTreeMap::from([
+                ("us-east-1".to_string(), 2),
+                ("eu-west-1".to_string(), 3)
+            ])
+        );
+    }
+
+    #[test]
+    fn region_counts_ignore_loads_without_a_region_selection() {
+        let mut counts = RegionCounts::new();
+        let result = ListResult::default();
+        record_region_counts(
+            &mut counts,
+            "gcp",
+            &ConnectionId::from("team"),
+            &[],
+            &result,
+        );
+        assert!(counts.is_empty());
     }
 
     #[gpui::test]

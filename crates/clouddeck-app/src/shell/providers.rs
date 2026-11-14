@@ -29,7 +29,8 @@ impl AppShell {
                     OnboardingEvent::Open {
                         provider,
                         connection,
-                    } => shell.open_connection(&provider, &connection, window, cx),
+                        regions,
+                    } => shell.open_connection(&provider, &connection, regions, window, cx),
                     OnboardingEvent::ExploreDemo => shell.toggle_demo(window, cx),
                 });
             });
@@ -43,15 +44,22 @@ impl AppShell {
         &mut self,
         provider: &str,
         connection: &ConnectionId,
+        regions: Vec<String>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.context.profile = connection.as_str().to_string();
-        if self.context_model.active_provider() == provider {
+        self.pending_regions = (!regions.is_empty()).then_some(regions);
+        let opened = if self.context_model.active_provider() == provider {
             let providers = app_providers::providers(cx);
             self.reload_active_provider(&providers, window, cx);
+            Some(())
         } else {
-            self.switch_provider_to(provider, &settings_path(), window, cx);
+            self.switch_provider_to(provider, &settings_path(), window, cx)
+        };
+        self.pending_regions = None;
+        if opened.is_none() {
+            self.message = Some(format!("Could not open {provider}"));
         }
     }
 
@@ -89,7 +97,10 @@ impl AppShell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let regions = region_values(&self.context_model);
+        let regions = self
+            .pending_regions
+            .take()
+            .unwrap_or_else(|| region_values(&self.context_model));
         Self::load_connections(&mut self.context_model, providers, &self.context);
         Self::load_dimensions(&mut self.context_model, providers);
         let available = Self::available_regions(self.demo, self.demo_scenario);
@@ -155,6 +166,7 @@ impl AppShell {
             previous.sidebar_open,
             previous.inspector_open,
         );
+        let region_counts = previous.region_counts.clone();
         let hidden_columns = previous.hidden_columns.clone();
         let single_provider_column_flipped = previous.single_provider_column_flipped;
         // A fresh fleet and window, not an in-place reset: the previous load
@@ -165,6 +177,7 @@ impl AppShell {
             fleet.pinned_searches = pinned;
             fleet.recent_searches = recent_searches;
             fleet.recent_instances = recent_instances;
+            fleet.region_counts = region_counts;
             fleet.sidebar_open = sidebar_open;
             fleet.inspector_open = inspector_open;
             fleet.hidden_columns = hidden_columns;
