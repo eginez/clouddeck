@@ -244,6 +244,7 @@ impl Provider for GcpProvider {
                     "Credentials are read from gcloud’s Application Default Credentials. CloudDeck stores nothing."
                         .into(),
                 ),
+                empty: None,
             },
         }
     }

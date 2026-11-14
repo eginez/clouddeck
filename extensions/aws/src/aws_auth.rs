@@ -1288,6 +1288,47 @@ aws_access_key_id = AKIDEXAMPLE
     }
 
     #[test]
+    fn rail_counts_profiles_under_the_profile_label() {
+        assert_eq!(
+            provider(Path::new("/nonexistent")).info().connection_label,
+            "Profile"
+        );
+    }
+
+    #[test]
+    fn chosen_profile_offers_the_region_scope_without_fleet() {
+        let dir = tempfile::tempdir().unwrap();
+        let pinned = Pinned {
+            inner: aws_provider(),
+            folder: dir.path().to_path_buf(),
+        };
+        let cx = Call {
+            deadline: None,
+            host: &NoHost,
+        };
+
+        let dimensions = pinned
+            .dimensions(&cx, &ConnectionId::from("plain"))
+            .unwrap();
+
+        let region = dimensions
+            .iter()
+            .find(|dimension| dimension.id.as_str() == REGION)
+            .expect("a region dimension");
+        let values: Vec<&str> = region
+            .values
+            .iter()
+            .map(|value| value.id.as_str())
+            .collect();
+        let expected: Vec<&str> = REGIONS
+            .iter()
+            .copied()
+            .filter(|region| *region != "fleet")
+            .collect();
+        assert_eq!(values, expected);
+    }
+
+    #[test]
     fn provider_passes_the_conformance_kit() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("config"), PROFILE).unwrap();

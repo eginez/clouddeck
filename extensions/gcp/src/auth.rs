@@ -61,6 +61,7 @@ fn missing_adc(message: &str) -> ProviderError {
             "Run this once in a terminal. It opens your browser to sign in and writes the file CloudDeck reads. Looked in $GOOGLE_APPLICATION_CREDENTIALS and ~/.config/gcloud.".into(),
         ),
         command: Some(SIGN_IN_COMMAND.into()),
+        file: None,
     }));
     error
 }
@@ -75,6 +76,7 @@ fn unsupported_adc(kind: &str) -> ProviderError {
             "Your ADC file is a {kind} key. CloudDeck can use a user login for now, or the Service account key sign-in method."
         )),
         command: Some(SIGN_IN_COMMAND.into()),
+        file: None,
     }));
     error
 }
