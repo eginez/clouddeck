@@ -314,13 +314,18 @@ fn connection(profile: AwsProfileAuth) -> Connection {
     }
 }
 
-fn config_error(files: &AwsFiles, error: &std::io::Error) -> ProviderError {
+fn config_error(error: &std::io::Error) -> ProviderError {
     let message = error.to_string();
+    let path = message
+        .split(": line ")
+        .next()
+        .unwrap_or_default()
+        .to_string();
     let mut failure = ProviderError::new(ErrorKind::Other, message.clone());
     failure.hint = Some(Box::new(ErrorHint {
-        title: format!("CloudDeck couldn't read {}", files.config.display()),
+        title: format!("CloudDeck couldn't read {path}"),
         detail: Some("Fix the file, then check again. No other provider is affected.".to_string()),
-        command: Some(message),
+        command: None,
     }));
     failure
 }
@@ -384,8 +389,7 @@ impl Provider for AwsProvider {
 impl Browse for AwsProvider {
     fn connections(&self, cx: &Call<'_>) -> Result<Vec<Connection>, ProviderError> {
         let files = aws_files(cx);
-        let profiles =
-            load_profile_auth_for(&files).map_err(|error| config_error(&files, &error))?;
+        let profiles = load_profile_auth_for(&files).map_err(|error| config_error(&error))?;
         Ok(profiles.into_iter().map(connection).collect())
     }
 
@@ -1152,12 +1156,23 @@ aws_access_key_id = AKIDEXAMPLE
         let hint = error.hint.expect("config errors carry a hint");
         assert!(hint.title.starts_with("CloudDeck couldn't read "));
         assert!(hint.title.ends_with("config"));
-        assert!(hint.command.unwrap().contains("line 1"));
+        assert!(error.message.contains("line 1"));
         assert!(error.kind != ErrorKind::Auth);
     }
 
     #[test]
-    fn sign_in_method_is_the_header_button_for_sso() {
+    fn unreadable_credentials_name_the_credentials_file() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("credentials"), "[default\n").unwrap();
+
+        let error = connections_in(dir.path()).unwrap_err();
+
+        let title = error.hint.unwrap().title;
+        assert!(title.ends_with("credentials"), "{title}");
+    }
+
+    #[test]
+    fn sign_in_method_is_offered_as_the_header_button() {
         let provider = provider(Path::new("/nonexistent"));
         let methods = provider.auth().unwrap().auth_methods();
 
