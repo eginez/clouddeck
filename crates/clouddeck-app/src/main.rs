@@ -95,7 +95,6 @@ fn main() {
         .run(|cx: &mut App| {
             gpui_component::init(cx);
             // Light until a MainWindow syncs the theme (main_window.rs apply_appearance).
-            // The welcome window never does, so this default is what it renders with.
             gpui_component::Theme::change(gpui_component::ThemeMode::Light, None, cx);
             let options = shell::launch_options();
             app_providers::install(cx);
