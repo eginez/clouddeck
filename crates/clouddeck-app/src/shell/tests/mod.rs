@@ -2,7 +2,7 @@ use super::*;
 
 mod all_providers;
 mod args;
-mod connect;
+mod onboarding;
 mod events;
 mod providers;
 mod regions;

@@ -70,7 +70,7 @@ thread_local! {
     ));
 }
 
-pub(super) fn saved_context_path() -> PathBuf {
+pub(crate) fn saved_context_path() -> PathBuf {
     #[cfg(test)]
     return TEST_CONTEXT_PATH.with(PathBuf::clone);
     #[cfg(not(test))]

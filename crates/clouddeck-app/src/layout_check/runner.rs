@@ -84,7 +84,7 @@ fn layout_rules_hold(cx: &mut TestAppContext) {
 /// Every named state has at least one layout rule.
 #[gpui::test]
 fn layout_rules_cover_states(_cx: &mut TestAppContext) {
-    const ALL: [State; 56] = [
+    const ALL: [State; 55] = [
         State::MainIdle,
         State::MainRowSelected,
         State::MainEmpty,
@@ -105,14 +105,13 @@ fn layout_rules_cover_states(_cx: &mut TestAppContext) {
         State::OverlayRowMenu,
         State::OverlayColumnMenu,
         State::OverlayColumnMenuDark,
-        State::ConnectFolderLight,
-        State::ConnectFolderDark,
-        State::ConnectErrorLight,
-        State::ConnectErrorDark,
-        State::ConnectDeviceCodeLight,
-        State::ConnectDeviceCodeDark,
-        State::ConnectTwoMethodsLight,
-        State::ConnectTwoMethodsDark,
+        State::OnboardingReadyLight,
+        State::OnboardingReadyDark,
+        State::OnboardingReadyNarrow,
+        State::OnboardingDetecting,
+        State::OnboardingEmpty,
+        State::OnboardingError,
+        State::OnboardingOpening,
         State::AboutLight,
         State::AboutDark,
         State::AboutRefusedPlugin,

@@ -1,5 +1,5 @@
 pub use clouddeck_provider_api::{
-    Auth, AuthAnswer, AuthInput, AuthMethod, AuthStep, Browse, Call, CellFailure, Config,
+    Auth, AuthAnswer, AuthInput, AuthMethod, AuthStatus, AuthStep, Browse, Call, CellFailure, Config, ErrorHint,
     Connection, ConnectionId, CoreField, DimValue, Dimension, DimensionId, ErrorKind, FieldDef,
     FieldKind, FieldSource, FlowId, Host, InspectorRowDef, InspectorSectionDef, InspectorValue,
     KindId, KindInfo, ListResult, LogLevel, MatchMode, NoAuth, Provider, ProviderError,

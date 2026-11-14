@@ -41,33 +41,42 @@ mod updater;
 // a full-width central table with a bottom context bar. `shell.rs` already
 // composes the shell without it; see
 // `AppShell::render`'s `table_and_status_are_docked_without_a_sidebar` test.
-mod connect_window;
 #[cfg(test)]
 mod context_bar_provider_tests;
+mod onboarding_window;
 #[cfg(test)]
 mod view_models;
 
 use clouddeck_core::{DemoFleet, WorkspaceContext, context_path};
 use gpui::{App, Application, WindowHandle, actions};
 use gpui_component::Root;
+use onboarding_window::OnboardingEvent;
 
 actions!(clouddeck, [Quit]);
 
-fn should_show_connect(demo: bool, saved: Option<&WorkspaceContext>) -> bool {
+fn should_show_onboarding(demo: bool, saved: Option<&WorkspaceContext>) -> bool {
     !demo && saved.is_none()
 }
 
-fn open_first_connect(cx: &mut App) -> Option<WindowHandle<Root>> {
-    let provider = app_providers::providers(cx)
-        .into_iter()
-        .find(|provider| provider.auth().is_some())?
-        .info()
-        .id;
-    connect_window::open_connect_window(cx, &provider, None, |event, cx| match event {
-        connect_window::ConnectEvent::SignedIn { .. } => {
+fn open_onboarding(cx: &mut App, provider: Option<&str>) -> Option<WindowHandle<Root>> {
+    onboarding_window::open_onboarding_window(cx, provider, None, |event, cx| match event {
+        OnboardingEvent::SignedIn { .. } => {
             shell::open_main_window(cx, false, DemoFleet::Happy);
         }
-        connect_window::ConnectEvent::ExploreDemo => {
+        OnboardingEvent::Open {
+            provider,
+            connection,
+        } => {
+            let context = WorkspaceContext {
+                provider,
+                profile: connection.as_str().to_string(),
+            };
+            if let Err(error) = context.save(&shell::saved_context_path()) {
+                eprintln!("could not remember the chosen profile: {error}");
+            }
+            shell::open_main_window(cx, false, DemoFleet::Happy);
+        }
+        OnboardingEvent::ExploreDemo => {
             shell::open_main_window(cx, true, DemoFleet::Happy);
         }
     })
@@ -106,8 +115,10 @@ fn main() {
                     cx.set_global(tokens::ActivePalette(tokens::Palette::for_dark(true)));
                 }
                 plugins_window::open(cx).expect("plugins window opens");
-            } else if !(should_show_connect(options.demo, saved.as_ref())
-                && open_first_connect(cx).is_some())
+            } else if let Some(provider) = options.onboarding.as_ref() {
+                open_onboarding(cx, provider.as_deref()).expect("onboarding window opens");
+            } else if !(should_show_onboarding(options.demo, saved.as_ref())
+                && open_onboarding(cx, None).is_some())
             {
                 shell::open_main_window_with(
                     cx,
@@ -130,11 +141,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn should_show_connect_false_for_saved_gcp_context() {
+    fn should_show_onboarding_false_for_saved_gcp_context() {
         let saved = WorkspaceContext {
             provider: "gcp".into(),
             profile: "team".into(),
         };
-        assert!(!should_show_connect(false, Some(&saved)));
+        assert!(!should_show_onboarding(false, Some(&saved)));
     }
 }

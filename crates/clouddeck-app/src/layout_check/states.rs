@@ -7,22 +7,20 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use clouddeck_core::about::{AboutInfo, PluginOrigin, PluginRow, PluginStatus};
-use clouddeck_core::extension_host::ProviderRegistry;
 use clouddeck_core::{
-    ALL_PROVIDERS, Auth, AuthAnswer, AuthInput, AuthMethod, AuthStep, Browse, Call, Config,
-    ConnectError, Connection, ConnectionId, ContextModel, Dimension, ErrorKind, FieldDef, FlowId,
-    Instance, KindId, KindInfo, ListResult, ListView, Provider, ProviderEntry, ProviderError,
-    ProviderInfo, Selection, SettingDef, SettingKind, Settings, TestScenarioKind, WorkspaceContext,
-    all_providers_view, fixture_fleet,
+    ALL_PROVIDERS, Auth, AuthAnswer, AuthInput, AuthMethod, AuthStep, Browse, Call, Connection,
+    ConnectionId, ContextModel, Dimension, ErrorHint, ErrorKind, FieldDef, FlowId, Instance,
+    KindId, KindInfo, ListResult, ListView, Provider, ProviderEntry, ProviderError, ProviderInfo,
+    Selection, Settings, TestScenarioKind, WorkspaceContext, all_providers_view, fixture_fleet,
 };
 use gpui::{AppContext, Bounds, Entity, TestAppContext, VisualTestContext, point, px, size};
 
 use clouddeck_core::extension_manager::plugins::{Action, PluginsViewModel, Tab};
 
 use crate::about_window;
-use crate::connect_window;
 use crate::fleet_state::FleetState;
 use crate::main_window::{MainWindow, window_options};
+use crate::onboarding_window;
 use crate::plugins_window;
 use crate::plugins_window::fixtures::{
     ToggleOnlyActions, bundled_set, inert_manager, inert_roots, refused_set, with_installed_set,
@@ -90,14 +88,13 @@ fn service_for(state: State) -> (Arc<dyn Provider>, Vec<String>) {
         | State::OverlayDimensionSingle => {
             unreachable!("provider-list states are built by multi_setup")
         }
-        State::ConnectFolderLight
-        | State::ConnectFolderDark
-        | State::ConnectErrorLight
-        | State::ConnectErrorDark
-        | State::ConnectDeviceCodeLight
-        | State::ConnectDeviceCodeDark
-        | State::ConnectTwoMethodsLight
-        | State::ConnectTwoMethodsDark
+        State::OnboardingReadyLight
+        | State::OnboardingReadyDark
+        | State::OnboardingReadyNarrow
+        | State::OnboardingDetecting
+        | State::OnboardingEmpty
+        | State::OnboardingError
+        | State::OnboardingOpening
         | State::AboutLight
         | State::AboutDark
         | State::AboutRefusedPlugin
@@ -265,61 +262,51 @@ fn context_for(setup: &MultiSetup) -> ContextModel {
     model
 }
 
-/// A provider whose sign-in methods and settings the Connect states draw; it never signs in.
-struct ConnectFixture {
-    methods: Vec<AuthMethod>,
+/// A provider whose connections the onboarding states draw; it never signs in.
+struct OnboardingFixture {
+    connections: Result<Vec<Connection>, ProviderError>,
 }
 
-fn connect_method(id: &str, label: &str, settings: &[&str]) -> AuthMethod {
-    let mut method = AuthMethod::new(id.to_string(), label.to_string());
-    method.settings = settings.iter().map(|key| key.to_string()).collect();
-    method
-}
-
-fn connect_setting(key: &str, label: &str, kind: SettingKind, secret: bool) -> SettingDef {
-    SettingDef {
-        key: key.to_string(),
-        label: label.to_string(),
-        description: None,
-        group: None,
-        kind,
-        default: None,
-        secret,
+fn fixture_connection(id: &str, name: &str, detail: &str, tags: &[&str]) -> Connection {
+    Connection {
+        id: id.into(),
+        display_name: name.to_string(),
+        detail: Some(detail.to_string()),
+        tags: tags.iter().map(|tag| tag.to_string()).collect(),
     }
 }
 
-impl ConnectFixture {
+impl OnboardingFixture {
     fn for_state(state: State) -> Self {
-        let methods = match state {
-            State::ConnectFolderLight | State::ConnectFolderDark => {
-                vec![connect_method("browser", "Browser", &["config_dir"])]
-            }
-            State::ConnectErrorLight | State::ConnectErrorDark => {
-                vec![connect_method(
-                    "browser",
-                    "Browser",
-                    &["config_dir", "region"],
-                )]
-            }
-            State::ConnectDeviceCodeLight | State::ConnectDeviceCodeDark => {
-                vec![connect_method("device", "Device code", &[])]
-            }
-            _ => vec![
-                connect_method("browser", "Browser", &["region"]),
-                connect_method("token", "Access token", &["token"]),
-            ],
+        let connections = match state {
+            State::OnboardingEmpty => Ok(vec![]),
+            State::OnboardingError => Err(ProviderError {
+                kind: ErrorKind::Other,
+                message: "The AWS config file could not be read".to_string(),
+                advice: None,
+                retry_after: None,
+                hint: Some(Box::new(ErrorHint {
+                    title: "No AWS profiles yet".to_string(),
+                    detail: Some("Set one up with the AWS CLI, then check again.".to_string()),
+                    command: Some("aws configure sso".to_string()),
+                })),
+            }),
+            _ => Ok(vec![
+                fixture_connection("default", "default", "us-east-1 · 12 instances", &["SSO"]),
+                fixture_connection("staging", "staging", "eu-west-1 · 4 instances", &[]),
+            ]),
         };
-        Self { methods }
+        Self { connections }
     }
 }
 
-impl Provider for ConnectFixture {
+impl Provider for OnboardingFixture {
     fn info(&self) -> ProviderInfo {
         ProviderInfo {
-            id: "fixture".to_string(),
-            name: "Fixture Cloud".to_string(),
+            id: "aws".to_string(),
+            name: "AWS".to_string(),
             version: "0".to_string(),
-            connection_label: "Project".to_string(),
+            connection_label: "Profile".to_string(),
             onboarding: Default::default(),
         }
     }
@@ -327,15 +314,11 @@ impl Provider for ConnectFixture {
     fn auth(&self) -> Option<&dyn Auth> {
         Some(self)
     }
-
-    fn config(&self) -> Option<&dyn Config> {
-        Some(self)
-    }
 }
 
-impl Browse for ConnectFixture {
+impl Browse for OnboardingFixture {
     fn connections(&self, _cx: &Call<'_>) -> Result<Vec<Connection>, ProviderError> {
-        Ok(vec![])
+        self.connections.clone()
     }
 
     fn dimensions(
@@ -374,9 +357,11 @@ impl Browse for ConnectFixture {
     }
 }
 
-impl Auth for ConnectFixture {
+impl Auth for OnboardingFixture {
     fn auth_methods(&self) -> Vec<AuthMethod> {
-        self.methods.clone()
+        let mut method = AuthMethod::new("sso".to_string(), "AWS SSO".to_string());
+        method.header_button = Some("Sign in".to_string());
+        vec![method]
     }
 
     fn begin_auth(
@@ -398,45 +383,25 @@ impl Auth for ConnectFixture {
     }
 }
 
-impl Config for ConnectFixture {
-    fn settings(&self) -> Vec<SettingDef> {
-        vec![
-            connect_setting("config_dir", "Config folder", SettingKind::Folder, false),
-            connect_setting("region", "Region", SettingKind::Text, false),
-            connect_setting("token", "Token", SettingKind::Text, true),
-        ]
-    }
-}
-
-/// Opens the Connect window for `state` and returns its context.
-fn open_connect(state: State, cx: &mut TestAppContext) -> &mut VisualTestContext {
-    let dark = matches!(
-        state,
-        State::ConnectFolderDark
-            | State::ConnectErrorDark
-            | State::ConnectDeviceCodeDark
-            | State::ConnectTwoMethodsDark
-    );
+/// Opens the onboarding window for `state` at `window_size` and returns its context.
+fn open_onboarding(
+    state: State,
+    window_size: (f32, f32),
+    cx: &mut TestAppContext,
+) -> &mut VisualTestContext {
+    let dark = state == State::OnboardingReadyDark;
     cx.update(|app| app.set_global(ActivePalette(Palette::for_dark(dark))));
-    let providers: Vec<Arc<dyn Provider>> = vec![Arc::new(ConnectFixture::for_state(state))];
-    let registry = Arc::new(ProviderRegistry::default());
+    let providers: Vec<Arc<dyn Provider>> = vec![Arc::new(OnboardingFixture::for_state(state))];
     let window = cx.update(|app| {
         gpui_component::init(app);
-        connect_window::open_window_for(app, providers, registry, "fixture", move |view, _| {
+        onboarding_window::open_window_for(app, providers, Some("aws"), window_size, move |view, _| {
             match state {
-                State::ConnectErrorLight | State::ConnectErrorDark => {
-                    view.show_error(ConnectError {
-                        message: "The access token was rejected".to_string(),
-                        advice: Some("Check the token and try again.".to_string()),
-                    })
-                }
-                State::ConnectDeviceCodeLight | State::ConnectDeviceCodeDark => {
-                    view.show_waiting("ABCD-1234", "https://example.test/device")
-                }
+                State::OnboardingDetecting => view.show_detecting(),
+                State::OnboardingOpening => view.show_opening("default"),
                 _ => {}
             }
         })
-        .expect("connect window opens")
+        .expect("onboarding window opens")
     });
     let cx = VisualTestContext::from_window(window.into(), cx).into_mut();
     cx.run_until_parked();
@@ -690,7 +655,7 @@ fn open_settings(
     cx
 }
 
-/// Builds `state` in a fresh window; the Connect, About, Plugins and Settings states return no fleet or main window.
+/// Builds `state` in a fresh window; the Onboarding, About, Plugins and Settings states return no fleet or main window.
 pub(crate) fn build(
     state: State,
     width: f32,
@@ -701,8 +666,8 @@ pub(crate) fn build(
     Option<Entity<MainWindow>>,
     &mut VisualTestContext,
 ) {
-    if state.is_connect() {
-        return (None, None, open_connect(state, cx));
+    if state.is_onboarding() {
+        return (None, None, open_onboarding(state, (width, height), cx));
     }
     if state.is_about() {
         return (None, None, open_about(state, cx));
@@ -848,7 +813,7 @@ mod tests {
     /// One key element per state that `apply_render_state` must produce.
     #[gpui::test]
     fn every_state_shows_its_key_element(cx: &mut TestAppContext) {
-        let key_elements: [(State, &str); 72] = [
+        let key_elements: [(State, &str); 71] = [
             (State::MainIdle, "main.root"),
             (State::MainRowSelected, "main.inspector"),
             (State::MainEmpty, "main.center-state"),
@@ -885,14 +850,13 @@ mod tests {
             (State::MainGcpActiveDark, "table.header.0"),
             (State::OverlayDimensionTree, "main.overlay.region"),
             (State::OverlayDimensionSingle, "dimension-picker.row.0"),
-            (State::ConnectFolderLight, "connect.browse.config_dir"),
-            (State::ConnectFolderDark, "connect.browse.config_dir"),
-            (State::ConnectErrorLight, "connect.error"),
-            (State::ConnectErrorDark, "connect.error"),
-            (State::ConnectDeviceCodeLight, "connect.code"),
-            (State::ConnectDeviceCodeDark, "connect.code"),
-            (State::ConnectTwoMethodsLight, "connect.method.1"),
-            (State::ConnectTwoMethodsDark, "connect.method.1"),
+            (State::OnboardingReadyLight, "onboarding.pane"),
+            (State::OnboardingReadyDark, "onboarding.pane"),
+            (State::OnboardingReadyNarrow, "onboarding.pane"),
+            (State::OnboardingDetecting, "onboarding.detecting"),
+            (State::OnboardingEmpty, "onboarding.empty"),
+            (State::OnboardingError, "onboarding.failed"),
+            (State::OnboardingOpening, "onboarding.opening"),
             (State::AboutLight, "about.title"),
             (State::AboutDark, "about.title"),
             (State::AboutRefusedPlugin, "about.title"),

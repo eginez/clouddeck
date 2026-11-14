@@ -7,7 +7,7 @@ use gpui::{Bounds, Pixels, Size};
 use super::geometry::{self, TOL};
 use super::rules_about;
 use super::rules_bar;
-use super::rules_connect;
+use super::rules_onboarding;
 use super::rules_main;
 use super::rules_overlays;
 use super::rules_plugins;
@@ -219,7 +219,7 @@ pub(crate) fn all_rules() -> Vec<Rule> {
         rules_bar::rules(),
         rules_search::rules(),
         rules_overlays::rules(),
-        rules_connect::rules(),
+        rules_onboarding::rules(),
         rules_about::rules(),
         rules_plugins::rules(),
         rules_settings::rules(),

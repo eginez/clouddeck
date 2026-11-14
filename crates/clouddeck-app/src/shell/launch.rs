@@ -1,7 +1,7 @@
 use super::*;
 
 /// What the command line asked for.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct LaunchOptions {
     pub demo: bool,
     pub scenario: DemoFleet,
@@ -11,6 +11,9 @@ pub(crate) struct LaunchOptions {
     pub state: Option<State>,
     /// Print the version and exit, from --version or -V.
     pub print_version: bool,
+    /// Open the onboarding window at launch, from `--onboarding [provider]`; the inner
+    /// option is the provider to select, the first one when absent.
+    pub onboarding: Option<Option<String>>,
 }
 
 /// Parses `WxH` (positive whole numbers) into a window content size.
@@ -31,11 +34,15 @@ pub(crate) fn parse_launch_options(
     let mut size = None;
     let mut state = None;
     let mut print_version = false;
-    let mut args = args.into_iter();
+    let mut onboarding = None;
+    let mut args = args.into_iter().peekable();
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--demo" => demo = true,
             "--version" | "-V" => print_version = true,
+            "--onboarding" => {
+                onboarding = Some(args.next_if(|next| !next.starts_with("--")));
+            }
             "--demo-scenario" => {
                 explicit_scenario = Some(match args.next().as_deref() {
                     Some("empty") => DemoFleet::Empty,
@@ -75,10 +82,11 @@ pub(crate) fn parse_launch_options(
         size,
         state,
         print_version,
+        onboarding,
     })
 }
 
-pub(super) const USAGE: &str = "usage: clouddeck [--demo] [--demo-scenario <name>] [--size WxH] [--render-state <Name>] [--version]";
+pub(super) const USAGE: &str = "usage: clouddeck [--demo] [--demo-scenario <name>] [--size WxH] [--render-state <Name>] [--onboarding [provider]] [--version]";
 
 /// Launch options from the process arguments; exits with status 2 on a usage error
 /// and status 0 after printing the version.

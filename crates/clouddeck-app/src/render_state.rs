@@ -84,22 +84,20 @@ pub(crate) enum State {
     OverlayDimensionTree,
     /// Region picker over a single-select region dimension, with no checkboxes.
     OverlayDimensionSingle,
-    /// Connect window for a provider with one folder setting, in the light palette.
-    ConnectFolderLight,
-    /// The same Connect window as `ConnectFolderLight`, in the dark palette.
-    ConnectFolderDark,
-    /// Connect window showing an error with its advice under the settings rows, in the light palette.
-    ConnectErrorLight,
-    /// The same Connect window as `ConnectErrorLight`, in the dark palette.
-    ConnectErrorDark,
-    /// Connect window waiting on a device code, in the light palette.
-    ConnectDeviceCodeLight,
-    /// The same Connect window as `ConnectDeviceCodeLight`, in the dark palette.
-    ConnectDeviceCodeDark,
-    /// Connect window for a provider with two auth methods, in the light palette.
-    ConnectTwoMethodsLight,
-    /// The same Connect window as `ConnectTwoMethodsLight`, in the dark palette.
-    ConnectTwoMethodsDark,
+    /// Onboarding window with AWS selected and profiles listed, in the light palette.
+    OnboardingReadyLight,
+    /// The same onboarding window as `OnboardingReadyLight`, in the dark palette.
+    OnboardingReadyDark,
+    /// `OnboardingReadyLight` at the smallest width the onboarding window is laid out for.
+    OnboardingReadyNarrow,
+    /// Onboarding window still looking for connections.
+    OnboardingDetecting,
+    /// Onboarding window whose provider found no connections.
+    OnboardingEmpty,
+    /// Onboarding window whose provider failed with a recovery hint.
+    OnboardingError,
+    /// Onboarding window after a connection was chosen to open.
+    OnboardingOpening,
     /// About window in the light palette, with the demo plus two bundled or installed plugins.
     AboutLight,
     /// About window in the dark palette, with the same plugins as `AboutLight`.
@@ -153,7 +151,7 @@ pub(crate) enum State {
 }
 
 impl State {
-    pub(crate) const ALL: [State; 72] = [
+    pub(crate) const ALL: [State; 71] = [
         State::MainIdle,
         State::MainRowSelected,
         State::MainEmpty,
@@ -190,14 +188,13 @@ impl State {
         State::MainGcpActiveDark,
         State::OverlayDimensionTree,
         State::OverlayDimensionSingle,
-        State::ConnectFolderLight,
-        State::ConnectFolderDark,
-        State::ConnectErrorLight,
-        State::ConnectErrorDark,
-        State::ConnectDeviceCodeLight,
-        State::ConnectDeviceCodeDark,
-        State::ConnectTwoMethodsLight,
-        State::ConnectTwoMethodsDark,
+        State::OnboardingReadyLight,
+        State::OnboardingReadyDark,
+        State::OnboardingReadyNarrow,
+        State::OnboardingDetecting,
+        State::OnboardingEmpty,
+        State::OnboardingError,
+        State::OnboardingOpening,
         State::AboutLight,
         State::AboutDark,
         State::AboutRefusedPlugin,
@@ -267,14 +264,13 @@ impl State {
             State::MainGcpActiveDark => "MainGcpActiveDark",
             State::OverlayDimensionTree => "OverlayDimensionTree",
             State::OverlayDimensionSingle => "OverlayDimensionSingle",
-            State::ConnectFolderLight => "ConnectFolderLight",
-            State::ConnectFolderDark => "ConnectFolderDark",
-            State::ConnectErrorLight => "ConnectErrorLight",
-            State::ConnectErrorDark => "ConnectErrorDark",
-            State::ConnectDeviceCodeLight => "ConnectDeviceCodeLight",
-            State::ConnectDeviceCodeDark => "ConnectDeviceCodeDark",
-            State::ConnectTwoMethodsLight => "ConnectTwoMethodsLight",
-            State::ConnectTwoMethodsDark => "ConnectTwoMethodsDark",
+            State::OnboardingReadyLight => "OnboardingReadyLight",
+            State::OnboardingReadyDark => "OnboardingReadyDark",
+            State::OnboardingReadyNarrow => "OnboardingReadyNarrow",
+            State::OnboardingDetecting => "OnboardingDetecting",
+            State::OnboardingEmpty => "OnboardingEmpty",
+            State::OnboardingError => "OnboardingError",
+            State::OnboardingOpening => "OnboardingOpening",
             State::AboutLight => "AboutLight",
             State::AboutDark => "AboutDark",
             State::AboutRefusedPlugin => "AboutRefusedPlugin",
@@ -372,19 +368,18 @@ impl State {
         )
     }
 
-    /// Whether the state is the Connect window rather than a main-window state.
+    /// Whether the state is the onboarding window rather than a main-window state.
     #[cfg(test)]
-    pub(crate) fn is_connect(self) -> bool {
+    pub(crate) fn is_onboarding(self) -> bool {
         matches!(
             self,
-            State::ConnectFolderLight
-                | State::ConnectFolderDark
-                | State::ConnectErrorLight
-                | State::ConnectErrorDark
-                | State::ConnectDeviceCodeLight
-                | State::ConnectDeviceCodeDark
-                | State::ConnectTwoMethodsLight
-                | State::ConnectTwoMethodsDark
+            State::OnboardingReadyLight
+                | State::OnboardingReadyDark
+                | State::OnboardingReadyNarrow
+                | State::OnboardingDetecting
+                | State::OnboardingEmpty
+                | State::OnboardingError
+                | State::OnboardingOpening
         )
     }
 
@@ -518,14 +513,13 @@ pub(crate) fn apply_render_state(
         | State::MainGcpActive
         | State::MainGcpSignIn
         | State::MainGcpActiveDark
-        | State::ConnectFolderLight
-        | State::ConnectFolderDark
-        | State::ConnectErrorLight
-        | State::ConnectErrorDark
-        | State::ConnectDeviceCodeLight
-        | State::ConnectDeviceCodeDark
-        | State::ConnectTwoMethodsLight
-        | State::ConnectTwoMethodsDark
+        | State::OnboardingReadyLight
+        | State::OnboardingReadyDark
+        | State::OnboardingReadyNarrow
+        | State::OnboardingDetecting
+        | State::OnboardingEmpty
+        | State::OnboardingError
+        | State::OnboardingOpening
         | State::AboutLight
         | State::AboutDark
         | State::AboutRefusedPlugin

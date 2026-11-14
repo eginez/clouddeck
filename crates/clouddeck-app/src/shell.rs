@@ -1,5 +1,5 @@
 use crate::app_providers;
-use crate::connect_window::{ConnectEvent, open_connect_window};
+use crate::onboarding_window::{OnboardingEvent, open_onboarding_window};
 use crate::render_state::{DEFAULT_ROW_MENU_ANCHOR, State, apply_render_state, fleet_loaded};
 use crate::{
     fleet_state::FleetState,
@@ -38,6 +38,7 @@ mod tests;
 mod window;
 
 use self::helpers::*;
+pub(crate) use self::helpers::saved_context_path;
 pub(crate) use self::launch::launch_options;
 pub(crate) use self::window::{open_main_window, open_main_window_with};
 

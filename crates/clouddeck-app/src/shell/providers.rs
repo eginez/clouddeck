@@ -16,22 +16,42 @@ impl AppShell {
         .then(|| ConnectionId::from(self.context.profile.as_str()));
         let shell = cx.weak_entity();
         let window_handle = self.window_handle;
-        let opened = open_connect_window(cx, id, connection, move |event, cx| {
+        let opened = open_onboarding_window(cx, Some(id), connection, move |event, cx| {
             let _ = window_handle.update(cx, |_, window, cx| {
                 let _ = shell.update(cx, |shell, cx| match event {
-                    ConnectEvent::SignedIn { provider } => {
+                    OnboardingEvent::SignedIn { provider } => {
                         if shell.context_model.active_provider() == provider {
                             let providers = app_providers::providers(cx);
                             shell.reload_active_provider(&providers, window, cx);
                         }
                         shell.refresh(cx);
                     }
-                    ConnectEvent::ExploreDemo => shell.toggle_demo(window, cx),
+                    OnboardingEvent::Open {
+                        provider,
+                        connection,
+                    } => shell.open_connection(&provider, &connection, window, cx),
+                    OnboardingEvent::ExploreDemo => shell.toggle_demo(window, cx),
                 });
             });
         });
         if opened.is_none() {
             self.message = Some(format!("{id} has no sign-in to connect"));
+        }
+    }
+
+    fn open_connection(
+        &mut self,
+        provider: &str,
+        connection: &ConnectionId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.context.profile = connection.as_str().to_string();
+        if self.context_model.active_provider() == provider {
+            let providers = app_providers::providers(cx);
+            self.reload_active_provider(&providers, window, cx);
+        } else {
+            self.switch_provider_to(provider, &settings_path(), window, cx);
         }
     }
 
