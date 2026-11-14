@@ -20,7 +20,16 @@ pub(crate) fn plain_provider(id: &str, connections: &[&str]) -> Arc<dyn Provider
 }
 
 pub(crate) fn auth_provider(id: &str, connections: &[&str]) -> Arc<dyn Provider> {
-    Arc::new(SignInCompute(compute(id, connections)))
+    Arc::new(SignInCompute(compute(id, connections), None))
+}
+
+/// Like `auth_provider`, but its `identity` check answers with `identity`.
+pub(crate) fn identified_provider(
+    id: &str,
+    connections: &[&str],
+    identity: &'static str,
+) -> Arc<dyn Provider> {
+    Arc::new(SignInCompute(compute(id, connections), Some(identity)))
 }
 
 fn compute(id: &str, connections: &[&str]) -> ComputeServiceProvider {
@@ -41,7 +50,7 @@ fn compute(id: &str, connections: &[&str]) -> ComputeServiceProvider {
 }
 
 /// A compute provider that also offers a browser sign-in, so the onboarding window opens for it.
-struct SignInCompute(ComputeServiceProvider);
+struct SignInCompute(ComputeServiceProvider, Option<&'static str>);
 
 impl Provider for SignInCompute {
     fn info(&self) -> clouddeck_core::ProviderInfo {
@@ -68,6 +77,17 @@ impl Auth for SignInCompute {
         _input: AuthInput,
     ) -> Result<AuthStep, ProviderError> {
         Ok(AuthStep::Done)
+    }
+
+    fn identity(
+        &self,
+        _cx: &Call<'_>,
+        _connection: &clouddeck_core::ConnectionId,
+        _selection: &clouddeck_core::Selection,
+    ) -> Result<String, ProviderError> {
+        self.1
+            .map(str::to_string)
+            .ok_or_else(ProviderError::unsupported)
     }
 }
 

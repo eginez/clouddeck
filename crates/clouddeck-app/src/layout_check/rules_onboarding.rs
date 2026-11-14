@@ -217,6 +217,27 @@ pub(crate) fn rules() -> Vec<Rule> {
         common_rules!(State::OnboardingEmpty, "onb-empty", WINDOW),
         common_rules!(State::OnboardingError, "onb-error", WINDOW),
         common_rules!(State::OnboardingOpening, "onb-opening", WINDOW),
+        vec![
+            Rule {
+                id: "onb-ready-light-identity-in",
+                state: State::OnboardingReadyLight,
+                window: WINDOW,
+                check: Check::InWindow("onboarding.identity"),
+                why: "the signed-in identity banner is fully inside the window",
+                known_bug: None,
+            },
+            Rule {
+                id: "onb-ready-light-identity-above-search",
+                state: State::OnboardingReadyLight,
+                window: WINDOW,
+                check: Check::Above {
+                    upper: "onboarding.identity",
+                    lower: "onboarding.search",
+                },
+                why: "the identity banner sits above the search field",
+                known_bug: None,
+            },
+        ],
     ]
     .into_iter()
     .flatten()

@@ -364,6 +364,15 @@ impl Auth for OnboardingFixture {
         vec![method]
     }
 
+    fn identity(
+        &self,
+        _cx: &Call<'_>,
+        _connection: &ConnectionId,
+        _selection: &Selection,
+    ) -> Result<String, ProviderError> {
+        Ok("123456789012".to_string())
+    }
+
     fn begin_auth(
         &self,
         _cx: &Call<'_>,

@@ -6,7 +6,7 @@ use std::time::SystemTime;
 
 use clouddeck_core::{
     AuthMethod, AuthStatus, Call, ConnectError, Connection, ConnectionId, Provider, ProviderError,
-    SignInAction, connect_methods, submit,
+    Selection, SignInAction, connect_methods, submit,
 };
 use gpui::{
     AnyElement, App, Bounds, ClickEvent, ClipboardItem, Context, Entity, EventEmitter, FontWeight,
@@ -50,6 +50,7 @@ enum Listing {
 struct Row {
     connection: Connection,
     status: Option<AuthStatus>,
+    identity: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -80,17 +81,31 @@ fn list(provider: &dyn Provider, call: &Call<'_>) -> Listing {
     match provider.connections(call) {
         Err(error) => Listing::Failed(error),
         Ok(connections) if connections.is_empty() => Listing::Empty,
-        Ok(connections) => Listing::Found(
-            connections
+        Ok(connections) => {
+            let mut rows: Vec<Row> = connections
                 .into_iter()
                 .map(|connection| {
                     let status = provider
                         .auth()
                         .map(|auth| auth.auth_status(call, Some(&connection.id)));
-                    Row { connection, status }
+                    Row {
+                        connection,
+                        status,
+                        identity: None,
+                    }
                 })
-                .collect(),
-        ),
+                .collect();
+            if let (Some(auth), Some(row)) = (
+                provider.auth(),
+                rows.iter_mut()
+                    .find(|row| matches!(row.status, Some(AuthStatus::SignedIn { .. }))),
+            ) {
+                row.identity = auth
+                    .identity(call, &row.connection.id, &Selection::new())
+                    .ok();
+            }
+            Listing::Found(rows)
+        }
     }
 }
 
@@ -556,6 +571,9 @@ impl OnboardingWindow {
             .pt(px(18.))
             .pb(px(12.))
             .child(header);
+        if let Some(identity) = self.rows().iter().find_map(|row| row.identity.as_deref()) {
+            top = top.child(identity_banner(identity, palette));
+        }
         if let Some(error) = self.error_panel(palette) {
             top = top.child(error);
         }
@@ -973,6 +991,21 @@ impl Render for OnboardingWindow {
     }
 }
 
+fn identity_banner(identity: &str, palette: &Palette) -> AnyElement {
+    div()
+        .debug_selector(|| "onboarding.identity".to_string())
+        .px(px(10.))
+        .py(px(6.))
+        .rounded(px(6.))
+        .bg(palette.surf)
+        .border_1()
+        .border_color(palette.line)
+        .text_size(px(12.))
+        .text_color(palette.dim)
+        .child(format!("Signed in as {identity}"))
+        .into_any_element()
+}
+
 fn plural(noun: &str, count: usize) -> String {
     if count == 1 {
         noun.to_string()
@@ -1214,7 +1247,7 @@ fn open_window(
 mod tests {
     use super::*;
     use crate::provider_sign_in::Progress;
-    use crate::test_support::{auth_provider, plain_provider};
+    use crate::test_support::{auth_provider, identified_provider, plain_provider, wait_until};
     use clouddeck_core::SignInAction;
     use gpui::{TestAppContext, VisualTestContext};
 
@@ -1278,5 +1311,53 @@ mod tests {
             view.progress(attempt, Progress::Action(SignInAction::Finish), cx)
         });
         assert!(!continues);
+    }
+
+    #[gpui::test]
+    fn identity_banner_shows_when_the_account_resolves(cx: &mut TestAppContext) {
+        cx.update(gpui_component::init);
+        let providers = vec![identified_provider("fake", &["default"], "123456789012")];
+        let handle = cx
+            .update(|app| open_window_for(app, providers, Some("fake"), WINDOW_SIZE, |_, _| {}))
+            .expect("onboarding window opens");
+        let view = handle
+            .update(cx, |root, _, _| {
+                root.view().clone().downcast::<OnboardingWindow>().ok()
+            })
+            .expect("window is open")
+            .expect("root is the onboarding window");
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                matches!(view.listings[view.chosen], Listing::Found(_))
+            })
+        });
+        let cx = VisualTestContext::from_window(handle.into(), cx).into_mut();
+        cx.run_until_parked();
+
+        assert!(cx.debug_bounds("onboarding.identity").is_some());
+    }
+
+    #[gpui::test]
+    fn identity_banner_is_absent_when_the_account_fails(cx: &mut TestAppContext) {
+        cx.update(gpui_component::init);
+        let providers = vec![auth_provider("fake", &["default"])];
+        let handle = cx
+            .update(|app| open_window_for(app, providers, Some("fake"), WINDOW_SIZE, |_, _| {}))
+            .expect("onboarding window opens");
+        let view = handle
+            .update(cx, |root, _, _| {
+                root.view().clone().downcast::<OnboardingWindow>().ok()
+            })
+            .expect("window is open")
+            .expect("root is the onboarding window");
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                matches!(view.listings[view.chosen], Listing::Found(_))
+            })
+        });
+        let cx = VisualTestContext::from_window(handle.into(), cx).into_mut();
+        cx.run_until_parked();
+
+        assert!(cx.debug_bounds("onboarding.identity").is_none());
     }
 }
