@@ -9,6 +9,7 @@ This folder is the visual source of truth for layout, copy, states and behaviour
 | Path | What it is | Who reads it |
 |---|---|---|
 | [`main-window.html`](main-window.html) | The interactive mockup. One self-contained page (HTML, CSS and JavaScript, no dependencies) with sample data: 20 instances across 4 regions. Open it in a browser and click through. | People. It needs JavaScript, so models should use the images instead. |
+| [`onboarding.html`](onboarding.html) | The provider onboarding mockup: one first-run window with a provider rail (AWS, Google Cloud, an extension, a disabled extension, demo) and every state of its pane (detecting, nothing found, SSO sign-in, scope picker, config error, ADC missing, extension sign-in). Self-contained like `main-window.html`; controls at the top jump to any state. | People. |
 | [`images/`](images/) | PNG renders of the mockup, one per state or part, plus [`images/README.md`](images/README.md), which lists the committed images and what they show. Only the images the root README and `scripts/render-all.sh` use are committed; `render.swift` regenerates the rest. | Models and people. Start here if you cannot run the page. |
 | [`icon/`](icon/) | The app icon: master SVG, PNG exports, the macOS `AppIcon.icns`, a generator script and a size board. See [`icon/README.md`](icon/README.md). | People and the app bundle. |
 | [`shots.json`](shots.json) | The manifest the renderer reads: for each image, its name, description, the JavaScript that puts the mockup in that state, the element to capture, and the scale. | The renderer. Edit it to add or change an image. |
@@ -44,6 +45,34 @@ swiftc -swift-version 5 -o /tmp/clouddeck-render design/render.swift
 Add a name prefix as a fourth argument to render only some shots, for example `... design/images 3` for everything whose name starts with `3`. A full run takes about 30 seconds and rewrites all PNGs. Window shots are 1.5x (1280pt wide becomes 1920px) and state cards 2x.
 
 To add a shot, append an entry to `shots.json`: `setup` is JavaScript that runs after the page loads and may use `await`, `clip` is a CSS selector for the element to capture, and the helpers `A()`, `set()`, `pick()`, `key()`, `dark()`, `size()` and `wait()` are defined in `prelude`. Then re-run the renderer. `images/README.md` is not written by `render.swift`, so add the new image's row to its table by hand.
+
+## The onboarding mockup (`onboarding.html`)
+
+The first-run window for every provider: a provider rail on the left, the chosen provider's connections, sign-in and scope on the right. Spec and reasoning: the Claude doc *CloudDeck — Provider Onboarding Design*. Images `61-…` to `6n-…` in [`images/`](images/README.md#onboarding-providers) show every state; build from those.
+
+Regenerate them with its own manifest:
+
+```bash
+swiftc -swift-version 5 -o /tmp/clouddeck-render design/render.swift
+/tmp/clouddeck-render design/onboarding-shots.json design/onboarding.html design/images 6
+```
+
+In a shot's `setup`, `go(provider, view)` puts the window in a state (`go('gcp','scope')`, `go('add')`) and `dark()` switches theme. Providers: `aws`, `gcp`, `ext`, `off`, `demo`; each provider's views are listed in `PROV` in the page.
+
+Measurements (points, same tokens as `main-window.html`):
+
+| Part | Size and type |
+|---|---|
+| Window | 1000 × 600, radius 10 |
+| Rail | 260 wide, `--side` background, padding 18 / 12 / 14 |
+| Provider row | tile 30 × 30 radius 7, gap 10, padding 7 / 8, radius 7; name 13 semibold; status 11 `--dim` with a 7pt dot (green ok, amber needs action, red error); selected `--sel`; disabled at 45% opacity |
+| Pane | padding 18 / 22; title 17 semibold; subtitle 12 `--dim` |
+| Search | 30 tall, radius 6 |
+| Connection row | badge 34 round (accent when selected), gap 12, padding 7 / 10, radius 7; name 13 semibold; detail 11 `--dim`; right side: auth status 11 + SSO pill 18 tall |
+| Footer | 52 tall, top rule `--line2`, credentials note left, primary action right |
+| Empty and error states | centred; 32pt icon, heading 15 semibold, body 12 `--dim` max 420 wide; copyable command 32 tall, monospace 12 |
+| Device code | monospace 28 semibold, letter-spacing .12em, `--panel` box |
+| Scope picker | rows 30 tall, checkbox 14, zones indented 36; parent checkbox checked, mixed (dash) or empty |
 
 ## Keeping it in sync
 

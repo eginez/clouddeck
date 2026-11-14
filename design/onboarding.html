@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>CloudDeck onboarding · providers</title>
+<style>
+:root{--k04:#00000004;--k0a:#0000000a;--k10:#00000010;--k1a:#0000001a;--surf:#fff;--popbg:#fffffff2;--skel:#e6e6ea;--warntext:#8a5a0a;--runtext:#177a42;--page:#c9c9cf;--badge:#8b93a1;
+  --win:#fbfbfc; --chrome:#ececef; --side:#f1f1f4; --panel:#f7f7f9; --line:#dcdce1; --line2:#e8e8ec;
+  --text:#1c1c1f; --dim:#6b6b73; --faint:#6f6f79; --hover:#ececf0; --sel:#dfe6f5;
+  --accent:#2f6fdb; --run:#1f9d55; --warn:#b7791f; --err:#c4372c;
+  --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif;
+  --mono:ui-monospace,"SF Mono",Menlo,monospace;
+}
+[data-theme=dark]{--k04:#ffffff04;--k0a:#ffffff0a;--k10:#ffffff10;--k1a:#ffffff1a;--surf:#2a2b30;--popbg:#2f3036f2;--skel:#33343a;--warntext:#e3b04b;--runtext:#5fd391;--page:#101012;--badge:#5b6272;
+ --win:#1e1f23;--chrome:#2b2c31;--side:#25262a;--panel:#222327;--line:#3a3b41;--line2:#32333a;--text:#ececf0;--dim:#a0a0aa;--faint:#8e8e99;--hover:#32333a;--sel:#2b3a5c;--accent:#5b8def;--run:#3ecf7a;--warn:#e3b04b;--err:#ff6b5e}
+[data-theme=dark] .onw{box-shadow:0 0 0 .5px #000a,0 18px 50px #000a}
+*{box-sizing:border-box}
+body{margin:0;background:var(--page);font:12px/1.3 var(--font);color:var(--text);padding:24px;display:flex;flex-direction:column;gap:20px;align-items:center}
+h2{margin:0 0 8px;font:600 13px var(--font);color:var(--text)}
+.note{font-size:12px;max-width:1000px;margin:0}
+.board{width:1000px}
+svg.i{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.2;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.mono{font-family:var(--mono);font-size:11px;letter-spacing:-.1px}
+
+/* page controls */
+.ctrls{display:flex;flex-wrap:wrap;gap:6px;align-items:center;width:1000px}.ctrls .lbl{color:var(--dim);margin:0 2px 0 10px}.ctrls .lbl:first-child{margin-left:0}
+.ctrls button{height:26px;padding:0 12px;border-radius:6px;border:0;background:var(--surf);color:var(--text);font:inherit;box-shadow:0 0 0 .5px var(--line)}.ctrls button.on{background:var(--accent);color:#fff}
+
+/* buttons */
+.pbtn,.sbtn{height:26px;padding:0 12px;border-radius:6px;border:0;font:inherit;cursor:default;white-space:nowrap;display:inline-flex;align-items:center;gap:6px}
+.pbtn{background:var(--accent);color:#fff}.pbtn[disabled]{opacity:.45}
+.sbtn{background:var(--surf);color:var(--text);box-shadow:0 0 0 .5px var(--line)}.sbtn:hover{background:var(--hover)}
+.linkb{border:0;background:transparent;color:var(--accent);font:inherit;padding:0;cursor:default}.linkb:hover{text-decoration:underline}
+.pbtn:focus-visible,.sbtn:focus-visible,.prov:focus-visible,.row:focus-visible,.linkb:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+
+/* window */
+.onw{width:1000px;height:600px;display:flex;background:var(--win);border-radius:10px;overflow:hidden;box-shadow:0 0 0 .5px #0006,0 18px 50px #0004;position:relative}
+.rail{width:260px;background:var(--side);display:flex;flex-direction:column;padding:18px 12px 14px;gap:2px;flex:none}
+.brand{display:flex;align-items:center;gap:10px;padding:4px 8px 18px}.brand .n{font:700 18px var(--font)}.brand .v{color:var(--dim);font-size:11px}
+.rh{font:600 10px var(--font);color:var(--faint);text-transform:uppercase;letter-spacing:.04em;padding:0 8px 6px}
+.prov{display:flex;align-items:center;gap:10px;padding:7px 8px;border-radius:7px;border:0;background:transparent;color:var(--text);font:inherit;text-align:left;width:100%;cursor:default}
+.prov:hover{background:var(--hover)}.prov.on{background:var(--sel)}
+.prov .t{font-weight:600;font-size:13px}.prov .u{color:var(--dim);font-size:11px;margin-top:1px;display:flex;gap:5px;align-items:center}
+.prov.off .t,.prov.off .tile{opacity:.45}
+.tile{width:30px;height:30px;border-radius:7px;display:flex;align-items:center;justify-content:center;font:700 11px var(--font);color:#fff;flex:none;background:var(--badge)}
+.tile.aws{background:#d9822b}.tile.gcp{background:#3b7be0}.tile.demo{background:var(--k10);color:var(--dim)}.tile.ext{background:#7a5bd1}.tile.off{background:var(--badge)}
+.add{border:1px dashed var(--line);border-radius:7px;color:var(--dim);margin-top:6px;justify-content:center;padding:9px 8px}
+.rail .sp{flex:1}
+.dot{width:7px;height:7px;border-radius:50%;display:inline-block;flex:none}.dot.ok{background:var(--run)}.dot.w{background:var(--warn)}.dot.e{background:var(--err)}
+
+.pane{flex:1;display:flex;flex-direction:column;min-width:0;padding:18px 22px 0}
+.ph{display:flex;align-items:center;gap:8px;min-height:30px}.ph .ttl{font:600 17px var(--font)}.ph .sp{flex:1}
+.sub{color:var(--dim);margin:4px 0 12px}
+.search{height:30px;border-radius:6px;background:var(--surf);box-shadow:0 0 0 .5px var(--line);display:flex;align-items:center;gap:6px;padding:0 9px;color:var(--faint);margin-bottom:8px}
+.search input{border:0;outline:0;background:transparent;font:inherit;color:var(--text);flex:1}
+.list{flex:1;overflow:auto;display:flex;flex-direction:column;gap:2px;margin:0 -8px;padding:0 8px}
+.row{display:flex;align-items:center;gap:12px;padding:7px 10px;border-radius:7px;cursor:default}
+.row:hover{background:var(--hover)}.row.cur{background:var(--sel)}
+.bdg{width:34px;height:34px;border-radius:50%;background:var(--badge);color:var(--surf);font:600 12px var(--font);display:flex;align-items:center;justify-content:center;flex:none}.row.cur .bdg{background:var(--accent)}
+.row .t{font-weight:600;font-size:13px}.row .u{color:var(--dim);font-size:11px;margin-top:2px}.row .r{margin-left:auto;display:flex;align-items:center;gap:6px;color:var(--dim);font-size:11px}
+.badge{height:18px;padding:0 7px;border-radius:9px;background:var(--k0a);color:var(--dim);font:600 10px var(--font);display:inline-flex;align-items:center;letter-spacing:.02em}
+.who{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:7px;background:var(--k04);box-shadow:inset 0 0 0 .5px var(--line2);margin-bottom:8px;color:var(--dim)}.who b{color:var(--text);font-weight:600}
+.foot{height:52px;flex:none;border-top:1px solid var(--line2);display:flex;align-items:center;gap:10px;color:var(--dim);margin:0 -22px;padding:0 22px}.foot .sp{flex:1}
+kbd{font:inherit;opacity:.75}
+
+/* centred states */
+.center{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:10px;padding:0 40px}
+.center h4{margin:0;font:600 15px var(--font)}.center p{margin:0;color:var(--dim);max-width:420px;line-height:1.45}
+.cmd{display:flex;align-items:center;gap:8px;height:32px;padding:0 6px 0 12px;border-radius:6px;background:var(--panel);box-shadow:inset 0 0 0 .5px var(--line);font-family:var(--mono);font-size:12px;color:var(--text)}
+.cmd .cp{border:0;background:transparent;color:var(--faint);height:24px;width:24px;border-radius:5px;display:inline-flex;align-items:center;justify-content:center}.cmd .cp:hover{background:var(--hover);color:var(--text)}
+.acts{display:flex;gap:8px;margin-top:4px}
+.errbox{width:100%;max-width:520px;text-align:left;padding:10px 12px;border-radius:8px;background:var(--k0a);font-family:var(--mono);font-size:11px;color:var(--text);white-space:pre-wrap}
+.code{font:600 28px var(--mono);letter-spacing:.12em;padding:10px 18px;border-radius:8px;background:var(--panel);box-shadow:inset 0 0 0 .5px var(--line)}
+.spin{width:12px;height:12px;border-radius:50%;border:1.5px solid #bbb;border-top-color:var(--accent);animation:sp .7s linear infinite;display:inline-block}@keyframes sp{to{transform:rotate(360deg)}}
+.sk{display:flex;align-items:center;gap:12px;padding:7px 10px}.sk .c{width:34px;height:34px;border-radius:50%;background:var(--skel)}.sk i{display:block;height:10px;border-radius:4px;background:var(--skel)}
+.sk .l{display:flex;flex-direction:column;gap:6px}
+@media(prefers-reduced-motion:reduce){.spin{animation:none}}
+
+/* scope picker */
+.scope{flex:1;overflow:auto;margin:0 -8px;padding:0 8px}
+.sc{display:flex;align-items:center;gap:10px;height:30px;padding:0 10px;border-radius:6px;cursor:default}.sc:hover{background:var(--hover)}.sc .n{color:var(--dim);margin-left:auto;font-size:11px}
+.sc.z{padding-left:36px}.sc .chev{color:var(--faint);width:14px;height:14px}
+.chk{width:14px;height:14px;border-radius:4px;border:1px solid var(--faint);display:inline-flex;align-items:center;justify-content:center;flex:none}.chk.on,.chk.mix{background:var(--accent);border-color:var(--accent);color:#fff}.chk svg{width:11px;height:11px;stroke-width:2}
+
+/* forms */
+.form{display:grid;grid-template-columns:150px 1fr;gap:10px 14px;align-items:center;width:100%;max-width:520px;text-align:left;margin-top:6px}
+.form label{color:var(--dim);text-align:right}.form input{height:28px;border-radius:6px;border:0;background:var(--surf);box-shadow:0 0 0 .5px var(--line);color:var(--text);font:inherit;padding:0 9px;width:100%}
+.form input:focus-visible{outline:2px solid var(--accent);outline-offset:1px}.form .hint{grid-column:2;color:var(--dim);font-size:11px;margin-top:-4px}
+.methods{display:flex;flex-direction:column;gap:8px;width:100%;max-width:520px}
+.meth{display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:8px;box-shadow:inset 0 0 0 .5px var(--line);text-align:left;background:var(--surf)}.meth:hover{box-shadow:inset 0 0 0 1px var(--accent)}.meth .t{font-weight:600}.meth .u{color:var(--dim);font-size:11px;margin-top:2px}.meth .i{color:var(--accent)}
+.demo-card{display:flex;gap:16px;align-items:center;padding:18px;border-radius:10px;box-shadow:inset 0 0 0 .5px var(--line);background:var(--panel);text-align:left;max-width:520px}
+.chip{height:18px;padding:0 7px;border-radius:9px;background:var(--accent);color:#fff;font:600 10px var(--font);letter-spacing:.05em;display:inline-flex;align-items:center}
+.warnt{color:var(--warntext)}.errt{color:var(--err)}
+</style></head><body>
+
+<div class="note"><b>CloudDeck onboarding, one window for every provider.</b> Spec: <i>CloudDeck — Provider Onboarding Design</i> (Claude doc). The left rail lists every loaded provider with what CloudDeck found for it; the right pane shows that provider's connections, sign-in and scope. Click a provider, click a row, press ↵ (or Open) to go on. Use the controls to jump to any state. Data, accounts and projects are fake.</div>
+<div class="ctrls" id="ctrls"></div>
+<div class="board"><div class="onw" id="W" tabindex="-1"></div></div>
+
+<script>
+const P={
+ search:'<circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>',
+ chev:'<path d="m6 9 6 6 6-6"/>',chevr:'<path d="m9 6 6 6-6 6"/>',
+ server:'<rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/>',
+ copy:'<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h8"/>',
+ ext:'<path d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
+ warn:'<path d="m21.7 18-8-14a2 2 0 0 0-3.4 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.7-3Z"/><path d="M12 9v4M12 17h.01"/>',
+ alert:'<circle cx="12" cy="12" r="9"/><path d="M12 8v4M12 16h.01"/>',plug:'<path d="M12 22v-5M9 8V2M15 8V2M18 8v5a6 6 0 0 1-12 0V8Z"/>',
+ cloud:'<path d="M17.5 19a4.5 4.5 0 1 0-1.4-8.8A6 6 0 1 0 6 18.5"/><path d="M6 19h11.5"/>',
+ check:'<path d="M20 6 9 17l-5-5"/>',minus:'<path d="M6 12h12"/>',plus:'<path d="M12 5v14M5 12h14"/>',
+ key:'<circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 9.3-9.3M17 6l3 3"/>',
+ folder:'<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/>',
+ refresh:'<path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/>',
+ globe:'<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
+ user:'<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+ puzzle:'<path d="M14 4a2 2 0 1 0-4 0v2H6v4h2a2 2 0 1 1 0 4H6v4h4v-2a2 2 0 1 1 4 0v2h4v-4h-2a2 2 0 1 1 0-4h2V6h-4Z"/>'
+};
+const I=(n,s)=>`<svg class="i" viewBox="0 0 24 24"${s?` style="${s}"`:''}>${P[n]}</svg>`;
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+// ---- fake data
+const AWS=[
+ {n:'prod-readonly',u:'4821-0937-1150 · us-east-1',b:'PR'},
+ {n:'staging-admin',u:'4821-0937-2204 · us-west-2',b:'SA',sso:'out'},
+ {n:'sandbox',u:'7730-1182-6045 · eu-west-1',b:'SB'},
+ {n:'data-platform',u:'1904-5521-3370 · us-east-1',b:'DP',sso:'in'},
+ {n:'security-audit',u:'1904-5521-8812 · eu-central-1',b:'SE',sso:'unknown'},
+ {n:'legacy-2019',u:'3056-7741-0098 · us-east-1',b:'L9'}];
+const GCP=[
+ {n:'Checkout Prod',u:'checkout-prod-4471 · 6 zones last used',b:'CP'},
+ {n:'Checkout Staging',u:'checkout-stg-2290 · 2 zones last used',b:'CS'},
+ {n:'Data Lake',u:'data-lake-118 · never opened',b:'DL'},
+ {n:'Sandbox',u:'sbx-esteban-07 · never opened',b:'SB'}];
+const EXT=[
+ {n:'dev-tenant',u:'Fake Cloud · eu-1',b:'DT'},
+ {n:'prod-tenant',u:'Fake Cloud · us-1',b:'PT',sso:'out'}];
+const AWS_REGIONS=[['us-east-1',12,1],['us-east-2',0,0],['us-west-2',5,1],['eu-west-1',2,0],['eu-central-1',1,0],['ap-southeast-2',0,0]];
+const GCP_ZONES=[['us-central1',['us-central1-a','us-central1-b','us-central1-f']],['us-east1',['us-east1-b','us-east1-c']],['europe-west1',['europe-west1-b','europe-west1-d']]];
+
+// ---- provider definitions: name, tile, which views exist, rail subtitle per view
+const PROV={
+ aws:{name:'Amazon Web Services',short:'AWS',tile:'AW',views:['ready','detect','empty','signin','scope','error'],
+  sub:{ready:'<span class="dot ok"></span>6 profiles',detect:'<span class="spin" style="width:9px;height:9px"></span>Looking…',empty:'No profiles found',signin:'<span class="dot w"></span>Signing in…',scope:'<span class="dot ok"></span>6 profiles',error:'<span class="dot e"></span>Config error'}},
+ gcp:{name:'Google Cloud',short:'GCP',tile:'GC',views:['ready','detect','noadc','svcacct','scope'],
+  sub:{ready:'<span class="dot ok"></span>4 projects',detect:'<span class="spin" style="width:9px;height:9px"></span>Looking…',noadc:'<span class="dot w"></span>Needs credentials',svcacct:'<span class="dot w"></span>Unsupported credentials',scope:'<span class="dot ok"></span>4 projects'}},
+ ext:{name:'Fake Cloud',short:'Fake Cloud',tile:'FC',views:['ready','methods','prompt','browser'],
+  sub:{ready:'<span class="dot ok"></span>2 tenants · extension',methods:'Not connected · extension',prompt:'Signing in…',browser:'<span class="dot w"></span>Waiting for browser'}},
+ off:{name:'Toy provider',short:'Toy',tile:'TY',views:['ready'],sub:{ready:'Installed, not enabled'}},
+ demo:{name:'Demo fleet',short:'Demo',tile:'',views:['ready'],sub:{ready:'20 fake instances'}}
+};
+const ORDER=['aws','gcp','ext','off','demo'];
+const VIEWNAME={ready:'Ready',detect:'Detecting',empty:'Nothing found',signin:'SSO sign-in',scope:'Pick scope',error:'Config unreadable',noadc:'No ADC file',svcacct:'Service account ADC',methods:'Choose method',prompt:'Prompt fields',browser:'Waiting for browser'};
+
+const S={p:'aws',v:{aws:'ready',gcp:'ready',ext:'ready',off:'ready',demo:'ready'},sel:0,
+ regions:new Set(['us-east-1','us-west-2']),zones:new Set(['us-central1','us-central1-a','us-central1-b','us-central1-f','europe-west1-b'])};
+
+// ---- rail
+const tile=k=>k==='demo'?`<span class="tile demo">${I('server')}</span>`:`<span class="tile ${k}">${PROV[k].tile}</span>`;
+function rail(){
+ return `<div class="rail"><div class="brand"><span style="color:var(--accent)">${I('cloud','width:30px;height:30px;stroke-width:1.3')}</span><span><div class="n">CloudDeck</div><div class="v">Version 0.1.0</div></span></div>
+ <div class="rh">Providers</div>
+ ${ORDER.map(k=>`<button class="prov ${k===S.p?'on':''} ${k==='off'?'off':''}" data-p="${k}">${tile(k)}<span><div class="t">${PROV[k].name}</div><div class="u">${PROV[k].sub[S.v[k]]}</div></span></button>`).join('')}
+ <button class="prov add" data-add>${I('plus')}Add provider…</button>
+ <div class="sp"></div>
+ <button class="prov" style="color:var(--dim)" data-act="plugins">${I('puzzle')}Manage extensions…</button></div>`;
+}
+
+// ---- pane pieces
+const head=(title,right='')=>`<div class="ph"><span class="ttl">${title}</span><span class="sp"></span>${right}</div>`;
+const foot=(left,right)=>`<div class="foot"><span>${left}</span><span class="sp"></span>${right||''}</div>`;
+const srch=ph=>`<div class="search">${I('search')}<input placeholder="${ph}" aria-label="${ph}"></div>`;
+const cmd=c=>`<div class="cmd"><span>${esc(c)}</span><button class="cp" title="Copy" aria-label="Copy command">${I('copy','width:14px;height:14px')}</button></div>`;
+const authBadge=r=>r.sso==='out'?`<span class="dot w"></span>Signed out<span class="badge">SSO</span>`:r.sso==='in'?`Expires in 6 h<span class="badge">SSO</span>`:r.sso==='unknown'?`<span class="warnt">Couldn’t check sign-in</span><span class="badge">SSO</span>`:'';
+const rows=list=>`<div class="list" role="listbox">${list.map((r,i)=>`<div class="row ${i===S.sel?'cur':''}" role="option" tabindex="${i===S.sel?0:-1}" data-i="${i}"><span class="bdg">${r.b}</span><span><div class="t">${esc(r.n)}</div><div class="u">${esc(r.u)}</div></span><span class="r">${authBadge(r)}</span></div>`).join('')}</div>`;
+const skel=()=>`<div class="list">${[0,1,2,3,4].map(i=>`<div class="sk"><span class="c"></span><span class="l"><i style="width:${110+i%3*30}px"></i><i style="width:${160-i%2*30}px;height:8px"></i></span></div>`).join('')}</div>`;
+const openBtn=(label='Open')=>`<button class="pbtn" data-act="open">${label} <kbd>↵</kbd></button>`;
+const demoLink=`<button class="linkb" data-p="demo">Explore demo fleet</button>`;
+
+function paneAws(v){
+ const cur=AWS[S.sel]||AWS[0];
+ const ssoBtn=`<button class="sbtn" data-act="sso">${I('key')}Sign in with SSO…</button>`;
+ const awsFoot='Profiles are read from ~/.aws/config. Credentials stay with the AWS CLI.';
+ if(v==='ready')return head('Amazon Web Services',ssoBtn)+`<div class="sub">Choose a profile to open. CloudDeck only reads; it never changes your account.</div>`+srch('Search profiles…')+rows(AWS)+foot(awsFoot,openBtn());
+ if(v==='detect')return head('Amazon Web Services')+`<div class="sub"><span class="spin"></span> Looking for profiles in ~/.aws/config…</div>`+skel()+foot(awsFoot,`<button class="sbtn" data-v="empty">Cancel</button>`);
+ if(v==='empty')return head('Amazon Web Services')+`<div class="center">${I('folder','width:32px;height:32px;color:var(--faint)')}<h4>No AWS profiles in ~/.aws/config</h4><p>Make one with the AWS CLI, then check again. For IAM Identity Center (SSO), run:</p>${cmd('aws configure sso')}<div class="acts"><button class="pbtn" data-v="detect">${I('refresh')}Check again</button><button class="sbtn" data-act="folder">${I('folder')}Choose config folder…</button></div></div>`+foot(awsFoot,demoLink);
+ if(v==='signin')return head('Sign in to staging-admin',`<button class="sbtn" data-v="ready">Cancel</button>`)+`<div class="center"><p>Your browser opened the AWS sign-in page. Check that it shows this code, then approve.</p><div class="code">WDJB-MJHT</div><p style="font-size:11px">IAM Identity Center · https://my-sso.awsapps.com/start · code expires in 9:42</p><div class="acts"><button class="sbtn" data-act="browser">${I('ext')}Open browser again</button><button class="sbtn" data-act="copy">${I('copy')}Copy code</button></div><p style="margin-top:6px"><span class="spin"></span>&nbsp; Waiting for you to approve…</p></div>`+foot('Tokens go to the AWS SSO cache (~/.aws/sso/cache), the same one the AWS CLI uses.');
+ if(v==='scope'){const all=AWS_REGIONS.length,on=S.regions.size;
+  return head(`Choose regions for ${esc(cur.n)}`,`<button class="linkb" data-act="allreg">Select all</button>`)+`<div class="sub">Counts are from the last time you opened this profile. A region that fails will not hide the others.</div>`+
+  `<div class="scope">${AWS_REGIONS.map(([r,n])=>`<div class="sc" data-reg="${r}"><span class="chk ${S.regions.has(r)?'on':''}">${S.regions.has(r)?I('check'):''}</span><span class="mono" style="font-size:12px">${r}</span><span class="n">${n?n+' instances':'—'}</span></div>`).join('')}</div>`+
+  foot(`<button class="linkb" data-v="ready">← Back to profiles</button>`,`<span>${on} of ${all} selected</span><button class="pbtn" data-act="land" ${on?'':'disabled'}>Load ${on} region${on===1?'':'s'} <kbd>↵</kbd></button>`);}
+ if(v==='error')return head('Amazon Web Services')+`<div class="center">${I('alert','width:32px;height:32px;color:var(--err)')}<h4>CloudDeck couldn’t read ~/.aws/config</h4><div class="errbox">~/.aws/config, line 14:
+[profile data-platform
+expected ']' at end of section header</div><p>Fix the file, then check again. No other provider is affected.</p><div class="acts"><button class="pbtn" data-v="detect">${I('refresh')}Check again</button><button class="sbtn" data-act="openfile">${I('ext')}Open file</button><button class="sbtn" data-act="copy">${I('copy')}Copy error</button></div></div>`+foot(awsFoot,demoLink);
+}
+function paneGcp(v){
+ const gFoot='Credentials are read from gcloud’s Application Default Credentials. CloudDeck stores nothing.';
+ const who=`<div class="who">${I('user')}Signed in as <b>esteban@example.com</b><span style="flex:1"></span><span class="mono">~/.config/gcloud/application_default_credentials.json</span></div>`;
+ if(v==='ready')return head('Google Cloud')+`<div class="sub">Choose a project. Only ACTIVE projects your credentials can see are listed.</div>`+who+srch('Search projects…')+rows(GCP)+foot(gFoot,openBtn());
+ if(v==='detect')return head('Google Cloud')+`<div class="sub"><span class="spin"></span> Reading Application Default Credentials and listing projects…</div>`+skel()+foot(gFoot,`<button class="sbtn" data-v="noadc">Cancel</button>`);
+ if(v==='noadc')return head('Google Cloud')+`<div class="center">${I('key','width:32px;height:32px;color:var(--faint)')}<h4>Google Cloud needs Application Default Credentials</h4><p>Run this once in a terminal. It opens your browser to sign in and writes the file CloudDeck reads.</p>${cmd('gcloud auth application-default login')}<div class="acts"><button class="pbtn" data-v="detect">${I('refresh')}Check again</button><button class="sbtn" data-act="folder">${I('folder')}Choose config folder…</button></div><p style="font-size:11px">Looked in $GOOGLE_APPLICATION_CREDENTIALS and ~/.config/gcloud.</p></div>`+foot(gFoot,demoLink);
+ if(v==='svcacct')return head('Google Cloud')+`<div class="center">${I('warn','width:32px;height:32px;color:var(--warn)')}<h4>Service-account credentials aren’t supported yet</h4><p>Your ADC file is a <span class="mono">service_account</span> key. CloudDeck can use a user login for now.</p>${cmd('gcloud auth application-default login')}<div class="acts"><button class="pbtn" data-v="detect">${I('refresh')}Check again</button><button class="sbtn" data-act="folder">${I('folder')}Choose config folder…</button></div></div>`+foot(gFoot,demoLink);
+ if(v==='scope'){const cur=GCP[S.sel]||GCP[0];const zc=GCP_ZONES.flatMap(z=>z[1]).filter(z=>S.zones.has(z)).length;
+  return head(`Choose zones for ${esc(cur.n)}`,`<button class="linkb" data-act="allzones">Select all</button>`)+`<div class="sub">Selecting a region selects all of its zones.</div>`+
+  `<div class="scope">${GCP_ZONES.map(([r,zs])=>{const n=zs.filter(z=>S.zones.has(z)).length;const st=n===zs.length?'on':n?'mix':'';
+   return `<div class="sc" data-reg="${r}"><span class="chk ${st}">${st==='on'?I('check'):st==='mix'?I('minus'):''}</span>${I('chev','width:14px;height:14px;color:var(--faint)')}<span class="mono" style="font-size:12px">${r}</span><span class="n">${n} of ${zs.length} zones</span></div>`+
+   zs.map(z=>`<div class="sc z" data-zone="${z}" data-parent="${r}"><span class="chk ${S.zones.has(z)?'on':''}">${S.zones.has(z)?I('check'):''}</span><span class="mono" style="font-size:12px">${z}</span></div>`).join('');}).join('')}</div>`+
+  foot(`<button class="linkb" data-v="ready">← Back to projects</button>`,`<span>${zc} zones selected</span><button class="pbtn" data-act="land" ${zc?'':'disabled'}>Load ${zc} zone${zc===1?'':'s'} <kbd>↵</kbd></button>`);}
+}
+function paneExt(v){
+ const eFoot='Fake Cloud is an extension. Its tokens are kept in CloudDeck’s secret store for this extension only.';
+ const mBtn=`<button class="sbtn" data-v="methods">${I('plug')}Connect…</button>`;
+ if(v==='ready')return head('Fake Cloud',mBtn)+`<div class="sub">Connections come from the extension. Rows, sign-in and scope are all drawn from what it declares.</div>`+srch('Search tenants…')+rows(EXT)+foot(eFoot,openBtn());
+ if(v==='methods')return head('Connect to Fake Cloud',`<button class="sbtn" data-v="ready">Cancel</button>`)+`<div class="center"><p>Choose how to sign in. Each option is an <span class="mono">AuthMethod</span> the extension declares.</p><div class="methods">
+  <div class="meth" data-v="prompt">${I('key')}<span><div class="t">API token</div><div class="u">Paste a token from the Fake Cloud console.</div></span><span style="margin-left:auto">${I('chevr')}</span></div>
+  <div class="meth" data-v="browser">${I('globe')}<span><div class="t">Sign in with browser</div><div class="u">Opens Fake Cloud’s sign-in page.</div></span><span style="margin-left:auto">${I('chevr')}</span></div></div></div>`+foot(eFoot);
+ if(v==='prompt')return head('Connect to Fake Cloud · API token',`<button class="sbtn" data-v="methods">Back</button>`)+`<div class="center"><p>Fields come from the extension’s prompt step. Secret fields are masked.</p><div class="form">
+  <label for="f1">Tenant</label><input id="f1" value="prod-tenant">
+  <label for="f2">API token</label><input id="f2" type="password" value="xxxxxxxxxxxxxxxxxxxx">
+  <div class="hint">Only the extension sees this value.</div>
+  <label for="f3">Endpoint</label><input id="f3" value="https://api.fake.cloud">
+  </div><div class="acts" style="margin-top:10px"><button class="pbtn" data-v="ready">Connect</button></div></div>`+foot(eFoot);
+ if(v==='browser')return head('Connect to Fake Cloud',`<button class="sbtn" data-v="methods">Cancel</button>`)+`<div class="center">${I('globe','width:32px;height:32px;color:var(--accent)')}<h4>Continue in your browser</h4><p>Fake Cloud’s sign-in page opened. Come back here when it says you’re done.</p><p><span class="spin"></span>&nbsp; Waiting for the browser…</p><div class="acts"><button class="sbtn" data-act="browser">${I('ext')}Open again</button></div></div>`+foot(eFoot);
+}
+function paneOff(){
+ return head('Toy provider')+`<div class="center">${I('puzzle','width:32px;height:32px;color:var(--faint)')}<h4>Installed, not enabled</h4><p>Toy provider (toy 0.1.0) is installed but turned off. Enabling extensions from other authors is turned off in this build.</p><div class="acts"><button class="sbtn" data-act="plugins">${I('puzzle')}Manage extensions…</button></div></div>`+foot('Extensions run with your permissions. Install only from authors you trust.');
+}
+function paneDemo(){
+ return head('Demo fleet')+`<div class="center"><div class="demo-card"><span class="tile demo" style="width:56px;height:56px">${I('server','width:28px;height:28px')}</span><span><div style="font:600 14px var(--font);margin-bottom:4px">Explore a fake fleet</div><div style="color:var(--dim);line-height:1.45">20 instances in 4 regions with tags, failures and a throttled region. Nothing here is real, and no account is needed.</div></span></div><div class="acts"><button class="pbtn" data-act="land">Open demo fleet <kbd>↵</kbd></button></div><p style="font-size:11px">The <span class="chip">DEMO</span> tag stays in the status bar the whole time. Same as <span class="mono">clouddeck --demo</span>.</p></div>`+foot('Switch to a real provider any time from the profile picker (⌘P).');
+}
+function paneAdd(){
+ return head('Add a provider')+`<div class="center">${I('puzzle','width:32px;height:32px;color:var(--faint)')}<h4>More clouds come as extensions</h4><p>Install one from the signed extension index, then enable it in Manage extensions.</p>${cmd('clouddeck extension install <id>')}<div class="acts"><button class="sbtn" data-act="plugins">${I('puzzle')}Manage extensions…</button></div></div>`+foot('Bundled: Amazon Web Services. Extensions are not sandboxed.');
+}
+function pane(){
+ if(S.p==='add')return paneAdd();
+ const v=S.v[S.p];
+ return {aws:paneAws,gcp:paneGcp,ext:paneExt,off:paneOff,demo:paneDemo}[S.p](v);
+}
+function landing(){
+ const what=S.p==='demo'?'the demo fleet':S.p==='aws'?`${AWS[S.sel].n} · ${S.regions.size} regions`:S.p==='gcp'?`${GCP[S.sel].n}`:`${EXT[S.sel].n}`;
+ return `<div class="center">${I('check','width:32px;height:32px;color:var(--run)')}<h4>Opening ${esc(what)}</h4><p>The main window opens here and this window closes. It won’t show again once a connection has loaded.</p><div class="acts"><button class="sbtn" data-act="back">Back to onboarding</button></div></div>`;
+}
+
+// ---- render
+function controls(){
+ const views=S.p==='add'?[]:PROV[S.p].views;
+ const th=document.body.dataset.theme==='dark';
+ document.getElementById('ctrls').innerHTML=`<span class="lbl">Theme</span><button data-th="light" class="${th?'':'on'}">Light</button><button data-th="dark" class="${th?'on':''}">Dark</button>
+ <span class="lbl">Provider</span>${ORDER.map(k=>`<button data-p="${k}" class="${S.p===k?'on':''}">${PROV[k].short}</button>`).join('')}
+ ${views.length>1?`<span class="lbl">State</span>${views.map(v=>`<button data-v="${v}" class="${S.v[S.p]===v?'on':''}">${VIEWNAME[v]}</button>`).join('')}`:''}`;
+}
+function render(){
+ const W=document.getElementById('W');
+ W.innerHTML=rail()+`<div class="pane">${S.landed?landing():pane()}</div>`;
+ controls();
+}
+function setView(v){S.landed=false;S.v[S.p]=v;if(v==='signin')S.sel=1;render();}
+function setProv(p){S.landed=false;S.p=p;S.sel=p==='ext'&&S.v.ext==='ready'?0:S.sel;if(p!=='aws'&&p!=='gcp'&&p!=='ext')S.sel=0;S.sel=Math.min(S.sel,listFor().length-1<0?0:listFor().length-1);render();}
+function listFor(){return S.p==='aws'&&S.v.aws==='ready'?AWS:S.p==='gcp'&&S.v.gcp==='ready'?GCP:S.p==='ext'&&S.v.ext==='ready'?EXT:[];}
+function open(){
+ const r=listFor()[S.sel];if(!r)return;
+ if(S.p==='aws')return setView(r.sso==='out'?'signin':'scope');
+ if(S.p==='gcp')return setView('scope');
+ if(S.p==='ext')return r.sso==='out'?setView('methods'):(S.landed=true,render());
+}
+function act(a){
+ if(a==='open')return open();
+ if(a==='land'){S.landed=true;return render();}
+ if(a==='back'){S.landed=false;return render();}
+ if(a==='sso'){S.sel=1;return setView('signin');}
+ if(a==='allreg'){AWS_REGIONS.forEach(r=>S.regions.add(r[0]));return render();}
+ if(a==='allzones'){GCP_ZONES.forEach(([r,zs])=>{S.zones.add(r);zs.forEach(z=>S.zones.add(z))});return render();}
+ if(a==='plugins'||a==='folder'||a==='openfile'||a==='browser'||a==='copy'){toast({plugins:'Opens the Plugins window',folder:'Opens a folder chooser (the provider’s config_dir setting)',openfile:'Opens ~/.aws/config in the default editor',browser:'Opens the sign-in page again',copy:'Copied'}[a]);}
+}
+function toast(t){const d=document.createElement('div');d.textContent=t;d.style.cssText='position:absolute;left:50%;bottom:64px;transform:translateX(-50%);background:var(--popbg);box-shadow:0 0 0 .5px #0004,0 10px 30px #0003;padding:8px 12px;border-radius:8px;z-index:9';document.getElementById('W').appendChild(d);setTimeout(()=>d.remove(),1400);}
+
+document.addEventListener('click',e=>{
+ const t=e.target.closest('[data-th],[data-p],[data-v],[data-act],[data-add],.row,.sc,.cp');if(!t)return;
+ if(t.dataset.th){document.body.dataset.theme=t.dataset.th==='dark'?'dark':'';return render();}
+ if(t.hasAttribute('data-add')){S.landed=false;S.p='add';return render();}
+ if(t.dataset.p)return setProv(t.dataset.p);
+ if(t.dataset.v)return setView(t.dataset.v);
+ if(t.dataset.act)return act(t.dataset.act);
+ if(t.classList.contains('cp'))return toast('Copied');
+ if(t.classList.contains('row')){S.sel=+t.dataset.i;render();document.querySelector('.row.cur')?.focus();return;}
+ if(t.classList.contains('sc')){
+  if(S.p==='aws'){const r=t.dataset.reg;S.regions.has(r)?S.regions.delete(r):S.regions.add(r);return render();}
+  if(t.dataset.zone){const z=t.dataset.zone;S.zones.has(z)?S.zones.delete(z):S.zones.add(z);return render();}
+  const zs=GCP_ZONES.find(g=>g[0]===t.dataset.reg)[1];const all=zs.every(z=>S.zones.has(z));zs.forEach(z=>all?S.zones.delete(z):S.zones.add(z));return render();
+ }
+});
+document.addEventListener('dblclick',e=>{if(e.target.closest('.row'))open();});
+document.addEventListener('keydown',e=>{
+ if(e.target.matches('input')&&e.key!=='Enter'&&e.key!=='ArrowDown'&&e.key!=='ArrowUp')return;
+ const L=listFor();
+ if((e.key==='ArrowDown'||e.key==='j')&&L.length){S.sel=Math.min(L.length-1,S.sel+1);render();document.querySelector('.row.cur')?.focus();e.preventDefault();}
+ else if((e.key==='ArrowUp'||e.key==='k')&&L.length){S.sel=Math.max(0,S.sel-1);render();document.querySelector('.row.cur')?.focus();e.preventDefault();}
+ else if(e.key==='Enter'){if(L.length)open();else if(S.p==='demo'||S.v[S.p]==='scope')act('land');}
+});
+render();
+</script></body></html>

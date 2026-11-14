@@ -1,0 +1,159 @@
+{
+ "prelude": "\nconst go=(p,v,o={})=>{S.p=p;S.landed=false;if(v)S.v[p]=v;Object.assign(S,o);render()};\nconst dark=()=>{document.body.dataset.theme='dark';render()};\ndocument.documentElement.style.scrollBehavior='auto';\n",
+ "shots": [
+  {
+   "name": "61-onboarding-aws-ready",
+   "description": "Onboarding, AWS selected: provider rail with per-provider status lines, profile list (first row selected), SSO badges (signed out, expires in 6 h, couldn't check sign-in), Sign in with SSO button, footer with credentials note and Open button.",
+   "setup": "go('aws','ready')",
+   "clip": "#W",
+   "scale": 1.5
+  },
+  {
+   "name": "62-onboarding-aws-detecting",
+   "description": "AWS, looking for profiles: skeleton rows and a spinner line; rail says Looking…; Cancel in the footer.",
+   "setup": "go('aws','detect')",
+   "clip": "#W",
+   "scale": 1.5
+  },
+  {
+   "name": "63-onboarding-aws-nothing-found",
+   "description": "AWS, no profiles in ~/.aws/config: empty state with a copyable 'aws configure sso' command, Check again, Choose config folder…, and an Explore demo fleet link.",
+   "setup": "go('aws','empty')",
+   "clip": "#W",
+   "scale": 1.5
+  },
+  {
+   "name": "64-onboarding-aws-sso-sign-in",
+   "description": "AWS SSO sign-in inline in the pane (AuthStep::DeviceCode): device code, start URL and expiry, Open browser again, Copy code, waiting spinner; rail says Signing in….",
+   "setup": "go('aws','signin')",
+   "clip": "#W",
+   "scale": 1.5
+  },
+  {
+   "name": "65-onboarding-aws-region-picker",
+   "description": "AWS scope step after opening a profile: region checklist with last-known instance counts, Select all, Back to profiles, 'n of 6 selected' and Load n regions.",
+   "setup": "go('aws','scope')",
+   "clip": "#W",
+   "scale": 1.5
+  },
+  {
+   "name": "66-onboarding-aws-config-error",
+   "description": "AWS config file unreadable: parse error with file and line, Check again, Open file, Copy error; rail shows a red Config error dot.",
+   "setup": "go('aws','error')",
+   "clip": "#W",
+   "scale": 1.5
+  },
+  {
+   "name": "67-onboarding-gcp-ready",
+   "description": "Google Cloud selected: signed-in account and ADC file path above the list, project rows (name, project id, zones last used), Open.",
+   "setup": "go('gcp','ready')",
+   "clip": "#W",
+   "scale": 1.5
+  },
+  {
+   "name": "68-onboarding-gcp-no-adc",
+   "description": "Google Cloud with no Application Default Credentials: copyable 'gcloud auth application-default login', Check again, Choose config folder…, where CloudDeck looked.",
+   "setup": "go('gcp','noadc')",
+   "clip": "#W",
+   "scale": 1.5
+  },
+  {
+   "name": "69-onboarding-gcp-service-account",
+   "description": "Google Cloud ADC file is a service_account key: warning that it is not supported yet and the user-login command.",
+   "setup": "go('gcp','svcacct')",
+   "clip": "#W",
+   "scale": 1.5
+  },
+  {
+   "name": "6a-onboarding-gcp-zone-picker",
+   "description": "Google Cloud scope step: zone tree with regions as parents (checked, mixed, unchecked), zone children indented, 'n of m zones' per region, Load n zones.",
+   "setup": "go('gcp','scope')",
+   "clip": "#W",
+   "scale": 1.5
+  },
+  {
+   "name": "6b-onboarding-extension-ready",
+   "description": "Extension provider (Fake Cloud): connections from connections(), one signed out; Connect… button in the header.",
+   "setup": "go('ext','ready')",
+   "clip": "#W",
+   "scale": 1.5
+  },
+  {
+   "name": "6c-onboarding-extension-methods",
+   "description": "Extension sign-in, choose method: one card per AuthMethod (label, description).",
+   "setup": "go('ext','methods')",
+   "clip": "#W",
+   "scale": 1.5
+  },
+  {
+   "name": "6d-onboarding-extension-prompt",
+   "description": "Extension sign-in, AuthStep::Prompt: generated form, secret field masked, hint line, Connect.",
+   "setup": "go('ext','prompt')",
+   "clip": "#W",
+   "scale": 1.5
+  },
+  {
+   "name": "6e-onboarding-extension-browser",
+   "description": "Extension sign-in, AuthStep::OpenUrl: Continue in your browser, waiting spinner, Open again.",
+   "setup": "go('ext','browser')",
+   "clip": "#W",
+   "scale": 1.5
+  },
+  {
+   "name": "6f-onboarding-extension-disabled",
+   "description": "Installed but disabled extension: greyed rail item, pane explains it is not enabled, Manage extensions….",
+   "setup": "go('off','ready')",
+   "clip": "#W",
+   "scale": 1.5
+  },
+  {
+   "name": "6g-onboarding-demo",
+   "description": "Demo fleet selected: demo card, Open demo fleet, DEMO tag note.",
+   "setup": "go('demo','ready')",
+   "clip": "#W",
+   "scale": 1.5
+  },
+  {
+   "name": "6h-onboarding-add-provider",
+   "description": "Add provider…: extensions explanation, copyable install command, Manage extensions….",
+   "setup": "go('add')",
+   "clip": "#W",
+   "scale": 1.5
+  },
+  {
+   "name": "6i-onboarding-opening",
+   "description": "After Load/Open: confirmation that the main window opens and onboarding closes for good.",
+   "setup": "go('aws','scope');S.landed=true;render()",
+   "clip": "#W",
+   "scale": 1.5
+  },
+  {
+   "name": "6j-onboarding-aws-ready-dark",
+   "description": "Dark theme, same state as 61.",
+   "setup": "dark();go('aws','ready')",
+   "clip": "#W",
+   "scale": 1.5
+  },
+  {
+   "name": "6k-onboarding-gcp-zone-picker-dark",
+   "description": "Dark theme, same state as 6a.",
+   "setup": "dark();go('gcp','scope')",
+   "clip": "#W",
+   "scale": 1.5
+  },
+  {
+   "name": "6m-onboarding-detail-rail",
+   "description": "Detail, 2x: the provider rail. Brand block, PROVIDERS header, provider rows (30px tile, name 13/600, status line 11 with coloured dot), selected and disabled rows, dashed Add provider…, Manage extensions… at the bottom.",
+   "setup": "go('aws','ready')",
+   "clip": ".rail",
+   "scale": 2
+  },
+  {
+   "name": "6n-onboarding-detail-connection-rows",
+   "description": "Detail, 2x: connection rows. 34px initials badge (accent when selected), name 13/600, detail 11 dim, right-aligned auth status with dot and SSO pill.",
+   "setup": "go('aws','ready')",
+   "clip": ".list",
+   "scale": 2
+  }
+ ]
+}
