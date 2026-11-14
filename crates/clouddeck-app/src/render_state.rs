@@ -98,6 +98,20 @@ pub(crate) enum State {
     OnboardingError,
     /// Onboarding window after a connection was chosen to open.
     OnboardingOpening,
+    /// Onboarding window with an extension provider ready and its connect button in the header.
+    OnboardingExtensionReady,
+    /// Onboarding window showing one card per sign-in method.
+    OnboardingMethods,
+    /// Onboarding window asking for the sign-in fields of the chosen method.
+    OnboardingPrompt,
+    /// Onboarding window waiting for the sign-in to finish in the browser.
+    OnboardingBrowser,
+    /// Pane for an installed extension that is not enabled yet.
+    OnboardingDisabled,
+    /// Pane offering the demo fleet.
+    OnboardingDemo,
+    /// Pane explaining how to add a provider.
+    OnboardingAddProvider,
     /// About window in the light palette, with the demo plus two bundled or installed plugins.
     AboutLight,
     /// About window in the dark palette, with the same plugins as `AboutLight`.
@@ -151,7 +165,7 @@ pub(crate) enum State {
 }
 
 impl State {
-    pub(crate) const ALL: [State; 71] = [
+    pub(crate) const ALL: [State; 78] = [
         State::MainIdle,
         State::MainRowSelected,
         State::MainEmpty,
@@ -195,6 +209,13 @@ impl State {
         State::OnboardingEmpty,
         State::OnboardingError,
         State::OnboardingOpening,
+        State::OnboardingExtensionReady,
+        State::OnboardingMethods,
+        State::OnboardingPrompt,
+        State::OnboardingBrowser,
+        State::OnboardingDisabled,
+        State::OnboardingDemo,
+        State::OnboardingAddProvider,
         State::AboutLight,
         State::AboutDark,
         State::AboutRefusedPlugin,
@@ -271,6 +292,13 @@ impl State {
             State::OnboardingEmpty => "OnboardingEmpty",
             State::OnboardingError => "OnboardingError",
             State::OnboardingOpening => "OnboardingOpening",
+            State::OnboardingExtensionReady => "OnboardingExtensionReady",
+            State::OnboardingMethods => "OnboardingMethods",
+            State::OnboardingPrompt => "OnboardingPrompt",
+            State::OnboardingBrowser => "OnboardingBrowser",
+            State::OnboardingDisabled => "OnboardingDisabled",
+            State::OnboardingDemo => "OnboardingDemo",
+            State::OnboardingAddProvider => "OnboardingAddProvider",
             State::AboutLight => "AboutLight",
             State::AboutDark => "AboutDark",
             State::AboutRefusedPlugin => "AboutRefusedPlugin",
@@ -380,6 +408,13 @@ impl State {
                 | State::OnboardingEmpty
                 | State::OnboardingError
                 | State::OnboardingOpening
+                | State::OnboardingExtensionReady
+                | State::OnboardingMethods
+                | State::OnboardingPrompt
+                | State::OnboardingBrowser
+                | State::OnboardingDisabled
+                | State::OnboardingDemo
+                | State::OnboardingAddProvider
         )
     }
 
@@ -520,6 +555,13 @@ pub(crate) fn apply_render_state(
         | State::OnboardingEmpty
         | State::OnboardingError
         | State::OnboardingOpening
+        | State::OnboardingExtensionReady
+        | State::OnboardingMethods
+        | State::OnboardingPrompt
+        | State::OnboardingBrowser
+        | State::OnboardingDisabled
+        | State::OnboardingDemo
+        | State::OnboardingAddProvider
         | State::AboutLight
         | State::AboutDark
         | State::AboutRefusedPlugin

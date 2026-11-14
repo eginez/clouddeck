@@ -1,4 +1,6 @@
-use crate::{AuthInput, AuthMethod, AuthStep, Call, FlowId, NoAuth, Provider, ProviderError};
+use crate::{
+    AuthInput, AuthMethod, AuthStep, Call, FlowId, NoAuth, PromptField, Provider, ProviderError,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SignInAction {
@@ -11,6 +13,7 @@ pub enum SignInAction {
     },
     NeedsInput {
         flow: FlowId,
+        fields: Vec<PromptField>,
     },
 }
 
@@ -39,7 +42,7 @@ pub fn sign_in_action(step: AuthStep) -> SignInAction {
             code: None,
             poll: then_poll,
         },
-        AuthStep::Prompt { flow, .. } => SignInAction::NeedsInput { flow },
+        AuthStep::Prompt { flow, fields } => SignInAction::NeedsInput { flow, fields },
     }
 }
 
@@ -283,6 +286,7 @@ mod tests {
             sign_in_action(step),
             SignInAction::NeedsInput {
                 flow: FlowId::from("flow-3"),
+                fields: vec![],
             }
         );
     }
@@ -349,6 +353,7 @@ mod tests {
                 "Fake Cloud",
                 &SignInAction::NeedsInput {
                     flow: FlowId::from("flow-3"),
+                    fields: vec![],
                 }
             ),
             "Fake Cloud sign-in needs input CloudDeck cannot show yet"

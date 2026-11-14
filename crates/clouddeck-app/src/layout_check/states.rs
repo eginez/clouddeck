@@ -10,8 +10,9 @@ use clouddeck_core::about::{AboutInfo, PluginOrigin, PluginRow, PluginStatus};
 use clouddeck_core::{
     ALL_PROVIDERS, Auth, AuthAnswer, AuthInput, AuthMethod, AuthStep, Browse, Call, Connection,
     ConnectionId, ContextModel, Dimension, ErrorHint, ErrorKind, FieldDef, FlowId, Instance,
-    KindId, KindInfo, ListResult, ListView, Provider, ProviderEntry, ProviderError, ProviderInfo,
-    Selection, Settings, TestScenarioKind, WorkspaceContext, all_providers_view, fixture_fleet,
+    KindId, KindInfo, ListResult, ListView, PromptField, Provider, ProviderEntry, ProviderError,
+    ProviderInfo, Selection, Settings, TestScenarioKind, WorkspaceContext, all_providers_view,
+    fixture_fleet,
 };
 use gpui::{AppContext, Bounds, Entity, TestAppContext, VisualTestContext, point, px, size};
 
@@ -95,6 +96,13 @@ fn service_for(state: State) -> (Arc<dyn Provider>, Vec<String>) {
         | State::OnboardingEmpty
         | State::OnboardingError
         | State::OnboardingOpening
+        | State::OnboardingExtensionReady
+        | State::OnboardingMethods
+        | State::OnboardingPrompt
+        | State::OnboardingBrowser
+        | State::OnboardingDisabled
+        | State::OnboardingDemo
+        | State::OnboardingAddProvider
         | State::AboutLight
         | State::AboutDark
         | State::AboutRefusedPlugin
@@ -265,6 +273,42 @@ fn context_for(setup: &MultiSetup) -> ContextModel {
 /// A provider whose connections the onboarding states draw; it never signs in.
 struct OnboardingFixture {
     connections: Result<Vec<Connection>, ProviderError>,
+    methods: Vec<AuthMethod>,
+}
+
+fn sso_method() -> AuthMethod {
+    let mut method = AuthMethod::new("sso".to_string(), "AWS SSO".to_string());
+    method.header_button = Some("Sign in".to_string());
+    method
+}
+
+fn extension_methods() -> Vec<AuthMethod> {
+    let mut token = AuthMethod::new("api-token".to_string(), "API token".to_string());
+    token.header_button = Some("Connect…".to_string());
+    token.description = Some("Paste a token from the toy's dashboard.".to_string());
+    let mut browser = AuthMethod::new("browser".to_string(), "Sign in with browser".to_string());
+    browser.description = Some("Approve the sign-in in your browser.".to_string());
+    vec![token, browser]
+}
+
+fn prompt_fields() -> Vec<PromptField> {
+    vec![
+        PromptField {
+            id: "tenant".to_string(),
+            label: "Tenant".to_string(),
+            secret: false,
+        },
+        PromptField {
+            id: "api_token".to_string(),
+            label: "API token".to_string(),
+            secret: true,
+        },
+        PromptField {
+            id: "endpoint".to_string(),
+            label: "Endpoint".to_string(),
+            secret: false,
+        },
+    ]
 }
 
 fn fixture_connection(id: &str, name: &str, detail: &str, tags: &[&str]) -> Connection {
@@ -296,7 +340,20 @@ impl OnboardingFixture {
                 fixture_connection("staging", "staging", "eu-west-1 · 4 instances", &[]),
             ]),
         };
-        Self { connections }
+        let methods = match state {
+            State::OnboardingExtensionReady
+            | State::OnboardingMethods
+            | State::OnboardingPrompt
+            | State::OnboardingBrowser
+            | State::OnboardingDisabled
+            | State::OnboardingDemo
+            | State::OnboardingAddProvider => extension_methods(),
+            _ => vec![sso_method()],
+        };
+        Self {
+            connections,
+            methods,
+        }
     }
 }
 
@@ -359,9 +416,7 @@ impl Browse for OnboardingFixture {
 
 impl Auth for OnboardingFixture {
     fn auth_methods(&self) -> Vec<AuthMethod> {
-        let mut method = AuthMethod::new("sso".to_string(), "AWS SSO".to_string());
-        method.header_button = Some("Sign in".to_string());
-        vec![method]
+        self.methods.clone()
     }
 
     fn identity(
@@ -403,13 +458,23 @@ fn open_onboarding(
     let providers: Vec<Arc<dyn Provider>> = vec![Arc::new(OnboardingFixture::for_state(state))];
     let window = cx.update(|app| {
         gpui_component::init(app);
-        onboarding_window::open_window_for(app, providers, Some("aws"), window_size, move |view, _| {
-            match state {
+        onboarding_window::open_window_for(
+            app,
+            providers,
+            Some("aws"),
+            window_size,
+            move |view, _| match state {
                 State::OnboardingDetecting => view.show_detecting(),
                 State::OnboardingOpening => view.show_opening("default"),
+                State::OnboardingMethods => view.show_choosing(),
+                State::OnboardingPrompt => view.show_prompt(prompt_fields()),
+                State::OnboardingBrowser => view.show_browser(),
+                State::OnboardingDisabled => view.show_disabled("toy", "Toy"),
+                State::OnboardingDemo => view.show_demo(),
+                State::OnboardingAddProvider => view.show_add_provider(),
                 _ => {}
-            }
-        })
+            },
+        )
         .expect("onboarding window opens")
     });
     let cx = VisualTestContext::from_window(window.into(), cx).into_mut();
@@ -822,7 +887,7 @@ mod tests {
     /// One key element per state that `apply_render_state` must produce.
     #[gpui::test]
     fn every_state_shows_its_key_element(cx: &mut TestAppContext) {
-        let key_elements: [(State, &str); 71] = [
+        let key_elements: [(State, &str); 78] = [
             (State::MainIdle, "main.root"),
             (State::MainRowSelected, "main.inspector"),
             (State::MainEmpty, "main.center-state"),
@@ -866,6 +931,13 @@ mod tests {
             (State::OnboardingEmpty, "onboarding.empty"),
             (State::OnboardingError, "onboarding.failed"),
             (State::OnboardingOpening, "onboarding.opening"),
+            (State::OnboardingExtensionReady, "onboarding.pane"),
+            (State::OnboardingMethods, "onboarding.methods"),
+            (State::OnboardingPrompt, "onboarding.prompt"),
+            (State::OnboardingBrowser, "onboarding.browser-panel"),
+            (State::OnboardingDisabled, "onboarding.disabled"),
+            (State::OnboardingDemo, "onboarding.demo-card"),
+            (State::OnboardingAddProvider, "onboarding.add-command"),
             (State::AboutLight, "about.title"),
             (State::AboutDark, "about.title"),
             (State::AboutRefusedPlugin, "about.title"),

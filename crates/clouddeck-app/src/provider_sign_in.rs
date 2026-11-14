@@ -40,15 +40,8 @@ pub(crate) async fn drive(
                 report(Progress::Action(action), cx);
                 return true;
             }
-            SignInAction::NeedsInput { flow } => {
-                cancel_flow(provider.clone(), flow, cx).await;
-                report(
-                    Progress::Failed(ProviderError::new(
-                        ErrorKind::Unsupported,
-                        "the sign-in asks for input CloudDeck cannot show yet",
-                    )),
-                    cx,
-                );
+            SignInAction::NeedsInput { .. } => {
+                report(Progress::Action(action), cx);
                 return false;
             }
             SignInAction::OpenBrowser {
@@ -335,7 +328,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn prompt_flow_is_cancelled_and_reported(cx: &mut TestAppContext) {
+    fn prompt_flow_is_handed_to_the_window_and_not_cancelled(cx: &mut TestAppContext) {
         let provider = FakeSignIn::new(vec![]);
         let first = AuthStep::Prompt {
             flow: FlowId::from("flow-2"),
@@ -344,10 +337,13 @@ mod tests {
         let run = run(cx, &provider, first, true);
 
         assert_eq!(run.signed_in.get(), Some(false));
-        assert_eq!(provider.answers(), vec![AuthAnswer::Cancel]);
-        assert!(matches!(
-            run.reports.borrow().as_slice(),
-            [Progress::Failed(error)] if error.kind == ErrorKind::Unsupported
-        ));
+        assert!(provider.answers().is_empty());
+        assert_eq!(
+            *run.reports.borrow(),
+            vec![Progress::Action(SignInAction::NeedsInput {
+                flow: FlowId::from("flow-2"),
+                fields: vec![],
+            })]
+        );
     }
 }

@@ -1,12 +1,17 @@
 //! The onboarding window: the first-run screen for every provider. Connections, sign-in
 //! methods and onboarding text all come from the provider API; this module only draws them.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::SystemTime;
 
+use clouddeck_core::about::PluginOrigin;
+use clouddeck_core::extension_manager::install::{EXTERNAL_EXTENSIONS_ALLOWED, Manager};
+use clouddeck_core::extension_manager::plugins::load_entries;
 use clouddeck_core::{
-    AuthMethod, AuthStatus, Call, ConnectError, Connection, ConnectionId, Provider, ProviderError,
-    Selection, SignInAction, connect_methods, submit,
+    AuthAnswer, AuthMethod, AuthStatus, AuthStep, Call, ConnectError, Connection, ConnectionId,
+    FlowId, NoAuth, PromptField, Provider, ProviderError, Selection, SignInAction, connect_methods,
+    submit,
 };
 use gpui::{
     AnyElement, App, Bounds, ClickEvent, ClipboardItem, Context, Entity, EventEmitter, FontWeight,
@@ -17,9 +22,11 @@ use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::{Root, Sizable};
 
 use crate::app_providers;
+use crate::icons::AppIcon;
+use crate::plugins_window;
 use crate::provider_call::{off_thread, with_call};
-use crate::provider_sign_in::{Progress, drive};
-use crate::setting_rows::link;
+use crate::provider_sign_in::{Progress, cancel_flow, drive};
+use crate::setting_rows::{link, text_state};
 use crate::tokens::{Palette, palette};
 
 pub(crate) const WINDOW_SIZE: (f32, f32) = (1000.0, 600.0);
@@ -54,11 +61,36 @@ struct Row {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Disabled {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Pane {
+    Providers,
+    Disabled(usize),
+    Demo,
+    AddProvider,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum Phase {
     Idle,
+    Choosing,
     Signing,
-    Waiting { code: String, url: String },
-    Opening { name: String },
+    Prompt {
+        flow: FlowId,
+        fields: Vec<PromptField>,
+    },
+    Waiting {
+        flow: FlowId,
+        code: Option<String>,
+        url: String,
+    },
+    Opening {
+        name: String,
+    },
 }
 
 pub struct OnboardingWindow {
@@ -66,10 +98,13 @@ pub struct OnboardingWindow {
     chosen: usize,
     listings: Vec<Listing>,
     generations: Vec<u64>,
+    disabled: Vec<Disabled>,
+    pane: Pane,
     selected: Option<ConnectionId>,
     search: Entity<InputState>,
     query: String,
     phase: Phase,
+    prompt_inputs: Vec<(String, Entity<InputState>)>,
     error: Option<ConnectError>,
     attempt: u64,
     subscriptions: Vec<Subscription>,
@@ -118,7 +153,11 @@ impl OnboardingWindow {
         cx: &mut Context<Self>,
     ) -> Self {
         let chosen = provider_id
-            .and_then(|id| providers.iter().position(|provider| provider.info().id == id))
+            .and_then(|id| {
+                providers
+                    .iter()
+                    .position(|provider| provider.info().id == id)
+            })
             .unwrap_or(0);
         let count = providers.len();
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search"));
@@ -127,10 +166,13 @@ impl OnboardingWindow {
             chosen,
             listings: vec![Listing::Detecting; count],
             generations: vec![0; count],
+            disabled: Vec::new(),
+            pane: Pane::Providers,
             selected: connection,
             search: search.clone(),
             query: String::new(),
             phase: Phase::Idle,
+            prompt_inputs: Vec::new(),
             error: None,
             attempt: 0,
             subscriptions: Vec::new(),
@@ -159,8 +201,8 @@ impl OnboardingWindow {
         self.listings[index] = Listing::Detecting;
         let provider = self.providers[index].clone();
         cx.spawn(async move |this, cx| {
-            let listing = off_thread(cx, move || with_call(|call| list(provider.as_ref(), call)))
-                .await;
+            let listing =
+                off_thread(cx, move || with_call(|call| list(provider.as_ref(), call))).await;
             let _ = this.update(cx, |this, cx| {
                 if this.generations[index] == generation {
                     this.listings[index] = listing;
@@ -173,15 +215,24 @@ impl OnboardingWindow {
     }
 
     fn choose(&mut self, index: usize, cx: &mut Context<Self>) {
-        if index != self.chosen && index < self.providers.len() {
-            if self.phase == Phase::Signing || matches!(self.phase, Phase::Waiting { .. }) {
-                self.cancel_sign_in(cx);
-            }
-            self.chosen = index;
-            self.selected = None;
-            self.error = None;
-            cx.notify();
+        if index >= self.providers.len() || (index == self.chosen && self.pane == Pane::Providers) {
+            return;
         }
+        self.cancel_sign_in(cx);
+        self.chosen = index;
+        self.set_pane(Pane::Providers, cx);
+    }
+
+    fn show(&mut self, pane: Pane, cx: &mut Context<Self>) {
+        self.cancel_sign_in(cx);
+        self.set_pane(pane, cx);
+    }
+
+    fn set_pane(&mut self, pane: Pane, cx: &mut Context<Self>) {
+        self.pane = pane;
+        self.selected = None;
+        self.error = None;
+        cx.notify();
     }
 
     fn rows(&self) -> &[Row] {
@@ -222,19 +273,25 @@ impl OnboardingWindow {
         cx.notify();
     }
 
-    fn sign_in(&mut self, cx: &mut Context<Self>) {
+    fn connect(&mut self, cx: &mut Context<Self>) {
         if self.phase != Phase::Idle {
             return;
         }
-        let provider = self.providers[self.chosen].clone();
-        let Some(method) = connect_methods(provider.as_ref())
-            .into_iter()
-            .find(|method| method.header_button.is_some())
-        else {
-            return;
-        };
-        let connection = self.selected_row().map(|row| row.connection.id.clone());
+        if connect_methods(self.providers[self.chosen].as_ref()).len() > 1 {
+            self.phase = Phase::Choosing;
+            self.error = None;
+            cx.notify();
+        } else if let Some(method) = self.header_method() {
+            self.start(method, cx);
+        }
+    }
 
+    fn start(&mut self, method: AuthMethod, cx: &mut Context<Self>) {
+        if !matches!(self.phase, Phase::Idle | Phase::Choosing) {
+            return;
+        }
+        let provider = self.providers[self.chosen].clone();
+        let connection = self.selected_row().map(|row| row.connection.id.clone());
         self.attempt += 1;
         let attempt = self.attempt;
         self.phase = Phase::Signing;
@@ -242,29 +299,65 @@ impl OnboardingWindow {
         cx.notify();
 
         cx.spawn(async move |this, cx| {
-            let first = off_thread(cx, {
-                let provider = provider.clone();
-                move || {
-                    with_call(|call| {
-                        submit(
-                            provider.as_ref(),
-                            call,
-                            &method,
-                            connection,
-                            Vec::new(),
-                            |_, _| Ok(()),
-                        )
-                    })
-                }
+            let first = off_thread(cx, move || {
+                with_call(|call| {
+                    submit(
+                        provider.as_ref(),
+                        call,
+                        &method,
+                        connection,
+                        Vec::new(),
+                        |_, _| Ok(()),
+                    )
+                })
             })
             .await;
-            let step = match first {
-                Ok(step) => step,
-                Err(error) => {
-                    let _ = this.update(cx, |this, cx| this.fail(attempt, error, cx));
-                    return;
-                }
-            };
+            let _ = this.update(cx, |this, cx| match first {
+                Ok(step) => this.follow(attempt, step, cx),
+                Err(error) => this.fail(attempt, error, cx),
+            });
+        })
+        .detach();
+    }
+
+    fn submit_prompt(&mut self, cx: &mut Context<Self>) {
+        let Phase::Prompt { flow, .. } = self.phase.clone() else {
+            return;
+        };
+        let values: BTreeMap<String, String> = self
+            .prompt_inputs
+            .iter()
+            .map(|(id, input)| (id.clone(), input.read(cx).value().to_string()))
+            .collect();
+        self.prompt_inputs.clear();
+        let provider = self.providers[self.chosen].clone();
+        let attempt = self.attempt;
+        self.phase = Phase::Signing;
+        self.error = None;
+        cx.notify();
+
+        cx.spawn(async move |this, cx| {
+            let next = off_thread(cx, move || {
+                with_call(|call| {
+                    provider.auth().unwrap_or(&NoAuth).continue_auth(
+                        call,
+                        &flow,
+                        AuthAnswer::Values(values),
+                    )
+                })
+            })
+            .await;
+            let _ = this.update(cx, |this, cx| match next {
+                Ok(step) => this.follow(attempt, step, cx),
+                Err(error) => this.fail(attempt, error.into(), cx),
+            });
+        })
+        .detach();
+    }
+
+    fn follow(&mut self, attempt: u64, step: AuthStep, cx: &mut Context<Self>) {
+        let provider = self.providers[self.chosen].clone();
+        cx.spawn(async move |this, cx| {
             drive(
                 provider,
                 step,
@@ -283,19 +376,21 @@ impl OnboardingWindow {
         if attempt != self.attempt {
             return false;
         }
+        self.prompt_inputs.clear();
         match progress {
             Progress::Action(SignInAction::Finish) => {
                 self.phase = Phase::Idle;
                 let provider = self.providers[self.chosen].info().id;
                 cx.emit(OnboardingEvent::SignedIn { provider });
             }
-            Progress::Action(SignInAction::OpenBrowser { code, url, .. }) => {
-                self.phase = Phase::Waiting {
-                    code: code.unwrap_or_default(),
-                    url,
-                };
+            Progress::Action(SignInAction::OpenBrowser {
+                flow, code, url, ..
+            }) => {
+                self.phase = Phase::Waiting { flow, code, url };
             }
-            Progress::Action(SignInAction::NeedsInput { .. }) => self.phase = Phase::Idle,
+            Progress::Action(SignInAction::NeedsInput { flow, fields }) => {
+                self.phase = Phase::Prompt { flow, fields };
+            }
             Progress::Failed(error) => {
                 self.phase = Phase::Idle;
                 self.error = Some(error.into());
@@ -314,9 +409,35 @@ impl OnboardingWindow {
     }
 
     fn cancel_sign_in(&mut self, cx: &mut Context<Self>) {
+        let flow = match &self.phase {
+            Phase::Prompt { flow, .. } | Phase::Waiting { flow, .. } => Some(flow.clone()),
+            _ => None,
+        };
         self.attempt += 1;
         self.phase = Phase::Idle;
+        self.prompt_inputs.clear();
+        if let Some(flow) = flow {
+            let provider = self.providers[self.chosen].clone();
+            cx.spawn(async move |_, cx| cancel_flow(provider, flow, cx).await)
+                .detach();
+        }
         cx.notify();
+    }
+
+    fn enable(&mut self, id: &str, cx: &mut Context<Self>) {
+        match Manager::github().enable(id) {
+            Ok(()) => {
+                self.disabled.retain(|entry| entry.id != id);
+                self.set_pane(Pane::Providers, cx);
+            }
+            Err(message) => {
+                self.error = Some(ConnectError {
+                    message,
+                    advice: None,
+                });
+                cx.notify();
+            }
+        }
     }
 
     fn header_method(&self) -> Option<AuthMethod> {
@@ -326,15 +447,94 @@ impl OnboardingWindow {
     }
 
     fn noun(&self) -> String {
-        self.providers[self.chosen].info().connection_label.to_lowercase()
+        self.providers[self.chosen]
+            .info()
+            .connection_label
+            .to_lowercase()
     }
 
     fn rail(&self, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
-        let rows = self
+        let mut providers: Vec<AnyElement> = self
             .providers
             .iter()
             .enumerate()
-            .map(|(index, provider)| self.provider_row(index, provider, palette, cx));
+            .map(|(index, provider)| self.provider_row(index, provider, palette, cx))
+            .collect();
+        providers.push(rail_row(
+            RailRow {
+                id: "onboarding-demo-row".to_string(),
+                selector: "onboarding.demo-row".to_string(),
+                selected: self.pane == Pane::Demo,
+                name: "Demo fleet".to_string(),
+                dot: None,
+                status: "Sample instances".to_string(),
+            },
+            palette,
+            cx,
+            |this, cx| this.show(Pane::Demo, cx),
+        ));
+        let disabled: Vec<AnyElement> = self
+            .disabled
+            .iter()
+            .enumerate()
+            .map(|(index, entry)| {
+                rail_row(
+                    RailRow {
+                        id: format!("onboarding-disabled-{}", entry.id),
+                        selector: format!("onboarding.disabled.{}", entry.id),
+                        selected: self.pane == Pane::Disabled(index),
+                        name: entry.name.clone(),
+                        dot: Some(palette.faint),
+                        status: "Installed, not enabled".to_string(),
+                    },
+                    palette,
+                    cx,
+                    move |this, cx| this.show(Pane::Disabled(index), cx),
+                )
+            })
+            .collect();
+        let mut list = div()
+            .flex()
+            .flex_col()
+            .gap(px(14.))
+            .child(
+                div()
+                    .px(px(8.))
+                    .child(
+                        div()
+                            .text_size(px(20.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(palette.text)
+                            .child("CloudDeck"),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(11.))
+                            .text_color(palette.dim)
+                            .child(format!("Version {}", env!("CARGO_PKG_VERSION"))),
+                    ),
+            )
+            .child(
+                div()
+                    .px(px(8.))
+                    .text_size(px(10.))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(palette.faint)
+                    .child("PROVIDERS"),
+            )
+            .child(div().flex().flex_col().gap(px(2.)).children(providers));
+        if !disabled.is_empty() {
+            list = list
+                .child(
+                    div()
+                        .px(px(8.))
+                        .text_size(px(10.))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(palette.faint)
+                        .child("DISABLED"),
+                )
+                .child(div().flex().flex_col().gap(px(2.)).children(disabled));
+        }
         div()
             .debug_selector(|| "onboarding.rail".to_string())
             .w(px(RAIL_WIDTH))
@@ -349,38 +549,7 @@ impl OnboardingWindow {
             .pt(px(18.))
             .px(px(12.))
             .pb(px(14.))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(14.))
-                    .child(
-                        div()
-                            .px(px(8.))
-                            .child(
-                                div()
-                                    .text_size(px(20.))
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(palette.text)
-                                    .child("CloudDeck"),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(11.))
-                                    .text_color(palette.dim)
-                                    .child(format!("Version {}", env!("CARGO_PKG_VERSION"))),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .px(px(8.))
-                            .text_size(px(10.))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(palette.faint)
-                            .child("PROVIDERS"),
-                    )
-                    .child(div().flex().flex_col().gap(px(2.)).children(rows)),
-            )
+            .child(list)
             .child(
                 div()
                     .flex()
@@ -388,6 +557,8 @@ impl OnboardingWindow {
                     .gap(px(10.))
                     .child(
                         div()
+                            .id("onboarding-add-provider")
+                            .debug_selector(|| "onboarding.add-provider".to_string())
                             .h(px(54.))
                             .flex()
                             .items_center()
@@ -397,6 +568,10 @@ impl OnboardingWindow {
                             .border_color(palette.line)
                             .text_size(px(13.))
                             .text_color(palette.dim)
+                            .cursor_pointer()
+                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                this.show(Pane::AddProvider, cx)
+                            }))
                             .child("+ Add provider…"),
                     )
                     .child(
@@ -408,7 +583,7 @@ impl OnboardingWindow {
                             .text_size(px(12.))
                             .text_color(palette.dim)
                             .on_click(|_: &ClickEvent, _, cx| {
-                                let _ = crate::plugins_window::open(cx);
+                                let _ = plugins_window::open(cx);
                             })
                             .child("Manage extensions…"),
                     ),
@@ -424,62 +599,20 @@ impl OnboardingWindow {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let info = provider.info();
-        let id = info.id.clone();
-        let selected = index == self.chosen;
         let (dot, status) = self.rail_status(index, &info.connection_label, palette);
-        div()
-            .id(SharedString::from(format!("onboarding-provider-{id}")))
-            .debug_selector(move || format!("onboarding.provider.{id}"))
-            .flex()
-            .items_center()
-            .gap(px(10.))
-            .px(px(8.))
-            .py(px(7.))
-            .rounded(px(7.))
-            .cursor_pointer()
-            .when(selected, |row| row.bg(palette.sel))
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.choose(index, cx)))
-            .child(
-                div()
-                    .size(px(30.))
-                    .flex_none()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(px(7.))
-                    .bg(palette.badge)
-                    .text_size(px(11.))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(palette.win)
-                    .child(initials(&info.name)),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .min_w(px(0.))
-                    .child(
-                        div()
-                            .text_size(px(13.))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(palette.text)
-                            .text_ellipsis()
-                            .child(info.name.clone()),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(5.))
-                            .text_size(px(11.))
-                            .text_color(palette.dim)
-                            .children(dot.map(|color| {
-                                div().size(px(7.)).rounded_full().bg(color).into_any_element()
-                            }))
-                            .child(status),
-                    ),
-            )
-            .into_any_element()
+        rail_row(
+            RailRow {
+                id: format!("onboarding-provider-{}", info.id),
+                selector: format!("onboarding.provider.{}", info.id),
+                selected: self.pane == Pane::Providers && index == self.chosen,
+                name: info.name.clone(),
+                dot,
+                status,
+            },
+            palette,
+            cx,
+            move |this, cx| this.choose(index, cx),
+        )
     }
 
     fn rail_status(
@@ -504,8 +637,19 @@ impl OnboardingWindow {
     }
 
     fn pane(&self, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
+        match self.pane {
+            Pane::Providers => self.provider_pane(palette, cx),
+            Pane::Disabled(index) => match self.disabled.get(index) {
+                Some(entry) => self.disabled_pane(entry, palette, cx),
+                None => self.provider_pane(palette, cx),
+            },
+            Pane::Demo => self.demo_pane(palette, cx),
+            Pane::AddProvider => self.add_pane(palette, cx),
+        }
+    }
+
+    fn provider_pane(&self, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
         let info = self.providers[self.chosen].info();
-        let noun = self.noun();
         let title = info
             .onboarding
             .title
@@ -513,86 +657,70 @@ impl OnboardingWindow {
             .unwrap_or_else(|| info.name.clone());
         let subtitle = info.onboarding.subtitle.clone().unwrap_or_else(|| {
             format!(
-                "Choose a {noun} to open. CloudDeck only reads; it never changes your account."
+                "Choose a {} to open. CloudDeck only reads; it never changes your account.",
+                self.noun()
             )
         });
-        let footer_note = info.onboarding.footer.clone().unwrap_or_default();
+        let note = info.onboarding.footer.clone().unwrap_or_default();
 
-        let mut header = div()
-            .flex()
-            .items_start()
-            .justify_between()
-            .gap(px(12.))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(4.))
-                    .min_w(px(0.))
-                    .child(
-                        div()
-                            .text_size(px(17.))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(palette.text)
-                            .child(title),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(12.))
-                            .text_color(palette.dim)
-                            .child(subtitle),
-                    ),
-            );
-        if let Some(method) = self.header_method() {
+        let header_action = self.header_method().map(|method| {
             let label = method.header_button.clone().unwrap_or_default();
             let busy = self.phase != Phase::Idle;
-            header = header.child(
-                pill_button("onboarding-header", "onboarding.header", label, palette)
-                    .when(!busy, |button| {
-                        button.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                            this.sign_in(cx)
-                        }))
-                    }),
-            );
-        }
+            pill_button("onboarding-header", "onboarding.header", label, palette)
+                .when(!busy, |button| {
+                    button.on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.connect(cx)))
+                })
+                .into_any_element()
+        });
 
-        let body = match &self.phase {
-            Phase::Opening { name } => self.opening(name, palette, cx),
-            _ => self.listing(palette, cx),
-        };
-
-        let mut top = div()
-            .flex_1()
-            .min_h(px(0.))
-            .flex()
-            .flex_col()
-            .gap(px(12.))
-            .px(px(22.))
-            .pt(px(18.))
-            .pb(px(12.))
-            .child(header);
+        let mut top = Vec::new();
         if let Some(identity) = self.rows().iter().find_map(|row| row.identity.as_deref()) {
-            top = top.child(identity_banner(identity, palette));
+            top.push(identity_banner(identity, palette));
         }
         if let Some(error) = self.error_panel(palette) {
-            top = top.child(error);
+            top.push(error);
         }
-        if let Phase::Waiting { code, url } = &self.phase {
-            top = top.child(self.device_panel(code, url, palette, cx));
+        match &self.phase {
+            Phase::Waiting {
+                code: Some(code),
+                url,
+                ..
+            } => top.push(self.device_panel(code, url, palette, cx)),
+            Phase::Waiting {
+                code: None, url, ..
+            } => top.push(self.browser_panel(url, palette, cx)),
+            _ => {}
         }
-        top = top.child(body);
 
-        div()
-            .debug_selector(|| "onboarding.pane".to_string())
-            .flex_1()
-            .min_w(px(0.))
-            .h_full()
-            .flex()
-            .flex_col()
-            .bg(palette.win)
-            .child(top)
-            .child(self.footer(footer_note, palette, cx))
-            .into_any_element()
+        let (body, footer_action) = match &self.phase {
+            Phase::Opening { name } => (self.opening(name, palette, cx), div().into_any_element()),
+            Phase::Choosing => (
+                self.chooser(palette, cx),
+                pill_button(
+                    "onboarding-choose-back",
+                    "onboarding.choose-back",
+                    "Back",
+                    palette,
+                )
+                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.cancel_sign_in(cx)))
+                .into_any_element(),
+            ),
+            Phase::Prompt { fields, .. } => (
+                self.prompt_form(fields, palette),
+                self.prompt_actions(palette, cx),
+            ),
+            Phase::Idle | Phase::Signing | Phase::Waiting { .. } => {
+                (self.listing(palette, cx), self.listing_action(palette, cx))
+            }
+        };
+
+        frame(
+            palette,
+            header(palette, title, subtitle, header_action),
+            top,
+            body,
+            footer(palette, note, footer_action),
+        )
     }
 
     fn listing(&self, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
@@ -630,9 +758,14 @@ impl OnboardingWindow {
 
     fn check_again(&self, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
         let chosen = self.chosen;
-        pill_button("onboarding-check", "onboarding.check-again", "Check again", palette)
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.detect(chosen, cx)))
-            .into_any_element()
+        pill_button(
+            "onboarding-check",
+            "onboarding.check-again",
+            "Check again",
+            palette,
+        )
+        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.detect(chosen, cx)))
+        .into_any_element()
     }
 
     fn detecting(&self, palette: &Palette) -> AnyElement {
@@ -660,8 +793,20 @@ impl OnboardingWindow {
                             .flex()
                             .flex_col()
                             .gap(px(6.))
-                            .child(div().w(px(160.)).h(px(10.)).rounded(px(3.)).bg(palette.line2))
-                            .child(div().w(px(220.)).h(px(8.)).rounded(px(3.)).bg(palette.line2)),
+                            .child(
+                                div()
+                                    .w(px(160.))
+                                    .h(px(10.))
+                                    .rounded(px(3.))
+                                    .bg(palette.line2),
+                            )
+                            .child(
+                                div()
+                                    .w(px(220.))
+                                    .h(px(8.))
+                                    .rounded(px(3.))
+                                    .bg(palette.line2),
+                            ),
                     )
                     .into_any_element()
             }))
@@ -760,7 +905,10 @@ impl OnboardingWindow {
                 .into_any_element()
         }));
         div()
-            .id(SharedString::from(format!("onboarding-row-{}", connection.id.as_str())))
+            .id(SharedString::from(format!(
+                "onboarding-row-{}",
+                connection.id.as_str()
+            )))
             .debug_selector(move || selector)
             .flex()
             .items_center()
@@ -782,7 +930,11 @@ impl OnboardingWindow {
                     .items_center()
                     .justify_center()
                     .rounded_full()
-                    .bg(if selected { palette.accent } else { palette.badge })
+                    .bg(if selected {
+                        palette.accent
+                    } else {
+                        palette.badge
+                    })
                     .text_size(px(11.))
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(palette.win)
@@ -814,9 +966,308 @@ impl OnboardingWindow {
             .into_any_element()
     }
 
+    fn chooser(&self, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
+        let methods = connect_methods(self.providers[self.chosen].as_ref());
+        div()
+            .debug_selector(|| "onboarding.methods".to_string())
+            .flex()
+            .flex_col()
+            .gap(px(8.))
+            .children(methods.into_iter().map(|method| {
+                let selector = format!("onboarding.method.{}", method.id);
+                let id = format!("onboarding-method-{}", method.id);
+                let start = method.clone();
+                div()
+                    .id(SharedString::from(id))
+                    .debug_selector(move || selector)
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.))
+                    .px(px(12.))
+                    .py(px(10.))
+                    .rounded(px(7.))
+                    .border_1()
+                    .border_color(palette.line)
+                    .bg(palette.surf)
+                    .cursor_pointer()
+                    .on_click(
+                        cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            this.start(start.clone(), cx)
+                        }),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(13.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(palette.text)
+                            .child(method.label.clone()),
+                    )
+                    .children(method.description.clone().map(|description| {
+                        div()
+                            .text_size(px(11.))
+                            .text_color(palette.dim)
+                            .child(description)
+                    }))
+                    .into_any_element()
+            }))
+            .into_any_element()
+    }
+
+    fn prompt_form(&self, fields: &[PromptField], palette: &Palette) -> AnyElement {
+        div()
+            .debug_selector(|| "onboarding.prompt".to_string())
+            .flex()
+            .flex_col()
+            .gap(px(12.))
+            .children(
+                fields
+                    .iter()
+                    .zip(self.prompt_inputs.iter())
+                    .map(|(field, (_, input))| {
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(4.))
+                            .child(
+                                div()
+                                    .text_size(px(11.))
+                                    .text_color(palette.dim)
+                                    .child(field.label.clone()),
+                            )
+                            .child(div().h(px(30.)).w_full().child(Input::new(input).small()))
+                            .into_any_element()
+                    }),
+            )
+            .into_any_element()
+    }
+
+    fn prompt_actions(&self, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
+        div()
+            .flex()
+            .items_center()
+            .gap(px(10.))
+            .child(
+                pill_button(
+                    "onboarding-prompt-back",
+                    "onboarding.prompt-back",
+                    "Back",
+                    palette,
+                )
+                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.cancel_sign_in(cx))),
+            )
+            .child(
+                accent_button(
+                    "onboarding-connect",
+                    "onboarding.connect",
+                    "Connect",
+                    palette,
+                )
+                .cursor_pointer()
+                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.submit_prompt(cx))),
+            )
+            .into_any_element()
+    }
+
+    fn listing_action(&self, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
+        match &self.listings[self.chosen] {
+            Listing::Detecting => {
+                pill_button("onboarding-cancel", "onboarding.cancel", "Cancel", palette)
+                    .on_click(cx.listener(|_, _: &ClickEvent, window, _| window.remove_window()))
+                    .into_any_element()
+            }
+            Listing::Found(_) => {
+                let enabled = self.selected_row().is_some() && self.phase == Phase::Idle;
+                accent_button("onboarding-open", "onboarding.open", "Open ↵", palette)
+                    .when(!enabled, |button| button.opacity(0.45))
+                    .when(enabled, |button| {
+                        button.cursor_pointer().on_click(
+                            cx.listener(|this, _: &ClickEvent, _, cx| this.open_selected(cx)),
+                        )
+                    })
+                    .into_any_element()
+            }
+            Listing::Empty | Listing::Failed(_) => link(
+                "onboarding-demo".to_string(),
+                "onboarding.demo".to_string(),
+                "Explore demo fleet",
+                palette,
+                cx.listener(|_, _: &ClickEvent, _, cx| cx.emit(OnboardingEvent::ExploreDemo)),
+            ),
+        }
+    }
+
+    fn disabled_pane(
+        &self,
+        entry: &Disabled,
+        palette: &Palette,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let id = entry.id.clone();
+        let mut actions = div().flex().items_center().gap(px(10.));
+        let hint = if EXTERNAL_EXTENSIONS_ALLOWED {
+            actions = actions.child(
+                accent_button("onboarding-enable", "onboarding.enable", "Enable", palette)
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.enable(&id, cx))),
+            );
+            "Enable it to use its connections in CloudDeck."
+        } else {
+            "Extensions from outside this build are turned off in this build, so this one stays disabled."
+        };
+        actions = actions.child(manage_button(palette, cx));
+        let body = centred(
+            "onboarding.disabled",
+            "Installed, not enabled".to_string(),
+            hint.to_string(),
+            None,
+            palette,
+            actions.into_any_element(),
+        );
+        frame(
+            palette,
+            header(
+                palette,
+                entry.name.clone(),
+                "An installed extension that CloudDeck is not using.".to_string(),
+                None,
+            ),
+            Vec::new(),
+            body,
+            footer(palette, String::new(), div().into_any_element()),
+        )
+    }
+
+    fn demo_pane(&self, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
+        let card = div()
+            .debug_selector(|| "onboarding.demo-card".to_string())
+            .flex()
+            .flex_col()
+            .gap(px(8.))
+            .p(px(14.))
+            .rounded(px(8.))
+            .border_1()
+            .border_color(palette.line)
+            .bg(palette.surf)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(
+                        div()
+                            .text_size(px(13.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(palette.text)
+                            .child("Demo fleet"),
+                    )
+                    .child(
+                        div()
+                            .h(px(18.))
+                            .flex()
+                            .items_center()
+                            .px(px(7.))
+                            .rounded(px(9.))
+                            .bg(palette.tagbg)
+                            .text_size(px(10.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(palette.dim)
+                            .child("DEMO"),
+                    ),
+            )
+            .child(div().text_size(px(12.)).text_color(palette.dim).child(
+                "Sample profiles, regions and instances to explore CloudDeck without signing in.",
+            ))
+            .child(
+                accent_button(
+                    "onboarding-open-demo",
+                    "onboarding.open-demo",
+                    "Open demo fleet",
+                    palette,
+                )
+                .cursor_pointer()
+                .on_click(
+                    cx.listener(|_, _: &ClickEvent, _, cx| cx.emit(OnboardingEvent::ExploreDemo)),
+                ),
+            );
+        frame(
+            palette,
+            header(
+                palette,
+                "Demo fleet".to_string(),
+                "Explore CloudDeck with sample instances. Nothing here touches a cloud account."
+                    .to_string(),
+                None,
+            ),
+            Vec::new(),
+            card.into_any_element(),
+            footer(palette, String::new(), div().into_any_element()),
+        )
+    }
+
+    fn add_pane(&self, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
+        const COMMAND: &str = "clouddeck extension install <id>";
+        let body = div()
+            .flex()
+            .flex_col()
+            .gap(px(10.))
+            .child(
+                div()
+                    .text_size(px(12.))
+                    .text_color(palette.dim)
+                    .child("Install an extension from a terminal, then enable it in Plugins."),
+            )
+            .child(
+                div()
+                    .debug_selector(|| "onboarding.add-command".to_string())
+                    .h(px(32.))
+                    .flex()
+                    .items_center()
+                    .px(px(12.))
+                    .rounded(px(6.))
+                    .bg(palette.panel)
+                    .font_family("monospace")
+                    .text_size(px(12.))
+                    .text_color(palette.text)
+                    .child(COMMAND),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(12.))
+                    .child(link(
+                        "onboarding-copy-command".to_string(),
+                        "onboarding.copy-command".to_string(),
+                        "Copy command",
+                        palette,
+                        cx.listener(|_, _: &ClickEvent, _, cx| {
+                            cx.write_to_clipboard(ClipboardItem::new_string(COMMAND.to_string()));
+                        }),
+                    ))
+                    .child(manage_button(palette, cx)),
+            )
+            .into_any_element();
+        frame(
+            palette,
+            header(
+                palette,
+                "Add a provider".to_string(),
+                "Providers come from extensions. Install one, then enable it.".to_string(),
+                None,
+            ),
+            Vec::new(),
+            body,
+            footer(palette, String::new(), div().into_any_element()),
+        )
+    }
+
     fn opening(&self, name: &str, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
-        let back = pill_button("onboarding-back", "onboarding.back", "Back to onboarding", palette)
-            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.back_to_onboarding(cx)));
+        let back = pill_button(
+            "onboarding-back",
+            "onboarding.back",
+            "Back to onboarding",
+            palette,
+        )
+        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.back_to_onboarding(cx)));
         centred(
             "onboarding.opening",
             format!("Opening {name}"),
@@ -851,6 +1302,59 @@ impl OnboardingWindow {
         )
     }
 
+    fn browser_panel(&self, url: &str, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
+        let open_url = url.to_string();
+        div()
+            .debug_selector(|| "onboarding.browser-panel".to_string())
+            .flex()
+            .flex_col()
+            .gap(px(8.))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(AppIcon::Globe.icon().text_color(palette.accent))
+                    .child(
+                        div()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_size(px(15.))
+                            .text_color(palette.text)
+                            .child("Continue in your browser"),
+                    ),
+            )
+            .child(
+                div().text_size(px(11.)).text_color(palette.dim).child(
+                    "Finish signing in in the browser. CloudDeck continues when it completes.",
+                ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(12.))
+                    .child(link(
+                        "onboarding-open-again".to_string(),
+                        "onboarding.open-again".to_string(),
+                        "Open again",
+                        palette,
+                        cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&open_url)),
+                    ))
+                    .child(
+                        pill_button(
+                            "onboarding-cancel-sign-in",
+                            "onboarding.cancel-sign-in",
+                            "Cancel",
+                            palette,
+                        )
+                        .on_click(
+                            cx.listener(|this, _: &ClickEvent, _, cx| this.cancel_sign_in(cx)),
+                        ),
+                    ),
+            )
+            .into_any_element()
+    }
+
     fn device_panel(
         &self,
         code: &str,
@@ -874,10 +1378,9 @@ impl OnboardingWindow {
                     .child(code.to_string()),
             )
             .child(
-                div()
-                    .text_size(px(11.))
-                    .text_color(palette.dim)
-                    .child("Enter this code on the sign-in page. CloudDeck waits for the approval."),
+                div().text_size(px(11.)).text_color(palette.dim).child(
+                    "Enter this code on the sign-in page. CloudDeck waits for the approval.",
+                ),
             )
             .child(
                 div()
@@ -906,80 +1409,31 @@ impl OnboardingWindow {
                             "Cancel",
                             palette,
                         )
-                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                            this.cancel_sign_in(cx)
-                        })),
+                        .on_click(
+                            cx.listener(|this, _: &ClickEvent, _, cx| this.cancel_sign_in(cx)),
+                        ),
                     ),
             )
-            .into_any_element()
-    }
-
-    fn footer(&self, note: String, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
-        let action: AnyElement = match &self.listings[self.chosen] {
-            _ if matches!(self.phase, Phase::Opening { .. }) => div().into_any_element(),
-            Listing::Detecting => pill_button(
-                "onboarding-cancel",
-                "onboarding.cancel",
-                "Cancel",
-                palette,
-            )
-            .on_click(cx.listener(|_, _: &ClickEvent, window, _| window.remove_window()))
-            .into_any_element(),
-            Listing::Found(_) => {
-                let enabled = self.selected_row().is_some() && self.phase == Phase::Idle;
-                div()
-                    .id("onboarding-open")
-                    .debug_selector(|| "onboarding.open".to_string())
-                    .flex_none()
-                    .px(px(14.))
-                    .py(px(5.))
-                    .rounded(px(6.))
-                    .bg(palette.accent)
-                    .text_size(px(12.))
-                    .text_color(palette.win)
-                    .when(!enabled, |button| button.opacity(0.45))
-                    .when(enabled, |button| {
-                        button.cursor_pointer().on_click(cx.listener(
-                            |this, _: &ClickEvent, _, cx| this.open_selected(cx),
-                        ))
-                    })
-                    .child("Open ↵")
-                    .into_any_element()
-            }
-            Listing::Empty | Listing::Failed(_) => link(
-                "onboarding-demo".to_string(),
-                "onboarding.demo".to_string(),
-                "Explore demo fleet",
-                palette,
-                cx.listener(|_, _: &ClickEvent, _, cx| cx.emit(OnboardingEvent::ExploreDemo)),
-            ),
-        };
-        div()
-            .debug_selector(|| "onboarding.footer".to_string())
-            .h(px(FOOTER_HEIGHT))
-            .flex_none()
-            .flex()
-            .items_center()
-            .justify_between()
-            .gap(px(12.))
-            .px(px(22.))
-            .border_t_1()
-            .border_color(palette.line2)
-            .child(
-                div()
-                    .min_w(px(0.))
-                    .text_size(px(11.))
-                    .text_color(palette.dim)
-                    .text_ellipsis()
-                    .child(note),
-            )
-            .child(action)
             .into_any_element()
     }
 }
 
 impl Render for OnboardingWindow {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if let Phase::Prompt { fields, .. } = &self.phase
+            && self.prompt_inputs.len() != fields.len()
+        {
+            let fields = fields.clone();
+            self.prompt_inputs = fields
+                .into_iter()
+                .map(|field| {
+                    (
+                        field.id,
+                        text_state(String::new(), field.secret, window, cx),
+                    )
+                })
+                .collect();
+        }
         let palette = palette(cx);
         div()
             .size_full()
@@ -989,6 +1443,184 @@ impl Render for OnboardingWindow {
             .child(self.rail(&palette, cx))
             .child(self.pane(&palette, cx))
     }
+}
+
+struct RailRow {
+    id: String,
+    selector: String,
+    selected: bool,
+    name: String,
+    dot: Option<Hsla>,
+    status: String,
+}
+
+fn rail_row(
+    row: RailRow,
+    palette: &Palette,
+    cx: &mut Context<OnboardingWindow>,
+    on_click: impl Fn(&mut OnboardingWindow, &mut Context<OnboardingWindow>) + 'static,
+) -> AnyElement {
+    div()
+        .id(SharedString::from(row.id))
+        .debug_selector(move || row.selector)
+        .flex()
+        .items_center()
+        .gap(px(10.))
+        .px(px(8.))
+        .py(px(7.))
+        .rounded(px(7.))
+        .cursor_pointer()
+        .when(row.selected, |item| item.bg(palette.sel))
+        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| on_click(this, cx)))
+        .child(
+            div()
+                .size(px(30.))
+                .flex_none()
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(7.))
+                .bg(palette.badge)
+                .text_size(px(11.))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(palette.win)
+                .child(initials(&row.name)),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .min_w(px(0.))
+                .child(
+                    div()
+                        .text_size(px(13.))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(palette.text)
+                        .text_ellipsis()
+                        .child(row.name),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(5.))
+                        .text_size(px(11.))
+                        .text_color(palette.dim)
+                        .children(row.dot.map(|color| {
+                            div()
+                                .size(px(7.))
+                                .rounded_full()
+                                .bg(color)
+                                .into_any_element()
+                        }))
+                        .child(row.status),
+                ),
+        )
+        .into_any_element()
+}
+
+fn frame(
+    palette: &Palette,
+    header: AnyElement,
+    top: Vec<AnyElement>,
+    body: AnyElement,
+    footer: AnyElement,
+) -> AnyElement {
+    let column = div()
+        .flex_1()
+        .min_h(px(0.))
+        .flex()
+        .flex_col()
+        .gap(px(12.))
+        .px(px(22.))
+        .pt(px(18.))
+        .pb(px(12.))
+        .child(header)
+        .children(top)
+        .child(body);
+    div()
+        .debug_selector(|| "onboarding.pane".to_string())
+        .flex_1()
+        .min_w(px(0.))
+        .h_full()
+        .flex()
+        .flex_col()
+        .bg(palette.win)
+        .child(column)
+        .child(footer)
+        .into_any_element()
+}
+
+fn header(
+    palette: &Palette,
+    title: String,
+    subtitle: String,
+    action: Option<AnyElement>,
+) -> AnyElement {
+    div()
+        .flex()
+        .items_start()
+        .justify_between()
+        .gap(px(12.))
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(4.))
+                .min_w(px(0.))
+                .child(
+                    div()
+                        .text_size(px(17.))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(palette.text)
+                        .child(title),
+                )
+                .child(
+                    div()
+                        .text_size(px(12.))
+                        .text_color(palette.dim)
+                        .child(subtitle),
+                ),
+        )
+        .children(action)
+        .into_any_element()
+}
+
+fn footer(palette: &Palette, note: String, action: AnyElement) -> AnyElement {
+    div()
+        .debug_selector(|| "onboarding.footer".to_string())
+        .h(px(FOOTER_HEIGHT))
+        .flex_none()
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap(px(12.))
+        .px(px(22.))
+        .border_t_1()
+        .border_color(palette.line2)
+        .child(
+            div()
+                .min_w(px(0.))
+                .text_size(px(11.))
+                .text_color(palette.dim)
+                .text_ellipsis()
+                .child(note),
+        )
+        .child(action)
+        .into_any_element()
+}
+
+fn manage_button(palette: &Palette, cx: &mut Context<OnboardingWindow>) -> AnyElement {
+    pill_button(
+        "onboarding-manage-pane",
+        "onboarding.manage-pane",
+        "Manage extensions…",
+        palette,
+    )
+    .on_click(cx.listener(|_, _: &ClickEvent, _, cx| {
+        let _ = plugins_window::open(cx);
+    }))
+    .into_any_element()
 }
 
 fn identity_banner(identity: &str, palette: &Palette) -> AnyElement {
@@ -1132,6 +1764,25 @@ fn pill_button(
         .child(label.into())
 }
 
+fn accent_button(
+    id: &'static str,
+    selector: &'static str,
+    label: &'static str,
+    palette: &Palette,
+) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .debug_selector(move || selector.to_string())
+        .flex_none()
+        .px(px(14.))
+        .py(px(5.))
+        .rounded(px(6.))
+        .bg(palette.accent)
+        .text_size(px(12.))
+        .text_color(palette.win)
+        .child(label)
+}
+
 /// Opens the onboarding window with `provider_id` selected (the first provider when `None`)
 /// and `connection` pre-selected. `on_event` runs after the window has closed itself.
 pub fn open_onboarding_window(
@@ -1141,15 +1792,34 @@ pub fn open_onboarding_window(
     on_event: impl Fn(OnboardingEvent, &mut App) + 'static,
 ) -> Option<WindowHandle<Root>> {
     let providers = app_providers::providers(cx);
+    let disabled = disabled_extensions(cx);
     open_window(
         cx,
         providers,
         provider_id,
         connection,
         WINDOW_SIZE,
-        |_, _| {},
+        move |view, _| view.disabled = disabled,
         on_event,
     )
+}
+
+fn disabled_extensions(cx: &App) -> Vec<Disabled> {
+    let roots = plugins_window::Roots::app();
+    load_entries(
+        roots.bundled.as_deref(),
+        &roots.installed,
+        &roots.state,
+        &app_providers::refusals(cx),
+    )
+    .unwrap_or_default()
+    .into_iter()
+    .filter(|entry| !entry.enabled && entry.origin != PluginOrigin::Bundled)
+    .map(|entry| Disabled {
+        id: entry.id,
+        name: entry.name,
+    })
+    .collect()
 }
 
 /// Opens a `size` window for `providers` with `prepare` applied to its view before the first frame.
@@ -1176,6 +1846,41 @@ impl OnboardingWindow {
             name: name.to_string(),
         };
     }
+
+    pub(crate) fn show_choosing(&mut self) {
+        self.phase = Phase::Choosing;
+    }
+
+    pub(crate) fn show_prompt(&mut self, fields: Vec<PromptField>) {
+        self.phase = Phase::Prompt {
+            flow: FlowId::from("flow-prompt"),
+            fields,
+        };
+    }
+
+    pub(crate) fn show_browser(&mut self) {
+        self.phase = Phase::Waiting {
+            flow: FlowId::from("flow-browser"),
+            code: None,
+            url: "https://example.test/sign-in".to_string(),
+        };
+    }
+
+    pub(crate) fn show_disabled(&mut self, id: &str, name: &str) {
+        self.disabled = vec![Disabled {
+            id: id.to_string(),
+            name: name.to_string(),
+        }];
+        self.pane = Pane::Disabled(0);
+    }
+
+    pub(crate) fn show_demo(&mut self) {
+        self.pane = Pane::Demo;
+    }
+
+    pub(crate) fn show_add_provider(&mut self) {
+        self.pane = Pane::AddProvider;
+    }
 }
 
 fn open_window(
@@ -1196,11 +1901,7 @@ fn open_window(
         return None;
     }
     let provider_id = provider_id.map(str::to_string);
-    let bounds = Bounds::centered(
-        None,
-        size(px(window_size.0), px(window_size.1)),
-        cx,
-    );
+    let bounds = Bounds::centered(None, size(px(window_size.0), px(window_size.1)), cx);
     let handle = cx
         .open_window(
             WindowOptions {
@@ -1246,9 +1947,7 @@ fn open_window(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::provider_sign_in::Progress;
     use crate::test_support::{auth_provider, identified_provider, plain_provider, wait_until};
-    use clouddeck_core::SignInAction;
     use gpui::{TestAppContext, VisualTestContext};
 
     #[test]
@@ -1271,11 +1970,16 @@ mod tests {
         cx.update(gpui_component::init);
         cx.update(|app| {
             let plain = vec![plain_provider("plain", &["default"])];
-            assert!(open_window_for(app, plain.clone(), Some("missing"), WINDOW_SIZE, |_, _| {}).is_none());
+            assert!(
+                open_window_for(app, plain.clone(), Some("missing"), WINDOW_SIZE, |_, _| {})
+                    .is_none()
+            );
             assert!(open_window_for(app, plain, Some("plain"), WINDOW_SIZE, |_, _| {}).is_some());
 
             let signing_in = vec![auth_provider("fake", &["default"])];
-            assert!(open_window_for(app, signing_in, Some("fake"), WINDOW_SIZE, |_, _| {}).is_some());
+            assert!(
+                open_window_for(app, signing_in, Some("fake"), WINDOW_SIZE, |_, _| {}).is_some()
+            );
         });
     }
 
@@ -1296,7 +2000,8 @@ mod tests {
 
         view.update(cx, |view, _| {
             view.phase = Phase::Waiting {
-                code: "ABCD-1234".to_string(),
+                flow: FlowId::from("flow-1"),
+                code: Some("ABCD-1234".to_string()),
                 url: "https://example.test/device".to_string(),
             };
         });

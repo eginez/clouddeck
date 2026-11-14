@@ -3,8 +3,8 @@
 use clouddeck_extension_api::{
     Auth, AuthAnswer, AuthInput, AuthMethod, AuthStep, Browse, Call, Config, Connection,
     ConnectionId, Dimension, ErrorKind, Extension, FieldDef, FlowId, INSTANCES, Instance, KindId,
-    KindInfo, ListResult, Provider, ProviderError, ProviderInfo, ResourceId, Selection, SettingDef,
-    SettingKind, SettingValue, register_extension,
+    KindInfo, ListResult, PromptField, Provider, ProviderError, ProviderInfo, ResourceId,
+    Selection, SettingDef, SettingKind, SettingValue, register_extension,
 };
 
 pub struct Toy;
@@ -112,33 +112,78 @@ impl Browse for ToyProvider {
     }
 }
 
+const TOKEN_METHOD: &str = "api-token";
+const TOKEN_FLOW: &str = "toy-token";
+const BROWSER_METHOD: &str = "browser";
+const BROWSER_FLOW: &str = "toy-browser";
+
 impl Auth for ToyProvider {
     fn auth_methods(&self) -> Vec<AuthMethod> {
-        vec![AuthMethod {
-            id: "config".into(),
-            label: "Use config folder".into(),
-            header_button: None,
-            description: Some("Choose where the toy keeps its configuration.".into()),
-            settings: vec!["config_dir".into()],
-        }]
+        vec![
+            AuthMethod {
+                id: TOKEN_METHOD.into(),
+                label: "API token".into(),
+                header_button: Some("Connect…".into()),
+                description: Some("Paste a token from the toy's dashboard.".into()),
+                settings: Vec::new(),
+            },
+            AuthMethod {
+                id: BROWSER_METHOD.into(),
+                label: "Sign in with browser".into(),
+                header_button: None,
+                description: Some("Approve the sign-in in your browser.".into()),
+                settings: Vec::new(),
+            },
+        ]
     }
 
     fn begin_auth(
         &self,
         _: &Call<'_>,
-        _: &AuthMethod,
+        method: &AuthMethod,
         _: AuthInput,
     ) -> Result<AuthStep, ProviderError> {
-        Ok(AuthStep::Done)
+        match method.id.as_str() {
+            TOKEN_METHOD => Ok(AuthStep::Prompt {
+                flow: FlowId::from(TOKEN_FLOW),
+                fields: vec![
+                    PromptField {
+                        id: "tenant".into(),
+                        label: "Tenant".into(),
+                        secret: false,
+                    },
+                    PromptField {
+                        id: "api_token".into(),
+                        label: "API token".into(),
+                        secret: true,
+                    },
+                    PromptField {
+                        id: "endpoint".into(),
+                        label: "Endpoint".into(),
+                        secret: false,
+                    },
+                ],
+            }),
+            BROWSER_METHOD => Ok(AuthStep::OpenUrl {
+                flow: FlowId::from(BROWSER_FLOW),
+                url: "https://example.test/toy/sign-in".into(),
+                then_poll: true,
+            }),
+            _ => Err(ProviderError::of(ErrorKind::Unsupported)),
+        }
     }
 
     fn continue_auth(
         &self,
         _: &Call<'_>,
-        _: &FlowId,
-        _: AuthAnswer,
+        flow: &FlowId,
+        answer: AuthAnswer,
     ) -> Result<AuthStep, ProviderError> {
-        Err(ProviderError::of(ErrorKind::Unsupported))
+        match (flow.as_str(), answer) {
+            (TOKEN_FLOW, AuthAnswer::Values(_)) => Ok(AuthStep::Done),
+            (BROWSER_FLOW, AuthAnswer::Poll | AuthAnswer::Cancel) => Ok(AuthStep::Done),
+            _ => Err(ProviderError::of(ErrorKind::Unsupported)),
+        }
     }
 }
 

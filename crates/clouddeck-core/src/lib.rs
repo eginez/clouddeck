@@ -1,10 +1,10 @@
 pub use clouddeck_provider_api::{
-    Auth, AuthAnswer, AuthInput, AuthMethod, AuthStatus, AuthStep, Browse, Call, CellFailure, Config, ErrorHint,
-    Connection, ConnectionId, CoreField, DimValue, Dimension, DimensionId, ErrorKind, FieldDef,
-    FieldKind, FieldSource, FlowId, Host, InspectorRowDef, InspectorSectionDef, InspectorValue,
-    KindId, KindInfo, ListResult, LogLevel, MatchMode, NoAuth, Provider, ProviderError,
-    ProviderInfo, ResourceId, Selection, SettingDef, SettingKind, SettingOption, SettingValue,
-    ValueId,
+    Auth, AuthAnswer, AuthInput, AuthMethod, AuthStatus, AuthStep, Browse, Call, CellFailure,
+    Config, Connection, ConnectionId, CoreField, DimValue, Dimension, DimensionId, ErrorHint,
+    ErrorKind, FieldDef, FieldKind, FieldSource, FlowId, Host, InspectorRowDef,
+    InspectorSectionDef, InspectorValue, KindId, KindInfo, ListResult, LogLevel, MatchMode, NoAuth,
+    PromptField, Provider, ProviderError, ProviderInfo, ResourceId, Selection, SettingDef,
+    SettingKind, SettingOption, SettingValue, ValueId,
 };
 pub use clouddeck_provider_kit::ComputeServiceProvider;
 pub use clouddeck_provider_kit::service_provider;
