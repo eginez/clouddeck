@@ -1,5 +1,5 @@
 //! Setting rows shared by the Settings window's provider categories and the
-//! Connect window: one label-and-control row per declared setting.
+//! onboarding window: one label-and-control row per declared setting.
 
 use std::path::Path;
 

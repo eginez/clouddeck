@@ -1,5 +1,5 @@
 //! Drives a provider's generic sign-in flow (`continue_auth`) from the first step
-//! `begin_auth` returned, reporting each step to the Connect window. The
+//! `begin_auth` returned, reporting each step to the onboarding window. The
 //! step-to-action logic lives in clouddeck-core's `provider_sign_in`.
 
 use std::sync::Arc;

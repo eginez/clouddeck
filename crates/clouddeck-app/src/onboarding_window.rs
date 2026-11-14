@@ -159,6 +159,9 @@ impl OnboardingWindow {
 
     fn choose(&mut self, index: usize, cx: &mut Context<Self>) {
         if index != self.chosen && index < self.providers.len() {
+            if self.phase == Phase::Signing || matches!(self.phase, Phase::Waiting { .. }) {
+                self.cancel_sign_in(cx);
+            }
             self.chosen = index;
             self.selected = None;
             self.error = None;

@@ -40,7 +40,7 @@ fn compute(id: &str, connections: &[&str]) -> ComputeServiceProvider {
     )
 }
 
-/// A compute provider that also offers a browser sign-in, so the Connect window opens for it.
+/// A compute provider that also offers a browser sign-in, so the onboarding window opens for it.
 struct SignInCompute(ComputeServiceProvider);
 
 impl Provider for SignInCompute {

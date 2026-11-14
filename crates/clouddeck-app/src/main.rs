@@ -115,7 +115,10 @@ fn main() {
                 }
                 plugins_window::open(cx).expect("plugins window opens");
             } else if let Some(provider) = options.onboarding.as_ref() {
-                open_onboarding(cx, provider.as_deref()).expect("onboarding window opens");
+                if open_onboarding(cx, provider.as_deref()).is_none() {
+                    eprintln!("could not open onboarding for provider {provider:?}");
+                    std::process::exit(2);
+                }
             } else if !(should_show_onboarding(options.demo, saved.as_ref())
                 && open_onboarding(cx, None).is_some())
             {
