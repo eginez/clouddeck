@@ -1439,8 +1439,10 @@ dependencies = [
 name = "clouddeck-gcp"
 version = "0.2.2"
 dependencies = [
+ "base64",
  "clouddeck-core",
  "clouddeck-extension-api",
+ "ring",
  "serde",
  "serde_json",
  "time",

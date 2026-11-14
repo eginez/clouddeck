@@ -281,8 +281,9 @@ fn emulator_json_with_a_real_host_is_rejected_before_any_request() {
 fn the_auth_method_offers_the_config_folder() {
     let p = provider(Arc::new(FakeHttp::default()));
     let methods = p.auth_methods();
-    assert_eq!(methods.len(), 1);
+    assert_eq!(methods.len(), 2);
     assert_eq!(methods[0].id, "adc");
+    assert_eq!(methods[1].id, "service_account_key");
     assert_eq!(methods[0].settings, ["config_dir"]);
     let description = methods[0].description.clone().unwrap_or_default();
     assert!(description.contains("Browser sign-in for Google is not available yet."));

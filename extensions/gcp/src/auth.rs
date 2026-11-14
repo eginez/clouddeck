@@ -2,16 +2,18 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
-use clouddeck_extension_api::{ErrorKind, ProviderError};
+use clouddeck_extension_api::{ErrorHint, ErrorKind, ProviderError};
 use serde::Deserialize;
 
 use crate::config::{AuthMode, Config, EMULATOR_TOKEN};
 use crate::http::Http;
+use crate::service_account::{self, JWT_BEARER_GRANT};
 
 const ADC_FILE: &str = "application_default_credentials.json";
 const ADVICE: &str = "run: gcloud auth application-default login, or choose a Config folder";
+const SIGN_IN_COMMAND: &str = "gcloud auth application-default login";
 /// Refresh this long before the token really expires.
 const EXPIRY_SLACK: Duration = Duration::from_secs(60);
 
@@ -51,13 +53,38 @@ pub fn auth_error(message: &str) -> ProviderError {
     error
 }
 
+fn missing_adc(message: &str) -> ProviderError {
+    let mut error = auth_error(message);
+    error.hint = Some(Box::new(ErrorHint {
+        title: "Google Cloud needs Application Default Credentials".into(),
+        detail: Some(
+            "Run this once in a terminal. It opens your browser to sign in and writes the file CloudDeck reads. Looked in $GOOGLE_APPLICATION_CREDENTIALS and ~/.config/gcloud.".into(),
+        ),
+        command: Some(SIGN_IN_COMMAND.into()),
+    }));
+    error
+}
+
+fn unsupported_adc(kind: &str) -> ProviderError {
+    let mut error = auth_error(&format!(
+        "ADC credential type {kind:?} is not supported yet"
+    ));
+    error.hint = Some(Box::new(ErrorHint {
+        title: "Service-account credentials aren’t supported yet".into(),
+        detail: Some(format!(
+            "Your ADC file is a {kind} key. CloudDeck can use a user login for now, or the Service account key sign-in method."
+        )),
+        command: Some(SIGN_IN_COMMAND.into()),
+    }));
+    error
+}
+
 /// Pure: turn the ADC file text into credentials.
 pub fn parse_adc(text: &str) -> Result<AdcCreds, ProviderError> {
     let file: AdcFile =
         serde_json::from_str(text).map_err(|e| auth_error(&format!("unreadable ADC file: {e}")))?;
     if file.kind != "authorized_user" {
-        let msg = format!("ADC credential type {:?} is not supported yet", file.kind);
-        return Err(auth_error(&msg));
+        return Err(unsupported_adc(&file.kind));
     }
     let missing = || auth_error("ADC file lacks client_id, client_secret or refresh_token");
     Ok(AdcCreds {
@@ -84,16 +111,22 @@ pub fn load_adc(folder: Option<&Path>) -> Result<AdcCreds, ProviderError> {
         None => {
             let explicit = std::env::var("GOOGLE_APPLICATION_CREDENTIALS").ok();
             adc_path(explicit, std::env::var("HOME").ok())
-                .ok_or_else(|| auth_error("no Application Default Credentials found"))?
+                .ok_or_else(|| missing_adc("no Application Default Credentials found"))?
         }
     };
     let text = std::fs::read_to_string(&path).map_err(|e| {
         let looked_in = path.parent().unwrap_or(&path).display();
-        auth_error(&format!(
+        missing_adc(&format!(
             "no Application Default Credentials in {looked_in}: {e}"
         ))
     })?;
     parse_adc(&text)
+}
+
+/// Pure: the token endpoint's sibling that reports the account behind a token.
+pub fn tokeninfo_url(token_url: &str) -> String {
+    let base = token_url.strip_suffix("/token").unwrap_or(token_url);
+    format!("{base}/tokeninfo")
 }
 
 /// Pure: read the refresh response into a token and its lifetime.
@@ -109,6 +142,7 @@ type Loader = Box<dyn Fn(Option<&Path>) -> Result<AdcCreds, ProviderError> + Sen
 struct Cached {
     token_url: String,
     folder: Option<PathBuf>,
+    key_file: Option<PathBuf>,
     token: Token,
     expiry: Instant,
 }
@@ -138,19 +172,58 @@ impl TokenSource {
         }
         let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(cached) = cache.as_ref().filter(|c| {
-            c.token_url == config.token && c.folder == config.folder && c.expiry > Instant::now()
+            c.token_url == config.token
+                && c.folder == config.folder
+                && c.key_file == config.key_file
+                && c.expiry > Instant::now()
         }) {
             return Ok(cached.token.clone());
         }
-        let creds = (self.load)(config.folder.as_deref())?;
-        let (token, lifetime) = self.refresh(&creds, &config.token, timeout)?;
+        let (token, lifetime) = match &config.key_file {
+            Some(path) => self.key_token(path, &config.token, timeout)?,
+            None => {
+                let creds = (self.load)(config.folder.as_deref())?;
+                self.refresh(&creds, &config.token, timeout)?
+            }
+        };
         *cache = Some(Cached {
             token_url: config.token.clone(),
             folder: config.folder.clone(),
+            key_file: config.key_file.clone(),
             token: token.clone(),
             expiry: Instant::now() + lifetime.saturating_sub(EXPIRY_SLACK),
         });
         Ok(token)
+    }
+
+    fn key_token(
+        &self,
+        path: &Path,
+        token_url: &str,
+        timeout: Duration,
+    ) -> Result<(Token, Duration), ProviderError> {
+        let key = service_account::load_key(path)?;
+        let now = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let assertion = service_account::sign_jwt(&key, now, token_url)?;
+        let form = [
+            ("grant_type", JWT_BEARER_GRANT),
+            ("assertion", assertion.as_str()),
+        ];
+        let body = self
+            .http
+            .post_form(token_url, &form, timeout)
+            .map_err(|e| e.into_provider())?;
+        let (access, lifetime) = parse_token_response(&body)?;
+        Ok((
+            Token {
+                access,
+                quota_project: None,
+            },
+            lifetime,
+        ))
     }
 
     fn refresh(
@@ -186,5 +259,22 @@ impl TokenSource {
 
     pub fn forget(&self) {
         *self.cache.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tokeninfo_url;
+
+    #[test]
+    fn tokeninfo_sits_beside_the_token_endpoint() {
+        assert_eq!(
+            tokeninfo_url("https://oauth2.googleapis.com/token"),
+            "https://oauth2.googleapis.com/tokeninfo"
+        );
+        assert_eq!(
+            tokeninfo_url("http://localhost:4588/token"),
+            "http://localhost:4588/tokeninfo"
+        );
     }
 }

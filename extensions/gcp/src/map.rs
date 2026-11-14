@@ -118,8 +118,8 @@ pub fn map_connections(projects: Vec<Project>) -> Vec<Connection> {
         .filter(|p| p.lifecycle_state.as_deref().is_none_or(|s| s == "ACTIVE"))
         .map(|p| Connection {
             display_name: p.name.unwrap_or_else(|| p.project_id.clone()),
+            detail: Some(p.project_id.clone()),
             id: p.project_id.into(),
-            detail: None,
             tags: Vec::new(),
         })
         .collect()
