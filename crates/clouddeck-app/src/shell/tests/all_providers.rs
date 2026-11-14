@@ -10,6 +10,8 @@ fn compute_with_instances(
         vec![clouddeck_core::Connection {
             id: "default".into(),
             display_name: "default".to_string(),
+            detail: None,
+            tags: Vec::new(),
         }],
         vec!["us-east-1".to_string()],
         move |_, _| {
@@ -27,6 +29,8 @@ fn failing_compute_provider(id: &str) -> std::sync::Arc<dyn Provider> {
         vec![clouddeck_core::Connection {
             id: "default".into(),
             display_name: "default".to_string(),
+            detail: None,
+            tags: Vec::new(),
         }],
         vec!["us-east-1".to_string()],
         |_, _| {

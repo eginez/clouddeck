@@ -183,6 +183,7 @@ pub fn gcp_provider(instances: Vec<Instance>, failure: Option<String>) -> Arc<dy
             name: "Google Cloud".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
             connection_label: "Project".to_string(),
+            onboarding: Default::default(),
         },
         instances,
         failure,

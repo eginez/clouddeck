@@ -732,6 +732,7 @@ mod tests {
             name: name.to_string(),
             version: "1.0.0".to_string(),
             connection_label: "Profile".to_string(),
+            onboarding: Default::default(),
         }
     }
 

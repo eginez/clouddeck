@@ -41,6 +41,7 @@ impl Provider for ToyProvider {
             name: "Toy".into(),
             version: env!("CARGO_PKG_VERSION").into(),
             connection_label: "Profile".into(),
+            onboarding: Default::default(),
         }
     }
 
@@ -62,6 +63,8 @@ impl Browse for ToyProvider {
         Ok(vec![Connection {
             id: "default".into(),
             display_name,
+            detail: None,
+            tags: Vec::new(),
         }])
     }
 
@@ -114,6 +117,7 @@ impl Auth for ToyProvider {
         vec![AuthMethod {
             id: "config".into(),
             label: "Use config folder".into(),
+            header_button: None,
             description: Some("Choose where the toy keeps its configuration.".into()),
             settings: vec!["config_dir".into()],
         }]

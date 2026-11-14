@@ -591,6 +591,7 @@ mod tests {
             name: name.to_string(),
             version: "1.0.0".to_string(),
             connection_label: connection_label.to_string(),
+            onboarding: Default::default(),
         }
     }
 
@@ -667,6 +668,8 @@ mod tests {
         Connection {
             id: ConnectionId::from(id),
             display_name: id.to_string(),
+            detail: None,
+            tags: Vec::new(),
         }
     }
 
@@ -1009,6 +1012,7 @@ mod provider_switch_tests {
                 name: id.to_string(),
                 version: "1.0.0".to_string(),
                 connection_label: "Project".to_string(),
+                onboarding: Default::default(),
             },
             signed_in: true,
             bundled: true,

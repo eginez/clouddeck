@@ -30,12 +30,22 @@ impl ErrorKind {
     }
 }
 
+/// A recovery panel: a heading, an optional note and an optional command the user can copy.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ErrorHint {
+    pub title: String,
+    pub detail: Option<String>,
+    pub command: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProviderError {
     pub kind: ErrorKind,
     pub message: String,
     pub advice: Option<String>,
     pub retry_after: Option<Duration>,
+    #[serde(default)]
+    pub hint: Option<Box<ErrorHint>>,
 }
 
 impl ProviderError {
@@ -45,6 +55,7 @@ impl ProviderError {
             message: message.into(),
             advice: None,
             retry_after: None,
+            hint: None,
         }
     }
 

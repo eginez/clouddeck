@@ -59,6 +59,8 @@ impl ComputeServiceProvider {
         let connections = vec![Connection {
             id: "default".into(),
             display_name: "default".to_string(),
+            detail: None,
+            tags: Vec::new(),
         }];
         Self::new(id, connections, regions, move |_, _| {
             Box::new(Forwarding(service.clone()))
@@ -120,6 +122,7 @@ impl Provider for ComputeServiceProvider {
             },
             version: env!("CARGO_PKG_VERSION").to_string(),
             connection_label: "Profile".to_string(),
+            onboarding: Default::default(),
         }
     }
 }
@@ -380,6 +383,8 @@ mod tests {
             vec![Connection {
                 id: "default".into(),
                 display_name: "default".to_string(),
+                detail: None,
+                tags: Vec::new(),
             }],
             vec![],
             |_, region| {

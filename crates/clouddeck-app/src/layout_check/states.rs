@@ -249,11 +249,14 @@ fn context_for(setup: &MultiSetup) -> ContextModel {
             message: "Sign in to Google Cloud.".to_string(),
             advice: None,
             retry_after: None,
+            hint: None,
         }));
     } else {
         model.set_connections(Ok(vec![Connection {
             id: "default".into(),
             display_name: "default".to_string(),
+            detail: None,
+            tags: Vec::new(),
         }]));
     }
     if let Some(dimension) = &setup.dimension {
@@ -317,6 +320,7 @@ impl Provider for ConnectFixture {
             name: "Fixture Cloud".to_string(),
             version: "0".to_string(),
             connection_label: "Project".to_string(),
+            onboarding: Default::default(),
         }
     }
 

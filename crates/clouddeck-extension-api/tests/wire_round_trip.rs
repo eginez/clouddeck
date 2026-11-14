@@ -116,6 +116,7 @@ fn list_results_and_errors_round_trip() {
                 message: UNICODE.into(),
                 advice: Some(String::new()),
                 retry_after: Some(Duration::from_millis(1500)),
+                hint: None,
             },
         }],
     });
@@ -136,6 +137,7 @@ fn list_results_and_errors_round_trip() {
         message: String::new(),
         advice: Some(UNICODE.into()),
         retry_after: None,
+        hint: None,
     });
 }
 
@@ -203,6 +205,7 @@ fn auth_round_trips_every_variant() {
     round_trip(AuthMethod {
         id: "token".into(),
         label: "API token".into(),
+        header_button: None,
         description: Some("Paste a token from the console".into()),
         settings: vec!["config_dir".into(), "region".into()],
     });
@@ -340,6 +343,7 @@ fn provider_metadata_and_identifiers_round_trip() {
         name: UNICODE.into(),
         version: String::new(),
         connection_label: "Profile".into(),
+        onboarding: Default::default(),
     });
     round_trip(KindInfo {
         id: KindId::instances(),
@@ -348,6 +352,8 @@ fn provider_metadata_and_identifiers_round_trip() {
     round_trip(Connection {
         id: ConnectionId::from("default"),
         display_name: String::new(),
+        detail: None,
+        tags: Vec::new(),
     });
     round_trip(ResourceId::from(UNICODE));
     round_trip(None::<ConnectionId>);

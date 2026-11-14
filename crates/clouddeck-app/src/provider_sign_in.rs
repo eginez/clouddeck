@@ -159,6 +159,7 @@ mod tests {
                 name: "Fake Cloud".to_string(),
                 version: "0".to_string(),
                 connection_label: "Project".to_string(),
+                onboarding: Default::default(),
             }
         }
 

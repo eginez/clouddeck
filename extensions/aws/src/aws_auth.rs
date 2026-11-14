@@ -351,6 +351,8 @@ impl Browse for AwsProvider {
             .map(|profile| Connection {
                 id: ConnectionId::from(profile.name.as_str()),
                 display_name: profile.name,
+                detail: None,
+                tags: Vec::new(),
             })
             .collect())
     }
@@ -770,6 +772,8 @@ sso_role_name = Admin
         let connections = vec![Connection {
             id: ConnectionId::from("conformance"),
             display_name: "conformance".to_string(),
+            detail: None,
+            tags: Vec::new(),
         }];
         let inner = ComputeServiceProvider::new(
             "aws",

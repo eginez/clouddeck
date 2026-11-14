@@ -444,6 +444,8 @@ mod tests {
         crate::Connection {
             id: id.into(),
             display_name: id.to_string(),
+            detail: None,
+            tags: Vec::new(),
         }
     }
 

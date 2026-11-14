@@ -394,6 +394,7 @@ impl Provider for RemoteProvider {
                     name: self.name.clone(),
                     version: self.plugin.version().to_string(),
                     connection_label: CONNECTION_LABEL.into(),
+                    onboarding: Default::default(),
                 }
             }
         }

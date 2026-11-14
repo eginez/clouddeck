@@ -8,6 +8,8 @@ pub(super) fn compute_provider(id: &str) -> std::sync::Arc<dyn Provider> {
         vec![clouddeck_core::Connection {
             id: "default".into(),
             display_name: "default".to_string(),
+            detail: None,
+            tags: Vec::new(),
         }],
         Vec::new(),
         |_, _| Box::new(clouddeck_core::MockComputeService::new(Vec::new(), None)),

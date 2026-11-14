@@ -444,6 +444,7 @@ impl Provider for Spy {
             name: self.id.to_string(),
             version: "0".to_string(),
             connection_label: "Profile".to_string(),
+            onboarding: Default::default(),
         }
     }
 }

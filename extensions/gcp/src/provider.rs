@@ -225,6 +225,7 @@ impl Provider for GcpProvider {
             name: "Google Cloud".into(),
             version: env!("CARGO_PKG_VERSION").into(),
             connection_label: "Project".into(),
+            onboarding: Default::default(),
         }
     }
 

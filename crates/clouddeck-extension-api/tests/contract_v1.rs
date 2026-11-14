@@ -123,6 +123,7 @@ impl Provider for Fake {
             name: "Fake".into(),
             version: "0.0.0".into(),
             connection_label: "Profile".into(),
+            onboarding: Default::default(),
         }
     }
 
@@ -139,6 +140,8 @@ impl Browse for Fake {
         Ok(vec![Connection {
             id: "default".into(),
             display_name: "Default".into(),
+            detail: None,
+            tags: Vec::new(),
         }])
     }
 

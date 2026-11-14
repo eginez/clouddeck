@@ -290,6 +290,7 @@ mod tests {
                 name: self.id.to_uppercase(),
                 version: "1.0.0".to_string(),
                 connection_label: "Profile".to_string(),
+                onboarding: Default::default(),
             }
         }
     }

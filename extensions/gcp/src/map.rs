@@ -119,6 +119,8 @@ pub fn map_connections(projects: Vec<Project>) -> Vec<Connection> {
         .map(|p| Connection {
             display_name: p.name.unwrap_or_else(|| p.project_id.clone()),
             id: p.project_id.into(),
+            detail: None,
+            tags: Vec::new(),
         })
         .collect()
 }

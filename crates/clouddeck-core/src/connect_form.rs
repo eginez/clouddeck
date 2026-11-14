@@ -289,6 +289,7 @@ mod tests {
             name: "Fake Cloud".into(),
             version: "0".into(),
             connection_label: "Project".into(),
+            onboarding: Default::default(),
         }
     }
 
@@ -555,6 +556,7 @@ mod tests {
             message: "Choose a profile to sign in to.".into(),
             advice: Some("Pick a profile in the context bar.".into()),
             retry_after: None,
+            hint: None,
         });
 
         let error = with_call(|call| {

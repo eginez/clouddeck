@@ -31,6 +31,8 @@ fn compute(id: &str, connections: &[&str]) -> ComputeServiceProvider {
             .map(|connection| Connection {
                 id: (*connection).into(),
                 display_name: (*connection).to_string(),
+                detail: None,
+                tags: Vec::new(),
             })
             .collect(),
         Vec::new(),

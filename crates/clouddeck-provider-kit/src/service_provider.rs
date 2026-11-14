@@ -63,6 +63,7 @@ pub fn info() -> ProviderInfo {
         name: "AWS".to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
         connection_label: "Profile".to_string(),
+        onboarding: Default::default(),
     }
 }
 
@@ -70,6 +71,8 @@ pub fn connections() -> Vec<Connection> {
     vec![Connection {
         id: "default".into(),
         display_name: "default".to_string(),
+        detail: None,
+        tags: Vec::new(),
     }]
 }
 

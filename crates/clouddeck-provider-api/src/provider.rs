@@ -14,6 +14,26 @@ use crate::settings::SettingDef;
 pub struct Connection {
     pub id: ConnectionId,
     pub display_name: String,
+    /// Second line under the name, such as an account number and region.
+    #[serde(default)]
+    pub detail: Option<String>,
+    /// Short pills shown on the row, such as "SSO".
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+/// Onboarding text for a provider. Absent fields keep the core's wording.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Onboarding {
+    /// Pane heading; the provider name when absent.
+    #[serde(default)]
+    pub title: Option<String>,
+    /// Line under the heading.
+    #[serde(default)]
+    pub subtitle: Option<String>,
+    /// Footer note on the left of the pane.
+    #[serde(default)]
+    pub footer: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -22,6 +42,8 @@ pub struct ProviderInfo {
     pub name: String,
     pub version: String,
     pub connection_label: String,
+    #[serde(default)]
+    pub onboarding: Onboarding,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -216,6 +238,7 @@ mod tests {
                 name: "Empty".to_string(),
                 version: "0".to_string(),
                 connection_label: "Profile".to_string(),
+                onboarding: Default::default(),
             }
         }
     }
@@ -456,5 +479,30 @@ mod tests {
         assert_eq!(selection.values("region"), &[ValueId::from("eu-west-1")]);
         assert!(Selection::new().is_empty());
         assert!(!selection.is_empty());
+    }
+
+    #[test]
+    fn payloads_without_onboarding_fields_decode() {
+        let connection: Connection =
+            serde_json::from_str(r#"{"id":"default","display_name":"Default"}"#)
+                .expect("connection");
+        assert_eq!(connection.detail, None);
+        assert!(connection.tags.is_empty());
+
+        let info: ProviderInfo = serde_json::from_str(
+            r#"{"id":"empty","name":"Empty","version":"0","connection_label":"Profile"}"#,
+        )
+        .expect("provider info");
+        assert_eq!(info.onboarding, Onboarding::default());
+
+        let method: AuthMethod =
+            serde_json::from_str(r#"{"id":"sso","label":"SSO"}"#).expect("auth method");
+        assert_eq!(method.header_button, None);
+
+        let error: ProviderError = serde_json::from_str(
+            r#"{"kind":"Other","message":"boom","advice":null,"retry_after":null}"#,
+        )
+        .expect("provider error");
+        assert_eq!(error.hint, None);
     }
 }

@@ -15,6 +15,8 @@ fn recording_aws(
         vec![clouddeck_core::Connection {
             id: "default".into(),
             display_name: "default".to_string(),
+            detail: None,
+            tags: Vec::new(),
         }],
         regions,
         move |_, region| {
@@ -100,6 +102,8 @@ fn switching_provider_reloads_the_context_dimensions(cx: &mut TestAppContext) {
             vec![clouddeck_core::Connection {
                 id: "default".into(),
                 display_name: "default".to_string(),
+                detail: None,
+                tags: Vec::new(),
             }],
             vec!["europe-west1".into()],
             |_, _| Box::new(clouddeck_core::MockComputeService::new(Vec::new(), None)),

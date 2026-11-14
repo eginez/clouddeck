@@ -136,6 +136,7 @@ impl Provider for DemoProvider {
             name: "Demo".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
             connection_label: "Profile".to_string(),
+            onboarding: Default::default(),
         }
     }
 
@@ -152,6 +153,8 @@ impl Browse for DemoProvider {
             .map(|profile| Connection {
                 id: ConnectionId::from(profile.name.as_str()),
                 display_name: profile.name.clone(),
+                detail: None,
+                tags: Vec::new(),
             })
             .collect())
     }

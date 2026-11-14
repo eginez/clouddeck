@@ -14,6 +14,9 @@ pub struct AuthMethod {
     /// Keys of the provider's declared settings that this method's connect form shows.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub settings: Vec<String>,
+    /// Text of the header button when this is the provider's primary sign-in.
+    #[serde(default)]
+    pub header_button: Option<String>,
 }
 
 impl AuthMethod {
@@ -23,6 +26,7 @@ impl AuthMethod {
             label,
             description: None,
             settings: Vec::new(),
+            header_button: None,
         }
     }
 }
