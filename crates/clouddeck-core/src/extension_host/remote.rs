@@ -8,8 +8,8 @@ use clouddeck_extension_api::wire::{self, Method, Request};
 use clouddeck_provider_api::{
     Auth, AuthAnswer, AuthInput, AuthMethod, AuthStatus, AuthStep, Browse, Call, CellFailure,
     Config, Connection, ConnectionId, Dimension, ErrorKind, ExtrasSection, FieldDef, FlowId,
-    InspectorSectionDef, Instance, KindId, KindInfo, ListResult, Provider, ProviderError,
-    ProviderInfo, ResourceId, Selection, SettingDef, settings_mismatches,
+    InspectorSectionDef, Instance, KindId, KindInfo, ListResult, Onboarding, Provider,
+    ProviderError, ProviderInfo, ResourceId, Selection, SettingDef, settings_mismatches,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -399,6 +399,12 @@ impl Provider for RemoteProvider {
             }
         }
     }
+
+    fn onboarding(&self, cx: &Call<'_>) -> Onboarding {
+        self.invoke(cx.deadline, Method::Onboarding, ())
+            .unwrap_or_else(|_| self.info().onboarding)
+    }
+
     fn auth(&self) -> Option<&dyn Auth> {
         Some(self)
     }

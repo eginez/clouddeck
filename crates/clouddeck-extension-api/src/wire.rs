@@ -54,9 +54,10 @@ pub enum Method {
     CheckAccess,
     Settings,
     SettingsChanged,
+    Onboarding,
 }
 
-const METHODS: [Method; 18] = [
+const METHODS: [Method; 19] = [
     Method::Info,
     Method::Connections,
     Method::Dimensions,
@@ -75,6 +76,7 @@ const METHODS: [Method; 18] = [
     Method::CheckAccess,
     Method::Settings,
     Method::SettingsChanged,
+    Method::Onboarding,
 ];
 
 impl Method {
@@ -165,6 +167,7 @@ fn catalog_call<E: Extension>(
         Method::Settings => serve(extension, host, request, |p, _, ()| {
             Ok(p.config().unwrap_or(&NoConfig).settings())
         }),
+        Method::Onboarding => serve(extension, host, request, |p, cx, ()| Ok(p.onboarding(cx))),
         Method::SettingsChanged => {
             serve(extension, host, request, |p, cx, changed: Vec<String>| {
                 p.config()
@@ -298,12 +301,12 @@ mod tests {
 
     #[test]
     fn from_code_round_trips_every_method() {
-        for code in 1..=18 {
-            let method = Method::from_code(code).expect("method codes 1 to 18 are assigned");
+        for code in 1..=19 {
+            let method = Method::from_code(code).expect("method codes 1 to 19 are assigned");
             assert_eq!(method as u32, code);
         }
         assert_eq!(Method::from_code(0), None);
-        assert_eq!(Method::from_code(19), None);
+        assert_eq!(Method::from_code(20), None);
     }
 
     #[test]

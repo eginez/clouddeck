@@ -95,6 +95,7 @@ fn service_for(state: State) -> (Arc<dyn Provider>, Vec<String>) {
         | State::OnboardingDetecting
         | State::OnboardingEmpty
         | State::OnboardingError
+        | State::OnboardingErrorNarrow
         | State::OnboardingOpening
         | State::OnboardingExtensionReady
         | State::OnboardingMethods
@@ -324,15 +325,19 @@ impl OnboardingFixture {
     fn for_state(state: State) -> Self {
         let connections = match state {
             State::OnboardingEmpty => Ok(vec![]),
-            State::OnboardingError => Err(ProviderError {
+            State::OnboardingError | State::OnboardingErrorNarrow => Err(ProviderError {
                 kind: ErrorKind::Other,
-                message: "The AWS config file could not be read".to_string(),
+                message: "The config file could not be read, line 14: expected ']'".to_string(),
                 advice: None,
                 retry_after: None,
                 hint: Some(Box::new(ErrorHint {
-                    title: "No AWS profiles yet".to_string(),
-                    detail: Some("Set one up with the AWS CLI, then check again.".to_string()),
-                    command: Some("aws configure sso".to_string()),
+                    title: "CloudDeck couldn't read the config file".to_string(),
+                    detail: Some(
+                        "expected ']' at end of section header. Fix the file, then check again."
+                            .to_string(),
+                    ),
+                    command: None,
+                    file: Some("/home/example/config".to_string()),
                 })),
             }),
             _ => Ok(vec![
@@ -887,7 +892,7 @@ mod tests {
     /// One key element per state that `apply_render_state` must produce.
     #[gpui::test]
     fn every_state_shows_its_key_element(cx: &mut TestAppContext) {
-        let key_elements: [(State, &str); 78] = [
+        let key_elements: [(State, &str); 79] = [
             (State::MainIdle, "main.root"),
             (State::MainRowSelected, "main.inspector"),
             (State::MainEmpty, "main.center-state"),
@@ -930,6 +935,7 @@ mod tests {
             (State::OnboardingDetecting, "onboarding.detecting"),
             (State::OnboardingEmpty, "onboarding.empty"),
             (State::OnboardingError, "onboarding.failed"),
+            (State::OnboardingErrorNarrow, "onboarding.failed"),
             (State::OnboardingOpening, "onboarding.opening"),
             (State::OnboardingExtensionReady, "onboarding.pane"),
             (State::OnboardingMethods, "onboarding.methods"),

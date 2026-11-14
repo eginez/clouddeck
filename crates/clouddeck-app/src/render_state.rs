@@ -96,6 +96,8 @@ pub(crate) enum State {
     OnboardingEmpty,
     /// Onboarding window whose provider failed with a recovery hint.
     OnboardingError,
+    /// `OnboardingError` at the narrow width the onboarding window is laid out for.
+    OnboardingErrorNarrow,
     /// Onboarding window after a connection was chosen to open.
     OnboardingOpening,
     /// Onboarding window with an extension provider ready and its connect button in the header.
@@ -165,7 +167,7 @@ pub(crate) enum State {
 }
 
 impl State {
-    pub(crate) const ALL: [State; 78] = [
+    pub(crate) const ALL: [State; 79] = [
         State::MainIdle,
         State::MainRowSelected,
         State::MainEmpty,
@@ -208,6 +210,7 @@ impl State {
         State::OnboardingDetecting,
         State::OnboardingEmpty,
         State::OnboardingError,
+        State::OnboardingErrorNarrow,
         State::OnboardingOpening,
         State::OnboardingExtensionReady,
         State::OnboardingMethods,
@@ -291,6 +294,7 @@ impl State {
             State::OnboardingDetecting => "OnboardingDetecting",
             State::OnboardingEmpty => "OnboardingEmpty",
             State::OnboardingError => "OnboardingError",
+            State::OnboardingErrorNarrow => "OnboardingErrorNarrow",
             State::OnboardingOpening => "OnboardingOpening",
             State::OnboardingExtensionReady => "OnboardingExtensionReady",
             State::OnboardingMethods => "OnboardingMethods",
@@ -407,6 +411,7 @@ impl State {
                 | State::OnboardingDetecting
                 | State::OnboardingEmpty
                 | State::OnboardingError
+                | State::OnboardingErrorNarrow
                 | State::OnboardingOpening
                 | State::OnboardingExtensionReady
                 | State::OnboardingMethods
@@ -554,6 +559,7 @@ pub(crate) fn apply_render_state(
         | State::OnboardingDetecting
         | State::OnboardingEmpty
         | State::OnboardingError
+        | State::OnboardingErrorNarrow
         | State::OnboardingOpening
         | State::OnboardingExtensionReady
         | State::OnboardingMethods

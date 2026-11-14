@@ -183,6 +183,51 @@ macro_rules! centred_rules {
     };
 }
 
+macro_rules! failure_action_rules {
+    ($state:expr, $prefix:literal, $window:expr) => {
+        vec![
+            Rule {
+                id: concat!($prefix, "-copy-error-in"),
+                state: $state,
+                window: $window,
+                check: Check::InWindow("onboarding.copy-error"),
+                why: "the Copy error button is fully inside the window",
+                known_bug: None,
+            },
+            Rule {
+                id: concat!($prefix, "-copy-error-in-panel"),
+                state: $state,
+                window: $window,
+                check: Check::Inside {
+                    inner: "onboarding.copy-error",
+                    outer: "onboarding.failed",
+                },
+                why: "the Copy error button sits inside the failure message",
+                known_bug: None,
+            },
+            Rule {
+                id: concat!($prefix, "-open-file-in"),
+                state: $state,
+                window: $window,
+                check: Check::InWindow("onboarding.open-file"),
+                why: "the Open file button is fully inside the window",
+                known_bug: None,
+            },
+            Rule {
+                id: concat!($prefix, "-open-file-in-panel"),
+                state: $state,
+                window: $window,
+                check: Check::Inside {
+                    inner: "onboarding.open-file",
+                    outer: "onboarding.failed",
+                },
+                why: "the Open file button sits inside the failure message",
+                known_bug: None,
+            },
+        ]
+    };
+}
+
 /// Layout rules contributed by the onboarding window.
 pub(crate) fn rules() -> Vec<Rule> {
     [
@@ -215,7 +260,17 @@ pub(crate) fn rules() -> Vec<Rule> {
         ),
         common_rules!(State::OnboardingDetecting, "onb-detecting", WINDOW),
         common_rules!(State::OnboardingEmpty, "onb-empty", WINDOW),
+        centred_rules!(
+            State::OnboardingErrorNarrow,
+            "onb-error-narrow",
+            NARROW,
+            "onboarding.failed",
+            "onboarding.check-again"
+        ),
         common_rules!(State::OnboardingError, "onb-error", WINDOW),
+        common_rules!(State::OnboardingErrorNarrow, "onb-error-narrow", NARROW),
+        failure_action_rules!(State::OnboardingError, "onb-error", WINDOW),
+        failure_action_rules!(State::OnboardingErrorNarrow, "onb-error-narrow", NARROW),
         common_rules!(State::OnboardingOpening, "onb-opening", WINDOW),
         common_rules!(State::OnboardingExtensionReady, "onb-ext-ready", WINDOW),
         listing_rules!(State::OnboardingExtensionReady, "onb-ext-ready", WINDOW),

@@ -84,7 +84,7 @@ fn layout_rules_hold(cx: &mut TestAppContext) {
 /// Every named state has at least one layout rule.
 #[gpui::test]
 fn layout_rules_cover_states(_cx: &mut TestAppContext) {
-    const ALL: [State; 62] = [
+    const ALL: [State; 63] = [
         State::MainIdle,
         State::MainRowSelected,
         State::MainEmpty,
@@ -111,6 +111,7 @@ fn layout_rules_cover_states(_cx: &mut TestAppContext) {
         State::OnboardingDetecting,
         State::OnboardingEmpty,
         State::OnboardingError,
+        State::OnboardingErrorNarrow,
         State::OnboardingOpening,
         State::OnboardingExtensionReady,
         State::OnboardingMethods,

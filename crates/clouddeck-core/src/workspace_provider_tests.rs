@@ -4,7 +4,8 @@ use std::time::{Duration, Instant};
 
 use clouddeck_provider_api::{
     Browse, Call, Connection, ConnectionId, Dimension, ErrorKind, FieldDef, Host, Instance, KindId,
-    KindInfo, ListResult, LogLevel, Provider, ProviderError, ProviderInfo, Selection, ValueId,
+    KindInfo, ListResult, LogLevel, Onboarding, Provider, ProviderError, ProviderInfo, Selection,
+    ValueId,
 };
 
 use crate::{
@@ -178,6 +179,19 @@ fn other_demo_paths_list_through_the_demo_entry() {
         );
         assert_eq!(provider.info().id, "demo", "{scenario:?}");
     }
+}
+
+#[test]
+fn bound_provider_forwards_onboarding_to_the_inner_provider() {
+    let provider = bound_provider(
+        Spy::new("aws"),
+        ConnectionId::from("default"),
+        Selection::new(),
+    );
+    assert_eq!(
+        provider.onboarding(&call()).title.as_deref(),
+        Some("aws onboarding")
+    );
 }
 
 #[test]
@@ -445,6 +459,13 @@ impl Provider for Spy {
             version: "0".to_string(),
             connection_label: "Profile".to_string(),
             onboarding: Default::default(),
+        }
+    }
+
+    fn onboarding(&self, _cx: &Call<'_>) -> Onboarding {
+        Onboarding {
+            title: Some(format!("{} onboarding", self.id)),
+            ..Default::default()
         }
     }
 }

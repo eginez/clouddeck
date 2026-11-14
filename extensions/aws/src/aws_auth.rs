@@ -4,22 +4,23 @@
 
 use std::collections::HashMap;
 use std::future::Future;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::SystemTime;
 
 use clouddeck_provider_api::{
     Auth, AuthAnswer, AuthInput, AuthMethod, AuthStatus, AuthStep, Browse, Call, Config,
-    Connection, ConnectionId, ErrorKind, FieldDef, FlowId, InspectorSectionDef, Instance, KindId,
-    KindInfo, ListResult, Provider, ProviderError, ProviderInfo, Selection, SettingDef,
-    SettingKind, SettingOption, SettingValue,
+    Connection, ConnectionId, ErrorHint, ErrorKind, FieldDef, FlowId, InspectorSectionDef,
+    Instance, KindId, KindInfo, ListResult, Onboarding, Provider, ProviderError, ProviderInfo,
+    Selection, SettingDef, SettingKind, SettingOption, SettingValue,
 };
 
 use clouddeck_provider_kit::{
-    AwsCredentialKind, AwsFiles, AwsSsoConfiguration, BoxError, ComputeServiceProvider,
-    DEFAULT_AWS_CONFIG_FILE, Dimension, LoginGuidance, REGION, REGIONS, ScopeSettings,
-    aws_files_for, list_scenario, load_profiles_for, login_guidance, read_profile_auth,
+    AwsCredentialKind, AwsFiles, AwsProfileAuth, AwsSsoConfiguration, BoxError,
+    ComputeServiceProvider, DEFAULT_AWS_CONFIG_FILE, Dimension, LoginGuidance, REGION, REGIONS,
+    ScopeSettings, aws_files_for, list_scenario, load_profile_auth_for, login_guidance,
+    read_profile_auth,
 };
 
 use crate::aws_identity::AwsIdentityService;
@@ -70,6 +71,7 @@ impl AwsAuth {
         );
         method.description = Some("Choose a profile from a config folder.".to_string());
         method.settings = vec![CONFIG_DIR_SETTING.to_string()];
+        method.header_button = Some("Sign in with SSO…".to_string());
         vec![method]
     }
 
@@ -293,6 +295,55 @@ pub(crate) fn aws_files(cx: &Call<'_>) -> AwsFiles {
     )
 }
 
+fn connection(profile: AwsProfileAuth) -> Connection {
+    let sso = matches!(profile.credential_kind, AwsCredentialKind::Sso(_));
+    let account = match &profile.credential_kind {
+        AwsCredentialKind::Sso(config) => config.account_id.clone(),
+        _ => None,
+    };
+    let detail: Vec<String> = [account, profile.region].into_iter().flatten().collect();
+    Connection {
+        id: ConnectionId::from(profile.name.as_str()),
+        display_name: profile.name,
+        detail: (!detail.is_empty()).then(|| detail.join(" · ")),
+        tags: if sso {
+            vec!["SSO".to_string()]
+        } else {
+            Vec::new()
+        },
+    }
+}
+
+fn config_error(files: &AwsFiles, error: &std::io::Error) -> ProviderError {
+    let message = error.to_string();
+    let failing = [&files.config, &files.credentials]
+        .into_iter()
+        .find(|path| message.starts_with(&format!("{}: ", path.display())))
+        .unwrap_or(&files.config);
+    let shown = display_home(failing);
+    let parse = message
+        .strip_prefix(&format!("{}: ", failing.display()))
+        .unwrap_or(message.as_str());
+    let mut failure = ProviderError::new(ErrorKind::Other, message.clone());
+    failure.hint = Some(Box::new(ErrorHint {
+        title: format!("CloudDeck couldn't read {shown}"),
+        detail: Some(format!(
+            "{parse}. Fix the file, then check again. No other provider is affected."
+        )),
+        command: None,
+        file: Some(failing.display().to_string()),
+    }));
+    failure
+}
+
+fn display_home(path: &Path) -> String {
+    let home = home_dir();
+    match path.strip_prefix(&home) {
+        Ok(rest) if !home.as_os_str().is_empty() => format!("~/{}", rest.display()),
+        _ => path.display().to_string(),
+    }
+}
+
 fn setting_defs() -> Vec<SettingDef> {
     let option = |seconds: &str| SettingOption {
         value: seconds.into(),
@@ -331,7 +382,31 @@ fn setting_defs() -> Vec<SettingDef> {
 
 impl Provider for AwsProvider {
     fn info(&self) -> ProviderInfo {
-        self.inner.info()
+        let mut info = self.inner.info();
+        info.onboarding.title = Some("Amazon Web Services".to_string());
+        info.onboarding.footer = Some(
+            "Profiles are read from your AWS config. Credentials stay with the AWS CLI."
+                .to_string(),
+        );
+        info
+    }
+
+    fn onboarding(&self, cx: &Call<'_>) -> Onboarding {
+        let path = display_home(&aws_files(cx).config);
+        let mut onboarding = self.info().onboarding;
+        onboarding.footer = Some(format!(
+            "Profiles are read from {path}. Credentials stay with the AWS CLI."
+        ));
+        onboarding.empty = Some(ErrorHint {
+            title: format!("No AWS profiles in {path}"),
+            detail: Some(
+                "Make one with the AWS CLI, then check again. For IAM Identity Center (SSO), run:"
+                    .to_string(),
+            ),
+            command: Some("aws configure sso".to_string()),
+            file: None,
+        });
+        onboarding
     }
 
     fn auth(&self) -> Option<&dyn Auth> {
@@ -345,16 +420,10 @@ impl Provider for AwsProvider {
 
 impl Browse for AwsProvider {
     fn connections(&self, cx: &Call<'_>) -> Result<Vec<Connection>, ProviderError> {
-        let profiles = load_profiles_for(&aws_files(cx)).unwrap_or_default();
-        Ok(profiles
-            .into_iter()
-            .map(|profile| Connection {
-                id: ConnectionId::from(profile.name.as_str()),
-                display_name: profile.name,
-                detail: None,
-                tags: Vec::new(),
-            })
-            .collect())
+        let files = aws_files(cx);
+        let profiles =
+            load_profile_auth_for(&files).map_err(|error| config_error(&files, &error))?;
+        Ok(profiles.into_iter().map(connection).collect())
     }
 
     fn dimensions(
@@ -885,6 +954,10 @@ sso_role_name = Admin
             self.inner.info()
         }
 
+        fn onboarding(&self, cx: &Call<'_>) -> Onboarding {
+            self.with_host(cx, |cx| self.inner.onboarding(cx))
+        }
+
         fn auth(&self) -> Option<&dyn Auth> {
             Some(self)
         }
@@ -1049,6 +1122,171 @@ sso_role_name = Admin
         }
     }
 
+    fn connections_in(folder: &Path) -> Result<Vec<Connection>, ProviderError> {
+        let pinned = Pinned {
+            inner: Arc::from(provider(folder)),
+            folder: folder.to_path_buf(),
+        };
+        let cx = Call {
+            deadline: None,
+            host: &NoHost,
+        };
+        pinned.connections(&cx)
+    }
+
+    #[test]
+    fn connections_describe_account_region_and_sso() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("config"),
+            "\
+[profile prod]
+sso_start_url = https://example.awsapps.com/start
+sso_region = us-east-1
+sso_account_id = 123456789012
+sso_role_name = Admin
+region = us-west-2
+
+[profile plain]
+region = eu-west-1
+
+[profile bare]
+aws_access_key_id = AKIDEXAMPLE
+",
+        )
+        .unwrap();
+
+        let connections = connections_in(dir.path()).unwrap();
+
+        let describe = |id: &str| {
+            let connection = connections
+                .iter()
+                .find(|connection| connection.id.as_str() == id)
+                .unwrap();
+            (connection.detail.clone(), connection.tags.clone())
+        };
+        assert_eq!(
+            describe("prod"),
+            (
+                Some("123456789012 · us-west-2".to_string()),
+                vec!["SSO".to_string()]
+            )
+        );
+        assert_eq!(describe("plain"), (Some("eu-west-1".to_string()), vec![]));
+        assert_eq!(describe("bare"), (None, vec![]));
+    }
+
+    #[test]
+    fn missing_config_is_an_empty_list_not_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+
+        assert!(connections_in(dir.path()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn unreadable_config_is_an_error_with_a_recovery_hint() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("config"), "[profile data-platform\n").unwrap();
+
+        let error = connections_in(dir.path()).unwrap_err();
+
+        let hint = error.hint.expect("config errors carry a hint");
+        assert!(hint.title.starts_with("CloudDeck couldn't read "));
+        assert!(hint.title.ends_with("config"));
+        assert_eq!(
+            hint.file,
+            Some(dir.path().join("config").display().to_string())
+        );
+        assert!(hint.detail.unwrap().contains("line 1"));
+        assert!(error.message.contains("line 1"));
+        assert!(error.kind != ErrorKind::Auth);
+    }
+
+    #[test]
+    fn unreadable_credentials_name_the_credentials_file() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("credentials"), "[default\n").unwrap();
+
+        let error = connections_in(dir.path()).unwrap_err();
+
+        let hint = error.hint.unwrap();
+        assert!(hint.title.ends_with("credentials"), "{}", hint.title);
+        assert_eq!(
+            hint.file,
+            Some(dir.path().join("credentials").display().to_string())
+        );
+    }
+
+    fn onboarding_in(folder: &Path) -> Onboarding {
+        let pinned = Pinned {
+            inner: Arc::from(provider(folder)),
+            folder: folder.to_path_buf(),
+        };
+        let cx = Call {
+            deadline: None,
+            host: &NoHost,
+        };
+        pinned.onboarding(&cx)
+    }
+
+    #[test]
+    fn footer_names_the_config_file_in_use() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = display_home(&dir.path().join("config"));
+
+        let onboarding = onboarding_in(dir.path());
+
+        assert_eq!(
+            onboarding.footer,
+            Some(format!(
+                "Profiles are read from {config}. Credentials stay with the AWS CLI."
+            ))
+        );
+    }
+
+    #[test]
+    fn default_config_file_is_shown_under_home() {
+        assert_eq!(
+            display_home(&home_dir().join(".aws").join("config")),
+            "~/.aws/config"
+        );
+    }
+
+    #[test]
+    fn nothing_found_hint_names_the_config_file_and_the_sso_command() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = display_home(&dir.path().join("config"));
+
+        let empty = onboarding_in(dir.path()).empty.expect("empty hint");
+
+        assert_eq!(empty.title, format!("No AWS profiles in {config}"));
+        assert_eq!(empty.command.as_deref(), Some("aws configure sso"));
+        assert_eq!(empty.file, None);
+    }
+
+    #[test]
+    fn static_onboarding_keeps_the_service_title_and_no_path() {
+        let info = provider(Path::new("/nonexistent")).info();
+
+        assert_eq!(
+            info.onboarding.title.as_deref(),
+            Some("Amazon Web Services")
+        );
+        assert!(!info.onboarding.footer.unwrap().contains('/'));
+        assert_eq!(info.name, "AWS");
+    }
+
+    #[test]
+    fn sign_in_method_is_offered_as_the_header_button() {
+        let provider = provider(Path::new("/nonexistent"));
+        let methods = provider.auth().unwrap().auth_methods();
+
+        assert_eq!(
+            methods[0].header_button.as_deref(),
+            Some("Sign in with SSO…")
+        );
+    }
+
     #[test]
     fn provider_passes_the_conformance_kit() {
         let dir = tempfile::tempdir().unwrap();
@@ -1096,7 +1334,7 @@ sso_role_name = Admin
 
         assert_eq!(connections(first.path()), ["conformance"]);
         assert_eq!(connections(second.path()), ["other"]);
-        let scan: Vec<String> = load_profiles_for(&aws_files_for(first.path().to_str(), None))
+        let scan: Vec<String> = load_profile_auth_for(&aws_files_for(first.path().to_str(), None))
             .unwrap()
             .into_iter()
             .map(|profile| profile.name)
@@ -1153,7 +1391,9 @@ sso_role_name = Admin
                 }
                 request.extend_from_slice(&buf[..n]);
             }
-            seen_tx.send(String::from_utf8_lossy(&request).to_string()).unwrap();
+            seen_tx
+                .send(String::from_utf8_lossy(&request).to_string())
+                .unwrap();
             let body = "<DescribeInstancesResponse xmlns=\"http://ec2.amazonaws.com/doc/2016-11-15/\"><reservationSet/></DescribeInstancesResponse>";
             let response = format!(
                 "HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",

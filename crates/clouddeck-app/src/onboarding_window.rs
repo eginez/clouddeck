@@ -2,6 +2,7 @@
 //! methods and onboarding text all come from the provider API; this module only draws them.
 
 use std::collections::BTreeMap;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::SystemTime;
 
@@ -10,7 +11,7 @@ use clouddeck_core::extension_manager::install::{EXTERNAL_EXTENSIONS_ALLOWED, Ma
 use clouddeck_core::extension_manager::plugins::load_entries;
 use clouddeck_core::{
     AuthAnswer, AuthMethod, AuthStatus, AuthStep, Call, ConnectError, Connection, ConnectionId,
-    DimValue, FlowId, NoAuth, PromptField, Provider, ProviderError, REGION, Selection,
+    DimValue, FlowId, NoAuth, Onboarding, PromptField, Provider, ProviderError, REGION, Selection,
     SignInAction, UiState, connect_methods, submit, ui_state_path,
 };
 use gpui::{
@@ -114,6 +115,7 @@ pub struct OnboardingWindow {
     providers: Vec<Arc<dyn Provider>>,
     chosen: usize,
     listings: Vec<Listing>,
+    onboardings: Vec<Option<Onboarding>>,
     generations: Vec<u64>,
     disabled: Vec<Disabled>,
     pane: Pane,
@@ -183,6 +185,7 @@ impl OnboardingWindow {
             providers,
             chosen,
             listings: vec![Listing::Detecting; count],
+            onboardings: vec![None; count],
             generations: vec![0; count],
             disabled: Vec::new(),
             pane: Pane::Providers,
@@ -220,11 +223,14 @@ impl OnboardingWindow {
         self.listings[index] = Listing::Detecting;
         let provider = self.providers[index].clone();
         cx.spawn(async move |this, cx| {
-            let listing =
-                off_thread(cx, move || with_call(|call| list(provider.as_ref(), call))).await;
+            let (listing, onboarding) = off_thread(cx, move || {
+                with_call(|call| (list(provider.as_ref(), call), provider.onboarding(call)))
+            })
+            .await;
             let _ = this.update(cx, |this, cx| {
                 if this.generations[index] == generation {
                     this.listings[index] = listing;
+                    this.onboardings[index] = Some(onboarding);
                     cx.notify();
                 }
             });
@@ -578,6 +584,18 @@ impl OnboardingWindow {
             .to_lowercase()
     }
 
+    fn onboarding(&self, index: usize) -> Onboarding {
+        self.onboardings[index]
+            .clone()
+            .unwrap_or_else(|| self.providers[index].info().onboarding)
+    }
+
+    fn display_name(&self, index: usize) -> String {
+        self.onboarding(index)
+            .title
+            .unwrap_or_else(|| self.providers[index].info().name)
+    }
+
     fn rail(&self, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
         let mut providers: Vec<AnyElement> = self
             .providers
@@ -731,7 +749,7 @@ impl OnboardingWindow {
                 selector: format!("onboarding.provider.{}", info.id),
                 selected: matches!(self.pane, Pane::Providers | Pane::Scope)
                     && index == self.chosen,
-                name: info.name.clone(),
+                name: self.display_name(index),
                 dot,
                 status,
             },
@@ -776,19 +794,15 @@ impl OnboardingWindow {
     }
 
     fn provider_pane(&self, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
-        let info = self.providers[self.chosen].info();
-        let title = info
-            .onboarding
-            .title
-            .clone()
-            .unwrap_or_else(|| info.name.clone());
-        let subtitle = info.onboarding.subtitle.clone().unwrap_or_else(|| {
+        let onboarding = self.onboarding(self.chosen);
+        let title = self.display_name(self.chosen);
+        let subtitle = onboarding.subtitle.unwrap_or_else(|| {
             format!(
                 "Choose a {} to open. CloudDeck only reads; it never changes your account.",
                 self.noun()
             )
         });
-        let note = info.onboarding.footer.clone().unwrap_or_default();
+        let note = onboarding.footer.unwrap_or_default();
 
         let header_action = self.header_method().map(|method| {
             let label = method.header_button.clone().unwrap_or_default();
@@ -1002,14 +1016,25 @@ impl OnboardingWindow {
         match &self.listings[self.chosen] {
             Listing::Detecting => self.detecting(palette),
             Listing::Found(_) => self.found(palette, cx),
-            Listing::Empty => centred(
-                "onboarding.empty",
-                format!("No {} found", plural(&self.noun(), 2)),
-                "Set one up with the provider's command-line tool, then check again.".to_string(),
-                None,
-                palette,
-                self.check_again(palette, cx),
-            ),
+            Listing::Empty => {
+                let (heading, body, command) = match self.onboarding(self.chosen).empty {
+                    Some(hint) => (hint.title, hint.detail.unwrap_or_default(), hint.command),
+                    None => (
+                        format!("No {} found", plural(&self.noun(), 2)),
+                        "Set one up with the provider's command-line tool, then check again."
+                            .to_string(),
+                        None,
+                    ),
+                };
+                centred(
+                    "onboarding.empty",
+                    heading,
+                    body,
+                    command,
+                    palette,
+                    self.check_again(palette, cx),
+                )
+            }
             Listing::Failed(error) => match &error.hint {
                 Some(hint) => centred(
                     "onboarding.failed",
@@ -1017,7 +1042,7 @@ impl OnboardingWindow {
                     hint.detail.clone().unwrap_or_default(),
                     hint.command.clone(),
                     palette,
-                    self.check_again(palette, cx),
+                    self.failure_actions(error, palette, cx),
                 ),
                 None => centred(
                     "onboarding.failed",
@@ -1041,6 +1066,43 @@ impl OnboardingWindow {
         )
         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.detect(chosen, cx)))
         .into_any_element()
+    }
+
+    fn failure_actions(
+        &self,
+        error: &ProviderError,
+        palette: &Palette,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let copy = error.message.clone();
+        let file = error.hint.as_ref().and_then(|hint| hint.file.clone());
+        div()
+            .flex()
+            .gap(px(8.))
+            .child(self.check_again(palette, cx))
+            .child(
+                pill_button(
+                    "onboarding-copy-error",
+                    "onboarding.copy-error",
+                    "Copy error",
+                    palette,
+                )
+                .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
+                    cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()))
+                })),
+            )
+            .children(file.map(|file| {
+                pill_button(
+                    "onboarding-open-file",
+                    "onboarding.open-file",
+                    "Open file",
+                    palette,
+                )
+                .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
+                    cx.open_with_system(Path::new(&file))
+                }))
+            }))
+            .into_any_element()
     }
 
     fn detecting(&self, palette: &Palette) -> AnyElement {

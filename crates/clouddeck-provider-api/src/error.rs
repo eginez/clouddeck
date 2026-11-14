@@ -36,6 +36,9 @@ pub struct ErrorHint {
     pub title: String,
     pub detail: Option<String>,
     pub command: Option<String>,
+    /// The file that failed, when the core can open it.
+    #[serde(default)]
+    pub file: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

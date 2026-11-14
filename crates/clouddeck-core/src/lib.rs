@@ -3,7 +3,8 @@ pub use clouddeck_provider_api::{
     Config, Connection, ConnectionId, CoreField, DimValue, Dimension, DimensionId, ErrorHint,
     ErrorKind, FieldDef, FieldKind, FieldSource, FlowId, Host, InspectorRowDef,
     InspectorSectionDef, InspectorValue, KindId, KindInfo, ListResult, LogLevel, MatchMode, NoAuth,
-    PromptField, Provider, ProviderError, ProviderInfo, ResourceId, Selection, SettingDef,
+    Onboarding, PromptField, Provider, ProviderError, ProviderInfo, ResourceId, Selection,
+    SettingDef,
     SettingKind, SettingOption, SettingValue, ValueId,
 };
 pub use clouddeck_provider_kit::ComputeServiceProvider;

@@ -12,8 +12,8 @@ use std::sync::Arc;
 use clouddeck_extension_api::{
     Auth, AuthAnswer, AuthInput, AuthMethod, AuthStatus, AuthStep, Browse, Call, Config,
     Connection, ConnectionId, Dimension, Extension, ExtrasSection, FieldDef, FlowId,
-    InspectorSectionDef, Instance, KindId, KindInfo, ListResult, NoAuth, NoConfig, Provider,
-    ProviderError, ProviderInfo, ResourceId, Selection, SettingDef, register_extension,
+    InspectorSectionDef, Instance, KindId, KindInfo, ListResult, NoAuth, NoConfig, Onboarding,
+    Provider, ProviderError, ProviderInfo, ResourceId, Selection, SettingDef, register_extension,
 };
 
 pub use aws_auth::aws_provider;
@@ -42,6 +42,10 @@ struct Shared(Arc<dyn Provider>);
 impl Provider for Shared {
     fn info(&self) -> ProviderInfo {
         self.0.info()
+    }
+
+    fn onboarding(&self, cx: &Call<'_>) -> Onboarding {
+        self.0.onboarding(cx)
     }
 
     fn auth(&self) -> Option<&dyn Auth> {
