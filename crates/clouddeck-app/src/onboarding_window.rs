@@ -215,7 +215,10 @@ impl OnboardingWindow {
     }
 
     fn choose(&mut self, index: usize, cx: &mut Context<Self>) {
-        if index >= self.providers.len() || (index == self.chosen && self.pane == Pane::Providers) {
+        if index >= self.providers.len()
+            || (index == self.chosen && self.pane == Pane::Providers)
+            || matches!(self.phase, Phase::Opening { .. })
+        {
             return;
         }
         self.cancel_sign_in(cx);
@@ -224,6 +227,9 @@ impl OnboardingWindow {
     }
 
     fn show(&mut self, pane: Pane, cx: &mut Context<Self>) {
+        if matches!(self.phase, Phase::Opening { .. }) {
+            return;
+        }
         self.cancel_sign_in(cx);
         self.set_pane(pane, cx);
     }

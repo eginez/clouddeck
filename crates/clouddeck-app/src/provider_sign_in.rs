@@ -40,8 +40,11 @@ pub(crate) async fn drive(
                 report(Progress::Action(action), cx);
                 return true;
             }
-            SignInAction::NeedsInput { .. } => {
-                report(Progress::Action(action), cx);
+            SignInAction::NeedsInput { ref flow, .. } => {
+                let flow = flow.clone();
+                if !report(Progress::Action(action.clone()), cx) {
+                    cancel_flow(provider.clone(), flow, cx).await;
+                }
                 return false;
             }
             SignInAction::OpenBrowser {
