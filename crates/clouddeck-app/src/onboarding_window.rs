@@ -804,7 +804,8 @@ impl OnboardingWindow {
         });
         let note = onboarding.footer.unwrap_or_default();
 
-        let header_action = self.header_method().map(|method| {
+        let found = matches!(self.listings[self.chosen], Listing::Found(_));
+        let header_action = self.header_method().filter(|_| found).map(|method| {
             let label = method.header_button.clone().unwrap_or_default();
             let busy = self.phase != Phase::Idle;
             pill_button("onboarding-header", "onboarding.header", label, palette)
@@ -2327,7 +2328,10 @@ fn open_window(
 mod tests {
     use super::*;
     use crate::test_support::{auth_provider, identified_provider, plain_provider, wait_until};
-    use clouddeck_core::ValueId;
+    use clouddeck_core::{
+        Auth, Browse, Dimension, ErrorHint, ErrorKind, FieldDef, Instance, KindId, KindInfo,
+        ListResult, ProviderInfo, ValueId,
+    };
     use gpui::{TestAppContext, VisualTestContext};
 
     #[test]
@@ -2506,5 +2510,227 @@ mod tests {
         cx.run_until_parked();
 
         assert!(cx.debug_bounds("onboarding.identity").is_none());
+    }
+
+    struct OnboardingFixture {
+        inner: Arc<dyn Provider>,
+        connections: Result<Vec<Connection>, ProviderError>,
+        header: bool,
+    }
+
+    impl OnboardingFixture {
+        fn new(connections: Result<Vec<Connection>, ProviderError>, header: bool) -> Self {
+            Self {
+                inner: plain_provider("aws", &[]),
+                connections,
+                header,
+            }
+        }
+    }
+
+    impl Provider for OnboardingFixture {
+        fn info(&self) -> ProviderInfo {
+            ProviderInfo {
+                id: "aws".to_string(),
+                name: "AWS".to_string(),
+                version: "0.0.0".to_string(),
+                connection_label: "Profile".to_string(),
+                onboarding: Onboarding::default(),
+            }
+        }
+
+        fn onboarding(&self, _cx: &Call<'_>) -> Onboarding {
+            Onboarding {
+                title: Some("Amazon Web Services".to_string()),
+                subtitle: None,
+                footer: Some("Profiles are read from ~/.aws/config.".to_string()),
+                empty: Some(ErrorHint {
+                    title: "No AWS profiles in ~/.aws/config".to_string(),
+                    detail: Some("Make one with the AWS CLI.".to_string()),
+                    command: Some("aws configure sso".to_string()),
+                    file: None,
+                }),
+            }
+        }
+
+        fn auth(&self) -> Option<&dyn Auth> {
+            Some(self)
+        }
+    }
+
+    impl Auth for OnboardingFixture {
+        fn auth_methods(&self) -> Vec<AuthMethod> {
+            let mut method = AuthMethod::new("sso".to_string(), "SSO".to_string());
+            if self.header {
+                method.header_button = Some("Sign in with SSO…".to_string());
+            }
+            vec![method]
+        }
+    }
+
+    impl Browse for OnboardingFixture {
+        fn connections(&self, _cx: &Call<'_>) -> Result<Vec<Connection>, ProviderError> {
+            self.connections.clone()
+        }
+
+        fn dimensions(
+            &self,
+            cx: &Call<'_>,
+            connection: &ConnectionId,
+        ) -> Result<Vec<Dimension>, ProviderError> {
+            self.inner.dimensions(cx, connection)
+        }
+
+        fn kinds(&self) -> Vec<KindInfo> {
+            self.inner.kinds()
+        }
+
+        fn list(
+            &self,
+            cx: &Call<'_>,
+            connection: &ConnectionId,
+            kind: &KindId,
+            selection: &Selection,
+        ) -> ListResult {
+            self.inner.list(cx, connection, kind, selection)
+        }
+
+        fn console_url(
+            &self,
+            connection: &ConnectionId,
+            kind: &KindId,
+            resource: &Instance,
+        ) -> Option<String> {
+            self.inner.console_url(connection, kind, resource)
+        }
+
+        fn fields(&self, kind: &KindId) -> Vec<FieldDef> {
+            self.inner.fields(kind)
+        }
+    }
+
+    fn profile_connection() -> Connection {
+        Connection {
+            id: "default".into(),
+            display_name: "default".to_string(),
+            detail: None,
+            tags: Vec::new(),
+        }
+    }
+
+    fn failure_with_hint(file: Option<&str>) -> ProviderError {
+        ProviderError {
+            hint: Some(Box::new(ErrorHint {
+                title: "CloudDeck couldn’t read ~/.aws/config".to_string(),
+                detail: Some("~/.aws/config, line 3: bad value".to_string()),
+                command: None,
+                file: file.map(str::to_string),
+            })),
+            ..ProviderError::new(ErrorKind::Other, "bad value")
+        }
+    }
+
+    fn open_fixture(
+        cx: &mut TestAppContext,
+        fixture: OnboardingFixture,
+    ) -> (Entity<OnboardingWindow>, VisualTestContext) {
+        cx.update(gpui_component::init);
+        let providers: Vec<Arc<dyn Provider>> = vec![Arc::new(fixture)];
+        let handle = cx
+            .update(|app| open_window_for(app, providers, Some("aws"), WINDOW_SIZE, |_, _| {}))
+            .expect("onboarding window opens");
+        let view = handle
+            .update(cx, |root, _, _| {
+                root.view().clone().downcast::<OnboardingWindow>().ok()
+            })
+            .expect("window is open")
+            .expect("root is the onboarding window");
+        wait_until(cx, |cx| {
+            view.read_with(cx, |view, _| {
+                !matches!(view.listings[view.chosen], Listing::Detecting)
+            })
+        });
+        let cx = VisualTestContext::from_window(handle.into(), cx);
+        cx.run_until_parked();
+        (view, cx)
+    }
+
+    #[gpui::test]
+    fn rail_shows_onboarding_title_not_provider_name(cx: &mut TestAppContext) {
+        let (view, mut cx) = open_fixture(
+            cx,
+            OnboardingFixture::new(Ok(vec![profile_connection()]), true),
+        );
+
+        assert_eq!(
+            view.read_with(&cx, |view, _| view.display_name(0)),
+            "Amazon Web Services"
+        );
+        assert_eq!(
+            view.read_with(&cx, |view, _| view.providers[0].info().name),
+            "AWS"
+        );
+        assert!(cx.debug_bounds("onboarding.provider.aws").is_some());
+    }
+
+    #[gpui::test]
+    fn header_button_shows_only_when_profiles_are_found(cx: &mut TestAppContext) {
+        let (_, mut found) = open_fixture(
+            cx,
+            OnboardingFixture::new(Ok(vec![profile_connection()]), true),
+        );
+        assert!(found.debug_bounds("onboarding.header").is_some());
+
+        let (view, mut detecting) = open_fixture(
+            cx,
+            OnboardingFixture::new(Ok(vec![profile_connection()]), true),
+        );
+        view.update(&mut detecting, |view, cx| {
+            view.listings[0] = Listing::Detecting;
+            cx.notify();
+        });
+        detecting.run_until_parked();
+        assert!(detecting.debug_bounds("onboarding.detecting").is_some());
+        assert!(detecting.debug_bounds("onboarding.header").is_none());
+
+        let (_, mut empty) = open_fixture(cx, OnboardingFixture::new(Ok(Vec::new()), true));
+        assert!(empty.debug_bounds("onboarding.empty").is_some());
+        assert!(empty.debug_bounds("onboarding.header").is_none());
+
+        let (_, mut failed) = open_fixture(
+            cx,
+            OnboardingFixture::new(Err(failure_with_hint(None)), true),
+        );
+        assert!(failed.debug_bounds("onboarding.failed").is_some());
+        assert!(failed.debug_bounds("onboarding.header").is_none());
+    }
+
+    #[gpui::test]
+    fn empty_uses_provider_empty_hint(cx: &mut TestAppContext) {
+        let (view, mut cx) = open_fixture(cx, OnboardingFixture::new(Ok(Vec::new()), false));
+
+        assert!(cx.debug_bounds("onboarding.empty").is_some());
+        let hint = view
+            .read_with(&cx, |view, _| view.onboarding(0).empty)
+            .expect("provider supplies an empty hint");
+        assert_eq!(hint.title, "No AWS profiles in ~/.aws/config");
+        assert_eq!(hint.command.as_deref(), Some("aws configure sso"));
+    }
+
+    #[gpui::test]
+    fn failed_shows_open_file_only_when_file_set(cx: &mut TestAppContext) {
+        let (_, mut with_file) = open_fixture(
+            cx,
+            OnboardingFixture::new(Err(failure_with_hint(Some("/home/me/.aws/config"))), false),
+        );
+        assert!(with_file.debug_bounds("onboarding.copy-error").is_some());
+        assert!(with_file.debug_bounds("onboarding.open-file").is_some());
+
+        let (_, mut without_file) = open_fixture(
+            cx,
+            OnboardingFixture::new(Err(failure_with_hint(None)), false),
+        );
+        assert!(without_file.debug_bounds("onboarding.copy-error").is_some());
+        assert!(without_file.debug_bounds("onboarding.open-file").is_none());
     }
 }
