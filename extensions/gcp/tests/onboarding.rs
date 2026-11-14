@@ -172,21 +172,25 @@ fn cancelled_key_prompt_is_an_auth_error() {
 }
 
 #[test]
-fn unreadable_key_file_names_its_path() {
+fn unreadable_key_file_is_reported_on_first_use_with_its_path() {
     let dir = temp_folder("bad-key");
     let bad = dir.join("missing.json");
-    let p = provider(Arc::new(FakeHttp::default()));
+    let http = Arc::new(FakeHttp::default());
+    let p = provider(Arc::clone(&http));
     let flow = clouddeck_extension_api::FlowId::from("service_account_key");
     let values = [("key_file".to_string(), bad.display().to_string())]
         .into_iter()
         .collect();
-    let error = p
+    let host = MemoryHost::default();
+    let step = p
         .continue_auth(
-            &call(&MemoryHost::default()),
+            &call(&host),
             &flow,
             clouddeck_extension_api::AuthAnswer::Values(values),
         )
-        .unwrap_err();
+        .unwrap();
+    assert_eq!(step, clouddeck_extension_api::AuthStep::Done);
+    let error = p.connections(&call(&host)).unwrap_err();
     assert_eq!(error.kind, ErrorKind::Auth);
     assert!(error.message.contains("missing.json"));
 }
@@ -215,6 +219,10 @@ fn key_file_sign_in_stores_the_path_and_lists_projects() {
         host.secret_value("service_account_key_file"),
         Some(key_path.display().to_string())
     );
+    assert!(http.posted().is_empty());
+
+    let projects = p.connections(&call(&host)).unwrap();
+    assert_eq!(projects.len(), 2);
     let forms = http.posted();
     let jwt_form = forms.last().unwrap();
     assert!(jwt_form.contains(&(
@@ -226,9 +234,6 @@ fn key_file_sign_in_stores_the_path_and_lists_projects() {
             .iter()
             .any(|(k, v)| k == "assertion" && v.matches('.').count() == 2)
     );
-
-    let projects = p.connections(&call(&host)).unwrap();
-    assert_eq!(projects.len(), 2);
 }
 
 #[test]

@@ -394,11 +394,6 @@ impl Auth for GcpProvider {
         }
         let home = std::env::var("HOME").ok();
         let path = service_account::expand_home(raw, home.as_deref());
-        let config = Config {
-            key_file: Some(path.clone()),
-            ..Config::from_host(cx.host)?
-        };
-        self.tokens.token(call_timeout(cx)?, &config)?;
         cx.host
             .set_secret(KEY_FILE_SECRET, Some(&path.display().to_string()))?;
         Ok(AuthStep::Done)
