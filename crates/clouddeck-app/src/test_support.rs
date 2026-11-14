@@ -16,11 +16,20 @@ use std::sync::Arc;
 use std::time::Duration;
 
 pub(crate) fn plain_provider(id: &str, connections: &[&str]) -> Arc<dyn Provider> {
-    Arc::new(compute(id, connections))
+    Arc::new(compute(id, connections, &[]))
 }
 
 pub(crate) fn auth_provider(id: &str, connections: &[&str]) -> Arc<dyn Provider> {
-    Arc::new(SignInCompute(compute(id, connections), None))
+    Arc::new(SignInCompute(compute(id, connections, &[]), None))
+}
+
+/// Like `auth_provider`, but offering `regions` as its Region dimension values.
+pub(crate) fn regional_auth_provider(
+    id: &str,
+    connections: &[&str],
+    regions: &[&str],
+) -> Arc<dyn Provider> {
+    Arc::new(SignInCompute(compute(id, connections, regions), None))
 }
 
 /// Like `auth_provider`, but its `identity` check answers with `identity`.
@@ -29,10 +38,10 @@ pub(crate) fn identified_provider(
     connections: &[&str],
     identity: &'static str,
 ) -> Arc<dyn Provider> {
-    Arc::new(SignInCompute(compute(id, connections), Some(identity)))
+    Arc::new(SignInCompute(compute(id, connections, &[]), Some(identity)))
 }
 
-fn compute(id: &str, connections: &[&str]) -> ComputeServiceProvider {
+fn compute(id: &str, connections: &[&str], regions: &[&str]) -> ComputeServiceProvider {
     ComputeServiceProvider::new(
         id,
         connections
@@ -44,7 +53,7 @@ fn compute(id: &str, connections: &[&str]) -> ComputeServiceProvider {
                 tags: Vec::new(),
             })
             .collect(),
-        Vec::new(),
+        regions.iter().map(|region| (*region).to_string()).collect(),
         |_, _| Box::new(MockComputeService::new(Vec::new(), None)),
     )
 }

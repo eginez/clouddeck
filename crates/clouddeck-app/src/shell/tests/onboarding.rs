@@ -146,10 +146,55 @@ fn opening_a_connection_from_onboarding_selects_it(cx: &mut TestAppContext) {
         cx.emit(OnboardingEvent::Open {
             provider: "gcp".to_string(),
             connection: ConnectionId::from("team"),
+            regions: Vec::new(),
         })
     });
     cx.run_until_parked();
 
     shell.read_with(cx, |shell, _| assert_eq!(shell.context.profile, "team"));
+    let _ = std::fs::remove_file(&context_file);
+}
+
+#[gpui::test]
+fn opening_a_connection_from_onboarding_applies_the_chosen_regions(cx: &mut TestAppContext) {
+    let context_file = fresh_context_file();
+    install_registry(
+        cx,
+        crate::test_support::regional_auth_provider(
+            "gcp",
+            &["default", "team"],
+            &["us-east-1", "us-west-2"],
+        ),
+    );
+    let settings = Settings {
+        active_provider: Some("gcp".to_string()),
+        ..Settings::default()
+    };
+    let (shell, cx) = add_rooted_shell(cx, move |window, cx| {
+        AppShell::build_with_profiles(
+            window,
+            false,
+            DemoFleet::Happy,
+            Ok(Vec::new()),
+            None,
+            settings,
+            cx,
+        )
+    });
+    shell.update(cx, |shell, cx| shell.sign_in("gcp", cx));
+    let onboarding = open_onboarding_view(cx);
+    onboarding.update(cx, |_, cx| {
+        cx.emit(OnboardingEvent::Open {
+            provider: "gcp".to_string(),
+            connection: ConnectionId::from("team"),
+            regions: vec!["us-west-2".to_string()],
+        })
+    });
+    cx.run_until_parked();
+
+    shell.read_with(cx, |shell, _| {
+        assert_eq!(region_values(&shell.context_model), vec!["us-west-2"]);
+        assert!(shell.pending_regions.is_none());
+    });
     let _ = std::fs::remove_file(&context_file);
 }

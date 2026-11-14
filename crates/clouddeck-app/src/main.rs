@@ -47,7 +47,7 @@ mod onboarding_window;
 #[cfg(test)]
 mod view_models;
 
-use clouddeck_core::{DemoFleet, WorkspaceContext, context_path};
+use clouddeck_core::{DemoFleet, REGION, UiState, WorkspaceContext, context_path};
 use gpui::{App, Application, WindowHandle, actions};
 use gpui_component::Root;
 use onboarding_window::OnboardingEvent;
@@ -66,6 +66,7 @@ fn open_onboarding(cx: &mut App, provider: Option<&str>) -> Option<WindowHandle<
         OnboardingEvent::Open {
             provider,
             connection,
+            regions,
         } => {
             let context = WorkspaceContext {
                 provider,
@@ -73,6 +74,16 @@ fn open_onboarding(cx: &mut App, provider: Option<&str>) -> Option<WindowHandle<
             };
             if let Err(error) = context.save(&shell::saved_context_path()) {
                 eprintln!("could not remember the chosen profile: {error}");
+            }
+            if !regions.is_empty() {
+                let path = clouddeck_core::ui_state_path();
+                let mut state = UiState::load(&path);
+                state
+                    .dimension_selections
+                    .insert(REGION.to_string(), regions);
+                if let Err(error) = state.save(&path) {
+                    eprintln!("could not remember the chosen regions: {error}");
+                }
             }
             shell::open_main_window(cx, false, DemoFleet::Happy);
         }

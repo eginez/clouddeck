@@ -479,6 +479,10 @@ impl LoadRequest {
         &self.selection
     }
 
+    pub fn connection(&self) -> &ConnectionId {
+        &self.connection
+    }
+
     pub fn run(self) -> ListResult {
         let host = LoadHost;
         let cx = Call {

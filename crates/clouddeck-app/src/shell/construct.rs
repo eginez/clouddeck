@@ -357,6 +357,7 @@ impl AppShell {
         fleet_state.pinned_searches = ui_state.pinned_searches.clone();
         fleet_state.recent_searches = ui_state.recent_searches.clone();
         fleet_state.recent_instances = ui_state.recent_instances.clone();
+        fleet_state.region_counts = ui_state.region_counts.clone();
         fleet_state.sidebar_open = ui_state.sidebar_open;
         fleet_state.inspector_open = ui_state.inspector_open;
         fleet_state.hidden_columns = ui_state
@@ -420,6 +421,7 @@ impl AppShell {
             _quit_observer: quit_observer,
             settings_subscription: None,
             remembered_regions,
+            pending_regions: None,
             request_timeout,
             #[cfg(test)]
             test_service_override: None,

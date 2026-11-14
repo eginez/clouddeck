@@ -75,6 +75,8 @@ pub struct AppShell {
     /// Region selection written to the UI state; `None` when nothing is remembered,
     /// an empty list when every region is selected.
     remembered_regions: Option<Vec<String>>,
+    /// Regions chosen in onboarding, applied by the next reload instead of the current selection.
+    pending_regions: Option<Vec<String>>,
     request_timeout: Duration,
     /// Test-only: an optional provider injected into `apply_context`
     /// so that a test can deterministically hold a picker-driven context

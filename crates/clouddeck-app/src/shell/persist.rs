@@ -91,6 +91,7 @@ impl AppShell {
             pinned_searches: fleet.pinned_searches.clone(),
             recent_searches: fleet.recent_searches.clone(),
             recent_instances: fleet.recent_instances.clone(),
+            region_counts: fleet.region_counts.clone(),
             sidebar_open: fleet.sidebar_open,
             inspector_open: fleet.inspector_open,
             sidebar_width: self.ui_state_saved.sidebar_width,
