@@ -5,8 +5,8 @@ use std::time::Duration;
 use clouddeck_provider_api::{
     Auth, AuthAnswer, AuthInput, AuthMethod, AuthStatus, AuthStep, Browse, Call, Connection,
     ConnectionId, Dimension, ExtrasSection, FieldDef, FlowId, Host, InspectorSectionDef, Instance,
-    KindId, KindInfo, ListResult, LogLevel, NoAuth, Provider, ProviderError, ProviderInfo,
-    ResourceId, Selection,
+    KindId, KindInfo, ListResult, LogLevel, NoAuth, Onboarding, Provider, ProviderError,
+    ProviderInfo, ResourceId, Selection,
 };
 
 use crate::demo_fleet::DemoFleet;
@@ -147,6 +147,10 @@ impl ScopedProvider {
 impl Provider for ScopedProvider {
     fn info(&self) -> ProviderInfo {
         self.inner.info()
+    }
+
+    fn onboarding(&self, cx: &Call<'_>) -> Onboarding {
+        self.inner.onboarding(cx)
     }
 
     fn auth(&self) -> Option<&dyn Auth> {

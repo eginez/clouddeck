@@ -96,6 +96,8 @@ pub(crate) enum State {
     OnboardingEmpty,
     /// Onboarding window whose provider failed with a recovery hint.
     OnboardingError,
+    /// `OnboardingError` at the narrow width the onboarding window is laid out for.
+    OnboardingErrorNarrow,
     /// Onboarding window after a connection was chosen to open.
     OnboardingOpening,
     /// About window in the light palette, with the demo plus two bundled or installed plugins.
@@ -151,7 +153,7 @@ pub(crate) enum State {
 }
 
 impl State {
-    pub(crate) const ALL: [State; 71] = [
+    pub(crate) const ALL: [State; 72] = [
         State::MainIdle,
         State::MainRowSelected,
         State::MainEmpty,
@@ -194,6 +196,7 @@ impl State {
         State::OnboardingDetecting,
         State::OnboardingEmpty,
         State::OnboardingError,
+        State::OnboardingErrorNarrow,
         State::OnboardingOpening,
         State::AboutLight,
         State::AboutDark,
@@ -270,6 +273,7 @@ impl State {
             State::OnboardingDetecting => "OnboardingDetecting",
             State::OnboardingEmpty => "OnboardingEmpty",
             State::OnboardingError => "OnboardingError",
+            State::OnboardingErrorNarrow => "OnboardingErrorNarrow",
             State::OnboardingOpening => "OnboardingOpening",
             State::AboutLight => "AboutLight",
             State::AboutDark => "AboutDark",
@@ -379,6 +383,7 @@ impl State {
                 | State::OnboardingDetecting
                 | State::OnboardingEmpty
                 | State::OnboardingError
+                | State::OnboardingErrorNarrow
                 | State::OnboardingOpening
         )
     }
@@ -519,6 +524,7 @@ pub(crate) fn apply_render_state(
         | State::OnboardingDetecting
         | State::OnboardingEmpty
         | State::OnboardingError
+        | State::OnboardingErrorNarrow
         | State::OnboardingOpening
         | State::AboutLight
         | State::AboutDark

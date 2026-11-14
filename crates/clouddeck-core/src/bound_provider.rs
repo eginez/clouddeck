@@ -3,8 +3,8 @@ use std::sync::Arc;
 use clouddeck_provider_api::{
     Auth, AuthAnswer, AuthInput, AuthMethod, AuthStatus, AuthStep, Browse, Call, Connection,
     ConnectionId, Dimension, ExtrasSection, FieldDef, FlowId, InspectorSectionDef, Instance,
-    KindId, KindInfo, ListResult, NoAuth, Provider, ProviderError, ProviderInfo, ResourceId,
-    Selection,
+    KindId, KindInfo, ListResult, NoAuth, Onboarding, Provider, ProviderError, ProviderInfo,
+    ResourceId, Selection,
 };
 
 use crate::service_provider::console_url;
@@ -30,6 +30,10 @@ pub fn bound_provider(
 impl Provider for BoundProvider {
     fn info(&self) -> ProviderInfo {
         self.inner.info()
+    }
+
+    fn onboarding(&self, cx: &Call<'_>) -> Onboarding {
+        self.inner.onboarding(cx)
     }
 
     fn auth(&self) -> Option<&dyn Auth> {

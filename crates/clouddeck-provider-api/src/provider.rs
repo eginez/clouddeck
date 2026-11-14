@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::auth::{AuthAnswer, AuthInput, AuthMethod, AuthStatus, AuthStep};
-use crate::error::ProviderError;
+use crate::error::{ErrorHint, ProviderError};
 use crate::field::FieldDef;
 use crate::host::Call;
 use crate::ids::{ConnectionId, FlowId, KindId, ResourceId};
@@ -34,6 +34,9 @@ pub struct Onboarding {
     /// Footer note on the left of the pane.
     #[serde(default)]
     pub footer: Option<String>,
+    /// Shown instead of the core's generic copy when no connections were found.
+    #[serde(default)]
+    pub empty: Option<ErrorHint>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -178,6 +181,10 @@ pub trait Config: Send + Sync {
 /// A provider without `auth()` needs no sign-in; without `config()` it has no settings.
 pub trait Provider: Browse {
     fn info(&self) -> ProviderInfo;
+    /// Onboarding text that may depend on the call's settings.
+    fn onboarding(&self, _cx: &Call<'_>) -> Onboarding {
+        self.info().onboarding
+    }
     fn auth(&self) -> Option<&dyn Auth> {
         None
     }
@@ -417,6 +424,60 @@ mod tests {
             EmptyProvider.check_access(&cx, &connection, &KindId::instances(), &Selection::new()),
             Err(ProviderError::unsupported())
         );
+    }
+
+    #[test]
+    fn default_onboarding_is_info_onboarding() {
+        let host = NullHost;
+        let cx = Call {
+            deadline: None,
+            host: &host,
+        };
+        let mut info = EmptyProvider.info();
+        info.onboarding.title = Some("Title".to_string());
+        struct Titled(ProviderInfo);
+        impl Provider for Titled {
+            fn info(&self) -> ProviderInfo {
+                self.0.clone()
+            }
+        }
+        impl Auth for Titled {}
+        impl Browse for Titled {
+            fn connections(&self, _cx: &Call<'_>) -> Result<Vec<Connection>, ProviderError> {
+                Ok(vec![])
+            }
+            fn dimensions(
+                &self,
+                _cx: &Call<'_>,
+                _connection: &ConnectionId,
+            ) -> Result<Vec<Dimension>, ProviderError> {
+                Ok(vec![])
+            }
+            fn kinds(&self) -> Vec<KindInfo> {
+                vec![]
+            }
+            fn list(
+                &self,
+                _cx: &Call<'_>,
+                _connection: &ConnectionId,
+                _kind: &KindId,
+                _selection: &Selection,
+            ) -> ListResult {
+                ListResult::default()
+            }
+            fn console_url(
+                &self,
+                _connection: &ConnectionId,
+                _kind: &KindId,
+                _resource: &Instance,
+            ) -> Option<String> {
+                None
+            }
+            fn fields(&self, _kind: &KindId) -> Vec<FieldDef> {
+                vec![]
+            }
+        }
+        assert_eq!(Titled(info.clone()).onboarding(&cx), info.onboarding);
     }
 
     #[test]

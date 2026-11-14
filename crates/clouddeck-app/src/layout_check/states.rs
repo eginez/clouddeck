@@ -94,6 +94,7 @@ fn service_for(state: State) -> (Arc<dyn Provider>, Vec<String>) {
         | State::OnboardingDetecting
         | State::OnboardingEmpty
         | State::OnboardingError
+        | State::OnboardingErrorNarrow
         | State::OnboardingOpening
         | State::AboutLight
         | State::AboutDark
@@ -280,15 +281,21 @@ impl OnboardingFixture {
     fn for_state(state: State) -> Self {
         let connections = match state {
             State::OnboardingEmpty => Ok(vec![]),
-            State::OnboardingError => Err(ProviderError {
+            State::OnboardingError | State::OnboardingErrorNarrow => Err(ProviderError {
                 kind: ErrorKind::Other,
                 message: "The AWS config file could not be read".to_string(),
                 advice: None,
                 retry_after: None,
                 hint: Some(Box::new(ErrorHint {
-                    title: "No AWS profiles yet".to_string(),
-                    detail: Some("Set one up with the AWS CLI, then check again.".to_string()),
-                    command: Some("aws configure sso".to_string()),
+                    title: "CloudDeck couldn't read ~/.aws/config".to_string(),
+                    detail: Some(
+                        "Fix the file, then check again. No other provider is affected.".to_string(),
+                    ),
+                    command: Some(
+                        "~/.aws/config, line 14:\n[profile data-platform\nexpected ']' at end of section header"
+                            .to_string(),
+                    ),
+                    file: Some("/home/example/.aws/config".to_string()),
                 })),
             }),
             _ => Ok(vec![
@@ -403,13 +410,17 @@ fn open_onboarding(
     let providers: Vec<Arc<dyn Provider>> = vec![Arc::new(OnboardingFixture::for_state(state))];
     let window = cx.update(|app| {
         gpui_component::init(app);
-        onboarding_window::open_window_for(app, providers, Some("aws"), window_size, move |view, _| {
-            match state {
+        onboarding_window::open_window_for(
+            app,
+            providers,
+            Some("aws"),
+            window_size,
+            move |view, _| match state {
                 State::OnboardingDetecting => view.show_detecting(),
                 State::OnboardingOpening => view.show_opening("default"),
                 _ => {}
-            }
-        })
+            },
+        )
         .expect("onboarding window opens")
     });
     let cx = VisualTestContext::from_window(window.into(), cx).into_mut();
@@ -822,7 +833,7 @@ mod tests {
     /// One key element per state that `apply_render_state` must produce.
     #[gpui::test]
     fn every_state_shows_its_key_element(cx: &mut TestAppContext) {
-        let key_elements: [(State, &str); 71] = [
+        let key_elements: [(State, &str); 72] = [
             (State::MainIdle, "main.root"),
             (State::MainRowSelected, "main.inspector"),
             (State::MainEmpty, "main.center-state"),
@@ -865,6 +876,7 @@ mod tests {
             (State::OnboardingDetecting, "onboarding.detecting"),
             (State::OnboardingEmpty, "onboarding.empty"),
             (State::OnboardingError, "onboarding.failed"),
+            (State::OnboardingErrorNarrow, "onboarding.failed"),
             (State::OnboardingOpening, "onboarding.opening"),
             (State::AboutLight, "about.title"),
             (State::AboutDark, "about.title"),

@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 use std::future::Future;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::SystemTime;
@@ -12,8 +12,8 @@ use std::time::SystemTime;
 use clouddeck_provider_api::{
     Auth, AuthAnswer, AuthInput, AuthMethod, AuthStatus, AuthStep, Browse, Call, Config,
     Connection, ConnectionId, ErrorHint, ErrorKind, FieldDef, FlowId, InspectorSectionDef,
-    Instance, KindId, KindInfo, ListResult, Provider, ProviderError, ProviderInfo, Selection,
-    SettingDef, SettingKind, SettingOption, SettingValue,
+    Instance, KindId, KindInfo, ListResult, Onboarding, Provider, ProviderError, ProviderInfo,
+    Selection, SettingDef, SettingKind, SettingOption, SettingValue,
 };
 
 use clouddeck_provider_kit::{
@@ -314,20 +314,32 @@ fn connection(profile: AwsProfileAuth) -> Connection {
     }
 }
 
-fn config_error(error: &std::io::Error) -> ProviderError {
+fn config_error(files: &AwsFiles, error: &std::io::Error) -> ProviderError {
     let message = error.to_string();
-    let path = message
-        .split(": line ")
-        .next()
-        .unwrap_or_default()
-        .to_string();
+    let failing = [&files.config, &files.credentials]
+        .into_iter()
+        .find(|path| message.starts_with(&format!("{}: ", path.display())))
+        .unwrap_or(&files.config);
+    let shown = display_home(failing);
+    let detail = message
+        .strip_prefix(&format!("{}: ", failing.display()))
+        .unwrap_or(message.as_str());
     let mut failure = ProviderError::new(ErrorKind::Other, message.clone());
     failure.hint = Some(Box::new(ErrorHint {
-        title: format!("CloudDeck couldn't read {path}"),
+        title: format!("CloudDeck couldn't read {shown}"),
         detail: Some("Fix the file, then check again. No other provider is affected.".to_string()),
-        command: None,
+        command: Some(format!("{shown}, {detail}")),
+        file: Some(failing.display().to_string()),
     }));
     failure
+}
+
+fn display_home(path: &Path) -> String {
+    let home = home_dir();
+    match path.strip_prefix(&home) {
+        Ok(rest) if !home.as_os_str().is_empty() => format!("~/{}", rest.display()),
+        _ => path.display().to_string(),
+    }
 }
 
 fn setting_defs() -> Vec<SettingDef> {
@@ -377,6 +389,24 @@ impl Provider for AwsProvider {
         info
     }
 
+    fn onboarding(&self, cx: &Call<'_>) -> Onboarding {
+        let path = display_home(&aws_files(cx).config);
+        let mut onboarding = self.info().onboarding;
+        onboarding.footer = Some(format!(
+            "Profiles are read from {path}. Credentials stay with the AWS CLI."
+        ));
+        onboarding.empty = Some(ErrorHint {
+            title: format!("No AWS profiles in {path}"),
+            detail: Some(
+                "Make one with the AWS CLI, then check again. For IAM Identity Center (SSO), run:"
+                    .to_string(),
+            ),
+            command: Some("aws configure sso".to_string()),
+            file: None,
+        });
+        onboarding
+    }
+
     fn auth(&self) -> Option<&dyn Auth> {
         Some(self)
     }
@@ -389,7 +419,8 @@ impl Provider for AwsProvider {
 impl Browse for AwsProvider {
     fn connections(&self, cx: &Call<'_>) -> Result<Vec<Connection>, ProviderError> {
         let files = aws_files(cx);
-        let profiles = load_profile_auth_for(&files).map_err(|error| config_error(&error))?;
+        let profiles =
+            load_profile_auth_for(&files).map_err(|error| config_error(&files, &error))?;
         Ok(profiles.into_iter().map(connection).collect())
     }
 
@@ -921,6 +952,10 @@ sso_role_name = Admin
             self.inner.info()
         }
 
+        fn onboarding(&self, cx: &Call<'_>) -> Onboarding {
+            self.with_host(cx, |cx| self.inner.onboarding(cx))
+        }
+
         fn auth(&self) -> Option<&dyn Auth> {
             Some(self)
         }
@@ -1156,6 +1191,11 @@ aws_access_key_id = AKIDEXAMPLE
         let hint = error.hint.expect("config errors carry a hint");
         assert!(hint.title.starts_with("CloudDeck couldn't read "));
         assert!(hint.title.ends_with("config"));
+        assert_eq!(
+            hint.file,
+            Some(dir.path().join("config").display().to_string())
+        );
+        assert!(hint.command.unwrap().contains("line 1"));
         assert!(error.message.contains("line 1"));
         assert!(error.kind != ErrorKind::Auth);
     }
@@ -1167,8 +1207,71 @@ aws_access_key_id = AKIDEXAMPLE
 
         let error = connections_in(dir.path()).unwrap_err();
 
-        let title = error.hint.unwrap().title;
-        assert!(title.ends_with("credentials"), "{title}");
+        let hint = error.hint.unwrap();
+        assert!(hint.title.ends_with("credentials"), "{}", hint.title);
+        assert_eq!(
+            hint.file,
+            Some(dir.path().join("credentials").display().to_string())
+        );
+    }
+
+    fn onboarding_in(folder: &Path) -> Onboarding {
+        let pinned = Pinned {
+            inner: Arc::from(provider(folder)),
+            folder: folder.to_path_buf(),
+        };
+        let cx = Call {
+            deadline: None,
+            host: &NoHost,
+        };
+        pinned.onboarding(&cx)
+    }
+
+    #[test]
+    fn footer_names_the_config_file_in_use() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = display_home(&dir.path().join("config"));
+
+        let onboarding = onboarding_in(dir.path());
+
+        assert_eq!(
+            onboarding.footer,
+            Some(format!(
+                "Profiles are read from {config}. Credentials stay with the AWS CLI."
+            ))
+        );
+    }
+
+    #[test]
+    fn default_config_file_is_shown_under_home() {
+        assert_eq!(
+            display_home(&home_dir().join(".aws").join("config")),
+            "~/.aws/config"
+        );
+    }
+
+    #[test]
+    fn nothing_found_hint_names_the_config_file_and_the_sso_command() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = display_home(&dir.path().join("config"));
+
+        let empty = onboarding_in(dir.path()).empty.expect("empty hint");
+
+        assert_eq!(empty.title, format!("No AWS profiles in {config}"));
+        assert_eq!(empty.command.as_deref(), Some("aws configure sso"));
+        assert_eq!(empty.file, None);
+    }
+
+    #[test]
+    fn static_onboarding_keeps_the_service_title_and_no_path() {
+        let info = provider(Path::new("/nonexistent")).info();
+
+        assert_eq!(
+            info.onboarding.title.as_deref(),
+            Some("Amazon Web Services")
+        );
+        assert!(!info.onboarding.footer.unwrap().contains('/'));
+        assert_eq!(info.name, "AWS");
     }
 
     #[test]

@@ -2,14 +2,14 @@ use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::time::{Duration, UNIX_EPOCH};
 
-use clouddeck_extension_api::wire::{decode, encode};
+use clouddeck_extension_api::wire::{Method, decode, encode};
 use clouddeck_extension_api::{
     Address, AddressKind, AuthAnswer, AuthInput, AuthMethod, AuthStatus, AuthStep, CellFailure,
-    Connection, ConnectionId, CoreField, DimValue, Dimension, ErrorKind, ExtrasSection, FieldDef,
-    FieldKind, FieldSource, FlowId, InspectorRowDef, InspectorSectionDef, InspectorValue, Instance,
-    KindId, KindInfo, Label, ListResult, MatchMode, PromptField, ProviderError, ProviderInfo,
-    ResourceId, Selection, SettingDef, SettingKind, SettingOption, SettingValue, State, StateKind,
-    ValueId,
+    Connection, ConnectionId, CoreField, DimValue, Dimension, ErrorHint, ErrorKind, ExtrasSection,
+    FieldDef, FieldKind, FieldSource, FlowId, InspectorRowDef, InspectorSectionDef, InspectorValue,
+    Instance, KindId, KindInfo, Label, ListResult, MatchMode, Onboarding, PromptField,
+    ProviderError, ProviderInfo, ResourceId, Selection, SettingDef, SettingKind, SettingOption,
+    SettingValue, State, StateKind, ValueId,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -362,6 +362,40 @@ fn provider_metadata_and_identifiers_round_trip() {
     round_trip(Vec::<String>::new());
     round_trip(vec![UNICODE.to_string(), String::new()]);
     round_trip(Ok::<Vec<Connection>, ProviderError>(Vec::new()));
+}
+
+#[test]
+fn onboarding_round_trips_with_its_empty_hint_and_error_file() {
+    round_trip(Onboarding {
+        title: Some(UNICODE.into()),
+        subtitle: None,
+        footer: Some("Profiles are read from ~/.aws/config.".into()),
+        empty: Some(ErrorHint {
+            title: "No AWS profiles in ~/.aws/config".into(),
+            detail: None,
+            command: Some("aws configure sso".into()),
+            file: None,
+        }),
+    });
+    round_trip(ProviderError {
+        kind: ErrorKind::Other,
+        message: "/tmp/config: line 2: bad".into(),
+        advice: None,
+        retry_after: None,
+        hint: Some(Box::new(ErrorHint {
+            title: "CloudDeck couldn't read /tmp/config".into(),
+            detail: None,
+            command: Some("/tmp/config, line 2: bad".into()),
+            file: Some("/tmp/config".into()),
+        })),
+    });
+}
+
+#[test]
+fn onboarding_is_the_last_method_code() {
+    assert_eq!(Method::Onboarding as u32, 19);
+    assert_eq!(Method::from_code(19), Some(Method::Onboarding));
+    assert_eq!(Method::from_code(20), None);
 }
 
 #[test]

@@ -1,12 +1,13 @@
 //! The onboarding window: the first-run screen for every provider. Connections, sign-in
 //! methods and onboarding text all come from the provider API; this module only draws them.
 
+use std::path::Path;
 use std::sync::Arc;
 use std::time::SystemTime;
 
 use clouddeck_core::{
-    AuthMethod, AuthStatus, Call, ConnectError, Connection, ConnectionId, Provider, ProviderError,
-    Selection, SignInAction, connect_methods, submit,
+    AuthMethod, AuthStatus, Call, ConnectError, Connection, ConnectionId, Onboarding, Provider,
+    ProviderError, Selection, SignInAction, connect_methods, submit,
 };
 use gpui::{
     AnyElement, App, Bounds, ClickEvent, ClipboardItem, Context, Entity, EventEmitter, FontWeight,
@@ -65,6 +66,7 @@ pub struct OnboardingWindow {
     providers: Vec<Arc<dyn Provider>>,
     chosen: usize,
     listings: Vec<Listing>,
+    onboardings: Vec<Option<Onboarding>>,
     generations: Vec<u64>,
     selected: Option<ConnectionId>,
     search: Entity<InputState>,
@@ -118,7 +120,11 @@ impl OnboardingWindow {
         cx: &mut Context<Self>,
     ) -> Self {
         let chosen = provider_id
-            .and_then(|id| providers.iter().position(|provider| provider.info().id == id))
+            .and_then(|id| {
+                providers
+                    .iter()
+                    .position(|provider| provider.info().id == id)
+            })
             .unwrap_or(0);
         let count = providers.len();
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search"));
@@ -126,6 +132,7 @@ impl OnboardingWindow {
             providers,
             chosen,
             listings: vec![Listing::Detecting; count],
+            onboardings: vec![None; count],
             generations: vec![0; count],
             selected: connection,
             search: search.clone(),
@@ -159,11 +166,14 @@ impl OnboardingWindow {
         self.listings[index] = Listing::Detecting;
         let provider = self.providers[index].clone();
         cx.spawn(async move |this, cx| {
-            let listing = off_thread(cx, move || with_call(|call| list(provider.as_ref(), call)))
-                .await;
+            let (listing, onboarding) = off_thread(cx, move || {
+                with_call(|call| (list(provider.as_ref(), call), provider.onboarding(call)))
+            })
+            .await;
             let _ = this.update(cx, |this, cx| {
                 if this.generations[index] == generation {
                     this.listings[index] = listing;
+                    this.onboardings[index] = Some(onboarding);
                     cx.notify();
                 }
             });
@@ -326,7 +336,22 @@ impl OnboardingWindow {
     }
 
     fn noun(&self) -> String {
-        self.providers[self.chosen].info().connection_label.to_lowercase()
+        self.providers[self.chosen]
+            .info()
+            .connection_label
+            .to_lowercase()
+    }
+
+    fn onboarding(&self, index: usize) -> Onboarding {
+        self.onboardings[index]
+            .clone()
+            .unwrap_or_else(|| self.providers[index].info().onboarding)
+    }
+
+    fn display_name(&self, index: usize) -> String {
+        self.onboarding(index)
+            .title
+            .unwrap_or_else(|| self.providers[index].info().name)
     }
 
     fn rail(&self, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
@@ -425,6 +450,7 @@ impl OnboardingWindow {
     ) -> AnyElement {
         let info = provider.info();
         let id = info.id.clone();
+        let name = self.display_name(index);
         let selected = index == self.chosen;
         let (dot, status) = self.rail_status(index, &info.connection_label, palette);
         div()
@@ -451,7 +477,7 @@ impl OnboardingWindow {
                     .text_size(px(11.))
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(palette.win)
-                    .child(initials(&info.name)),
+                    .child(initials(&name)),
             )
             .child(
                 div()
@@ -464,7 +490,7 @@ impl OnboardingWindow {
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(palette.text)
                             .text_ellipsis()
-                            .child(info.name.clone()),
+                            .child(name),
                     )
                     .child(
                         div()
@@ -474,7 +500,11 @@ impl OnboardingWindow {
                             .text_size(px(11.))
                             .text_color(palette.dim)
                             .children(dot.map(|color| {
-                                div().size(px(7.)).rounded_full().bg(color).into_any_element()
+                                div()
+                                    .size(px(7.))
+                                    .rounded_full()
+                                    .bg(color)
+                                    .into_any_element()
                             }))
                             .child(status),
                     ),
@@ -504,19 +534,13 @@ impl OnboardingWindow {
     }
 
     fn pane(&self, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
-        let info = self.providers[self.chosen].info();
+        let onboarding = self.onboarding(self.chosen);
         let noun = self.noun();
-        let title = info
-            .onboarding
-            .title
-            .clone()
-            .unwrap_or_else(|| info.name.clone());
-        let subtitle = info.onboarding.subtitle.clone().unwrap_or_else(|| {
-            format!(
-                "Choose a {noun} to open. CloudDeck only reads; it never changes your account."
-            )
+        let title = self.display_name(self.chosen);
+        let subtitle = onboarding.subtitle.unwrap_or_else(|| {
+            format!("Choose a {noun} to open. CloudDeck only reads; it never changes your account.")
         });
-        let footer_note = info.onboarding.footer.clone().unwrap_or_default();
+        let footer_note = onboarding.footer.unwrap_or_default();
 
         let mut header = div()
             .flex()
@@ -543,16 +567,17 @@ impl OnboardingWindow {
                             .child(subtitle),
                     ),
             );
-        if let Some(method) = self.header_method() {
+        let found = matches!(self.listings[self.chosen], Listing::Found(_));
+        if let Some(method) = self.header_method().filter(|_| found) {
             let label = method.header_button.clone().unwrap_or_default();
             let busy = self.phase != Phase::Idle;
             header = header.child(
-                pill_button("onboarding-header", "onboarding.header", label, palette)
-                    .when(!busy, |button| {
-                        button.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                            this.sign_in(cx)
-                        }))
-                    }),
+                pill_button("onboarding-header", "onboarding.header", label, palette).when(
+                    !busy,
+                    |button| {
+                        button.on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.sign_in(cx)))
+                    },
+                ),
             );
         }
 
@@ -599,14 +624,25 @@ impl OnboardingWindow {
         match &self.listings[self.chosen] {
             Listing::Detecting => self.detecting(palette),
             Listing::Found(_) => self.found(palette, cx),
-            Listing::Empty => centred(
-                "onboarding.empty",
-                format!("No {} found", plural(&self.noun(), 2)),
-                "Set one up with the provider's command-line tool, then check again.".to_string(),
-                None,
-                palette,
-                self.check_again(palette, cx),
-            ),
+            Listing::Empty => {
+                let (heading, body, command) = match self.onboarding(self.chosen).empty {
+                    Some(hint) => (hint.title, hint.detail.unwrap_or_default(), hint.command),
+                    None => (
+                        format!("No {} found", plural(&self.noun(), 2)),
+                        "Set one up with the provider's command-line tool, then check again."
+                            .to_string(),
+                        None,
+                    ),
+                };
+                centred(
+                    "onboarding.empty",
+                    heading,
+                    body,
+                    command,
+                    palette,
+                    self.check_again(palette, cx),
+                )
+            }
             Listing::Failed(error) => match &error.hint {
                 Some(hint) => centred(
                     "onboarding.failed",
@@ -614,7 +650,7 @@ impl OnboardingWindow {
                     hint.detail.clone().unwrap_or_default(),
                     hint.command.clone(),
                     palette,
-                    self.check_again(palette, cx),
+                    self.failure_actions(error, palette, cx),
                 ),
                 None => centred(
                     "onboarding.failed",
@@ -630,8 +666,54 @@ impl OnboardingWindow {
 
     fn check_again(&self, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
         let chosen = self.chosen;
-        pill_button("onboarding-check", "onboarding.check-again", "Check again", palette)
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.detect(chosen, cx)))
+        pill_button(
+            "onboarding-check",
+            "onboarding.check-again",
+            "Check again",
+            palette,
+        )
+        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.detect(chosen, cx)))
+        .into_any_element()
+    }
+
+    fn failure_actions(
+        &self,
+        error: &ProviderError,
+        palette: &Palette,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let copy = error
+            .hint
+            .as_ref()
+            .and_then(|hint| hint.detail.clone())
+            .unwrap_or_else(|| error.message.clone());
+        let file = error.hint.as_ref().and_then(|hint| hint.file.clone());
+        div()
+            .flex()
+            .gap(px(8.))
+            .child(self.check_again(palette, cx))
+            .child(
+                pill_button(
+                    "onboarding-copy-error",
+                    "onboarding.copy-error",
+                    "Copy error",
+                    palette,
+                )
+                .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
+                    cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()))
+                })),
+            )
+            .children(file.map(|file| {
+                pill_button(
+                    "onboarding-open-file",
+                    "onboarding.open-file",
+                    "Open file",
+                    palette,
+                )
+                .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
+                    cx.open_with_system(Path::new(&file))
+                }))
+            }))
             .into_any_element()
     }
 
@@ -660,8 +742,20 @@ impl OnboardingWindow {
                             .flex()
                             .flex_col()
                             .gap(px(6.))
-                            .child(div().w(px(160.)).h(px(10.)).rounded(px(3.)).bg(palette.line2))
-                            .child(div().w(px(220.)).h(px(8.)).rounded(px(3.)).bg(palette.line2)),
+                            .child(
+                                div()
+                                    .w(px(160.))
+                                    .h(px(10.))
+                                    .rounded(px(3.))
+                                    .bg(palette.line2),
+                            )
+                            .child(
+                                div()
+                                    .w(px(220.))
+                                    .h(px(8.))
+                                    .rounded(px(3.))
+                                    .bg(palette.line2),
+                            ),
                     )
                     .into_any_element()
             }))
@@ -760,7 +854,10 @@ impl OnboardingWindow {
                 .into_any_element()
         }));
         div()
-            .id(SharedString::from(format!("onboarding-row-{}", connection.id.as_str())))
+            .id(SharedString::from(format!(
+                "onboarding-row-{}",
+                connection.id.as_str()
+            )))
             .debug_selector(move || selector)
             .flex()
             .items_center()
@@ -782,7 +879,11 @@ impl OnboardingWindow {
                     .items_center()
                     .justify_center()
                     .rounded_full()
-                    .bg(if selected { palette.accent } else { palette.badge })
+                    .bg(if selected {
+                        palette.accent
+                    } else {
+                        palette.badge
+                    })
                     .text_size(px(11.))
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(palette.win)
@@ -815,8 +916,13 @@ impl OnboardingWindow {
     }
 
     fn opening(&self, name: &str, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
-        let back = pill_button("onboarding-back", "onboarding.back", "Back to onboarding", palette)
-            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.back_to_onboarding(cx)));
+        let back = pill_button(
+            "onboarding-back",
+            "onboarding.back",
+            "Back to onboarding",
+            palette,
+        )
+        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.back_to_onboarding(cx)));
         centred(
             "onboarding.opening",
             format!("Opening {name}"),
@@ -874,10 +980,9 @@ impl OnboardingWindow {
                     .child(code.to_string()),
             )
             .child(
-                div()
-                    .text_size(px(11.))
-                    .text_color(palette.dim)
-                    .child("Enter this code on the sign-in page. CloudDeck waits for the approval."),
+                div().text_size(px(11.)).text_color(palette.dim).child(
+                    "Enter this code on the sign-in page. CloudDeck waits for the approval.",
+                ),
             )
             .child(
                 div()
@@ -906,9 +1011,9 @@ impl OnboardingWindow {
                             "Cancel",
                             palette,
                         )
-                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                            this.cancel_sign_in(cx)
-                        })),
+                        .on_click(
+                            cx.listener(|this, _: &ClickEvent, _, cx| this.cancel_sign_in(cx)),
+                        ),
                     ),
             )
             .into_any_element()
@@ -917,14 +1022,11 @@ impl OnboardingWindow {
     fn footer(&self, note: String, palette: &Palette, cx: &mut Context<Self>) -> AnyElement {
         let action: AnyElement = match &self.listings[self.chosen] {
             _ if matches!(self.phase, Phase::Opening { .. }) => div().into_any_element(),
-            Listing::Detecting => pill_button(
-                "onboarding-cancel",
-                "onboarding.cancel",
-                "Cancel",
-                palette,
-            )
-            .on_click(cx.listener(|_, _: &ClickEvent, window, _| window.remove_window()))
-            .into_any_element(),
+            Listing::Detecting => {
+                pill_button("onboarding-cancel", "onboarding.cancel", "Cancel", palette)
+                    .on_click(cx.listener(|_, _: &ClickEvent, window, _| window.remove_window()))
+                    .into_any_element()
+            }
             Listing::Found(_) => {
                 let enabled = self.selected_row().is_some() && self.phase == Phase::Idle;
                 div()
@@ -939,9 +1041,9 @@ impl OnboardingWindow {
                     .text_color(palette.win)
                     .when(!enabled, |button| button.opacity(0.45))
                     .when(enabled, |button| {
-                        button.cursor_pointer().on_click(cx.listener(
-                            |this, _: &ClickEvent, _, cx| this.open_selected(cx),
-                        ))
+                        button.cursor_pointer().on_click(
+                            cx.listener(|this, _: &ClickEvent, _, cx| this.open_selected(cx)),
+                        )
                     })
                     .child("Open ↵")
                     .into_any_element()
@@ -1196,11 +1298,7 @@ fn open_window(
         return None;
     }
     let provider_id = provider_id.map(str::to_string);
-    let bounds = Bounds::centered(
-        None,
-        size(px(window_size.0), px(window_size.1)),
-        cx,
-    );
+    let bounds = Bounds::centered(None, size(px(window_size.0), px(window_size.1)), cx);
     let handle = cx
         .open_window(
             WindowOptions {
@@ -1271,11 +1369,16 @@ mod tests {
         cx.update(gpui_component::init);
         cx.update(|app| {
             let plain = vec![plain_provider("plain", &["default"])];
-            assert!(open_window_for(app, plain.clone(), Some("missing"), WINDOW_SIZE, |_, _| {}).is_none());
+            assert!(
+                open_window_for(app, plain.clone(), Some("missing"), WINDOW_SIZE, |_, _| {})
+                    .is_none()
+            );
             assert!(open_window_for(app, plain, Some("plain"), WINDOW_SIZE, |_, _| {}).is_some());
 
             let signing_in = vec![auth_provider("fake", &["default"])];
-            assert!(open_window_for(app, signing_in, Some("fake"), WINDOW_SIZE, |_, _| {}).is_some());
+            assert!(
+                open_window_for(app, signing_in, Some("fake"), WINDOW_SIZE, |_, _| {}).is_some()
+            );
         });
     }
 
